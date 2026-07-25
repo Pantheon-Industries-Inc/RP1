@@ -1,0 +1,31 @@
+CMD: train_lip_ac.py --cache /workspace/caches/tworoom_lewm_fs5.pt --cache-td /workspace/caches/tworoom_lewm_fs1.pt --h5 /workspace/caches/tworoom_play.h5 --wm lewm_tworoom
+  --init-value /workspace/metrics/td_e0.1_n50.pt --horizon 5 --iters 8 --n-step 50
+  --expectile 0.1 --critic-lr 1e-3 --actor-lr 3e-4
+  --critic-lr-final 1e-4 --expectile-final 0.03 --actor-lr-final 3e-5
+  --arch v4 --amax 2.0 --steps 8000 --mean-weight 0.3 --seed 0
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+2026-07-15 17:44:36.726 | INFO     | stable_worldmodel.wm.utils:_resolve_folder:138 - Loading checkpoint from folder /workspace/swm_home/checkpoints/lewm_tworoom...
+/workspace/code/stable-worldmodel/stable_worldmodel/wm/utils.py:81: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(checkpoint_path, map_location='cpu')
+17:44:40 | INFO  | atomic_chec~| [atomic_save] installed crash-safe checkpoint plugin (write to sibling .tmp + fsync + atomic rename)
+17:44:41 | INFO  | utils.py    | Created ViT-tiny from scratch with config: {'hidden_size': 192, 'num_hidden_layers': 12, 'num_attention_heads': 3, 'intermediate_size': 768, 'image_size': 224, 'patch_size': 14}
+step 0: E_final 19.208 E_first 16.859 td_loss 1.4048 tau 0.100 clr 1.00e-03 alr 3.00e-04
+step 500: E_final 0.846 E_first 6.795 td_loss 1.4257 tau 0.095 clr 9.87e-04 alr 2.97e-04
+step 1000: E_final 0.968 E_first 8.648 td_loss 1.2623 tau 0.089 clr 9.47e-04 alr 2.90e-04
+step 1500: E_final 1.595 E_first 9.542 td_loss 1.2228 tau 0.084 clr 8.83e-04 alr 2.77e-04
+step 2000: E_final 1.663 E_first 8.109 td_loss 1.1561 tau 0.078 clr 8.00e-04 alr 2.60e-04
+step 2500: E_final 0.637 E_first 7.000 td_loss 1.0471 tau 0.073 clr 7.02e-04 alr 2.40e-04
+step 3000: E_final 0.787 E_first 7.114 td_loss 0.9555 tau 0.067 clr 5.94e-04 alr 2.17e-04
+step 3500: E_final 0.752 E_first 8.521 td_loss 0.8826 tau 0.062 clr 4.84e-04 alr 1.91e-04
+step 4000: E_final 1.028 E_first 7.636 td_loss 0.8004 tau 0.056 clr 3.78e-04 alr 1.65e-04
+step 4500: E_final 0.559 E_first 6.945 td_loss 0.7562 tau 0.051 clr 2.82e-04 alr 1.39e-04
+step 5000: E_final 1.016 E_first 6.976 td_loss 0.6501 tau 0.045 clr 2.02e-04 alr 1.13e-04
+step 5500: E_final 0.729 E_first 8.052 td_loss 0.5773 tau 0.040 clr 1.43e-04 alr 9.00e-05
+step 6000: E_final 0.676 E_first 5.830 td_loss 0.5018 tau 0.034 clr 1.09e-04 alr 6.95e-05
+step 6400: critic+teacher frozen for the remaining 1600 actor steps
+step 6500: E_final 0.654 E_first 7.040 td_loss nan tau 0.030 clr 1.00e-04 alr 5.28e-05
+step 7000: E_final 0.455 E_first 5.393 td_loss nan tau 0.030 clr 1.00e-04 alr 4.03e-05
+step 7500: E_final 0.567 E_first 6.237 td_loss nan tau 0.030 clr 1.00e-04 alr 3.26e-05
+saved teacher value -> /workspace/metrics/trm_v4b_mw03_s0_value.pt
+saved learned planner -> /workspace/actors/trm_v4b_mw03_s0.pt

@@ -1,0 +1,25 @@
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:231: UserWarning: [33mWARN: Box low's precision lowered by casting to float32, current low.dtype=float64[0m
+  gym.logger.warn(
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:297: UserWarning: [33mWARN: Box high's precision lowered by casting to float32, current high.dtype=float64[0m
+  gym.logger.warn(
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+  gym.logger.warn("Casting input x to numpy array.")
+episode 638 grasp acquisition at t= 28 replay from t0= 13
+info keys sample: ['control', 'env_name', 'prev_qpos', 'prev_qvel', 'privileged/block_0_pos', 'privileged/block_0_quat', 'privileged/block_0_yaw', 'proprio/effector_pos']
+FIDELITY: steps=45  max|blk_sim - blk_data|=0.0003  final dz sim=0.114 data=0.114
+render check: obs shape (224, 224, 3)  pixel-MSE vs dataset t0+20 frame: 1066.8909912109375
+FAIL-RECIPE: max lift=0.000 (want < 0.03)  contact frames=25
+DROP-RECIPE: max lift=0.065  final height=0.000 (want: rose >0.05 then fell <0.03)
+Exception ignored in: <function Renderer.__del__ at 0x74f92c1d5580>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/rendering/classic/renderer.py", line 343, in __del__
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/rendering/classic/renderer.py", line 329, in close
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 74, in free
+TypeError: 'NoneType' object is not callable
+Exception ignored in: <function GLContext.__del__ at 0x74f92c1d4ea0>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 81, in __del__
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 74, in free
+TypeError: 'NoneType' object is not callable

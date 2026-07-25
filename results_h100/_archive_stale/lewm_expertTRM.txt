@@ -1,0 +1,5 @@
+
+==== HARD n100 wm=lewm_tworoom action_block=5 min_geo=90.0 horizon=10 budget=100 ====
+| condition   | mode        |   n100% |   cross% |   same% |
+|-------------|-------------|---------|----------|---------|
+| expertTRM   | replacement |      57 |       38 |      76 |

@@ -1,0 +1,17 @@
+smoke,ok
+latent_h25_s42,12.0
+latent_h25_s43,14.000000000000002
+latent_h25_s44,10.0
+latent_h50_s42,4.0
+latent_h50_s43,2.0
+latent_h50_s44,2.0
+random_h25_s43,6.0
+random_h25_s42,12.0
+random_h25_s44,4.0
+random_h50_s42,0.0
+random_h50_s44,6.0
+random_h50_s43,0.0
+tdcem_e0.03_n5_h25_s42,14.000000000000002
+tdcem_e0.03_n50_h25_s42,10.0
+tdcem_e0.1_n5_h25_s42,10.0
+tdcem_e0.03_n25_h25_s42,8.0

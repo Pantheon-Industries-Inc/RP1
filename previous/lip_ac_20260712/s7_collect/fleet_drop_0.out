@@ -1,0 +1,19 @@
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:231: UserWarning: [33mWARN: Box low's precision lowered by casting to float32, current low.dtype=float64[0m
+  gym.logger.warn(
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:297: UserWarning: [33mWARN: Box high's precision lowered by casting to float32, current high.dtype=float64[0m
+  gym.logger.warn(
+/usr/local/lib/python3.11/dist-packages/gymnasium/spaces/box.py:415: UserWarning: [33mWARN: Casting input x to numpy array.[0m
+  gym.logger.warn("Casting input x to numpy array.")
+Exception ignored in: <function Renderer.__del__ at 0x7b6c57901d00>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/rendering/classic/renderer.py", line 343, in __del__
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/rendering/classic/renderer.py", line 329, in close
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 74, in free
+TypeError: 'NoneType' object is not callable
+Exception ignored in: <function GLContext.__del__ at 0x7b6c57901620>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 81, in __del__
+  File "/usr/local/lib/python3.11/dist-packages/mujoco/osmesa/__init__.py", line 74, in free
+TypeError: 'NoneType' object is not callable

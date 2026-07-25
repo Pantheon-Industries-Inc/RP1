@@ -1,0 +1,12 @@
+
+==== HARD n100 wm=lewm_tworoom action_block=5 min_geo=90.0 horizon=10 budget=100 ====
+| condition   | mode        |   n100% |   cross% |   same% |
+|-------------|-------------|---------|----------|---------|
+| latent      | latent      |      48 |       46 |      50 |
+| regression  | replacement |      65 |       58 |      72 |
+| contrastive | replacement |      58 |       50 |      66 |
+| hybrid      | hybrid      |      81 |       82 |      80 |
+| offline_td  | replacement |      59 |       36 |      82 |
+| online_td   | replacement |      73 |       54 |      92 |
+| shuffled    | shuffled    |       3 |        0 |       6 |
+| oracle      | oracle      |     100 |      100 |     100 |

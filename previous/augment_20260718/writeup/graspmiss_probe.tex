@@ -1,0 +1,60 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage{amsmath,amssymb,booktabs}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=black]{hyperref}
+\setlength{\parskip}{0.35em}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+
+\newcommand{\R}{\mathrm{R}}
+\newcommand{\Z}{\mathcal{Z}}
+
+\begin{document}
+
+{\large\bfseries Attachment optimism, measured: a frozen world model cannot imagine grasp failures}\\[0.2em]
+{\small OGBench \texttt{cube-single} $\cdot$ v2WM (ViT-tiny LeWM) $\cdot$ 2026-07-18}
+
+\vspace{0.4em}
+\hrule
+\vspace{0.6em}
+
+\textbf{Probe.} A frozen latent world model (WM) with encoder
+$E\!:\!\mathcal{O}\!\to\!\Z$ and forward model $\phi$ predicts future latents
+$\hat z_t=\phi_t(z_0,A)$ from an initial latent $z_0=E(o_0)$ under an action
+sequence $A$. We fit a linear readout $\R\!:\!\Z\!\to\!\mathbb{R}$ from latent to
+privileged block height by least squares on the expert latent cache; on held-out
+expert latents $R^2=0.990$, so $\R$ recovers block height essentially exactly.
+We then take action sequences $A$ that are known---from physics-verified real
+execution---to produce a grasp \emph{and miss} (the block is never lifted, real
+rise $<0.03$\,m), roll the frozen WM forward under them (three real context
+frames, zero action history, autoregressive frameskip-5 blocks), and read the
+predicted block height $\R(\hat z_t)$. With $z_t=E(o_t)$ the real latents, define
+the lift $\ell(z_{0:T})=\max_t \R(z_t)-\R(z_0)$ (metres). As calibration we apply
+the same rollout to real expert successes.
+
+\begin{center}
+\small
+\begin{tabular}{lccc}
+\toprule
+ & $n$ & real lift $\ell$ & \textbf{WM-predicted lift} $\hat\ell$ \\
+\midrule
+expert success & 60  & $0.288$ & $0.272$ \quad(tracks reality) \\
+grasp-miss     & 112 & $0.002$ & $\mathbf{0.210}$ \quad(hallucinated grasp) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+On real successes the WM predicts the lift correctly ($0.272$ vs.\ $0.288$),
+confirming that $\R$ and $\phi$ are faithful. On the grasp-\emph{and-miss}
+sequences the block never leaves the table ($0.002$), yet the WM predicts a
+near-full lift ($0.210$), above the $0.045$\,m grasp threshold on $100\%$ of
+episodes. The predicted trajectory of a miss is thus indistinguishable, in the
+task-relevant coordinate, from that of a success: $\R(\hat z_T)$ lands in the
+``lifted'' region whether or not $A$ really grasps. (A faint residual, $0.210$
+vs.\ $0.272$, exists but sits far above threshold.) This is \emph{attachment
+optimism}, and the effect is not marginal but categorical: for the exact action
+sequences that miss in reality, the world model imagines a successful grasp.
+
+\end{document}

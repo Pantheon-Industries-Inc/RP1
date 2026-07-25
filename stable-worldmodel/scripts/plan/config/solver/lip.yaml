@@ -1,0 +1,14 @@
+_target_: stable_worldmodel.solver.LIPSolver
+model: ???
+batch_size: 1
+num_samples: 300          # only used if n_steps > 0 (MPPI refinement)
+var_scale: 1.0
+n_steps: 0                # 0 = pure learned planner (benchmarked config)
+topk: 30
+lam: 1.0
+actor_path: ???           # trained LIP checkpoint (train_lip.py / train_lip_dino.py)
+restarts: 1               # >1: noisy restarts + argmin-V selection
+restart_noise: 0.5
+robust_m: 0               # >0: average value of m perturbed copies when selecting
+device: "cuda"
+seed: ${seed}

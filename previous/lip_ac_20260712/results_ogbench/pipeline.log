@@ -1,0 +1,51 @@
+[07:43:19] PIPELINE: waiting for dataset download/extract
+[09:51:47] PIPELINE: waiting for dataset download/extract
+[09:51:47] PIPELINE: dataset ready: 95G
+h5 keys: ['action', 'control', 'ep_idx', 'ep_len', 'ep_offset', 'id', 'observation', 'pixels', 'prev_qpos', 'prev_qvel', 'privileged_block_0_pos', 'privileged_block_0_quat', 'privileged_block_0_yaw', 'privileged_target_block', 'privileged_target_block_pos', 'privileged_target_block_yaw', 'privileged_target_task', 'proprio_effector_pos', 'proprio_effector_yaw', 'proprio_gripper_contact', 'proprio_gripper_opening', 'proprio_gripper_vel', 'proprio_joint_pos', 'proprio_joint_vel', 'qpos', 'qvel', 'render_time', 'reward', 'step_idx', 'success', 'target', 'terminated', 'time', 'truncated']
+action: (2010000, 5) pixels: (2010000, 224, 224, 3) uint8
+first/last frame readable: 58.10378799957483 60.596214657738095
+last action readable: [nan nan nan nan nan]
+H5 OK
+[09:51:47] PIPELINE: h5 verified
+[09:51:47] PIPELINE: building fs1 cache: 4 shards x 2500 episodes
+[09:55:04] PIPELINE: merging shards -> fs1 + derived fs5
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+caches OK: fs1 torch.Size([2010000, 192]) fs5 torch.Size([410000, 192])
+[09:55:20] PIPELINE: caches verified
+[09:55:20] PIPELINE: launching run_ac_ogbench.sh
+[09:55:21] phase 0: canary anchors (sequential winners on the fresh pod)
+[09:59:39] eval anchor_lip_h25_s42: 88.0
+[10:00:19] eval anchor_tdcem_h25_s42: 82.0
+[10:00:19] anchors: LIP 88.0 (writeup 88), TD+CEM 82.0 (writeup 82)
+[10:00:19] phase 1: training 4 AC arms
+[11:45:06] AC arms trained
+[11:50:08] eval lipac_warm_h25_s42: 88.0
+[11:50:19] eval lipac_expand03_h25_s42: 86.0
+[11:50:24] eval lipac_fresh_h25_s42: 84.0
+[11:50:28] eval lipac_nofreeze_h25_s42: 88.0
+[11:57:08] eval lipac_nofreeze_h50_s42: 74.0
+[11:57:38] eval lipac_fresh_h50_s42: 68.0
+[11:57:45] eval lipac_warm_h50_s42: 74.0
+[11:57:50] eval lipac_expand03_h50_s42: 68.0
+[12:03:09] eval accem_nofreeze_h25_s42: 74.0
+[12:03:09] eval accem_expand03_h25_s42: 78.0
+[12:03:30] eval accem_fresh_h25_s42: 64.0
+[12:03:33] eval accem_warm_h25_s42: 68.0
+[12:11:55] eval accem_fresh_h50_s42: 60.0
+[12:12:00] eval accem_expand03_h50_s42: 60.0
+[12:12:23] eval accem_warm_h50_s42: 62.0
+[12:12:47] eval accem_nofreeze_h50_s42: 54.0
+[12:12:47] arm fresh: h25 84.0 + h50 68.0 = 152
+[12:12:47] arm warm: h25 88.0 + h50 74.0 = 162
+[12:12:47] arm nofreeze: h25 88.0 + h50 74.0 = 162
+[12:12:47] arm expand03: h25 86.0 + h50 68.0 = 154
+[12:12:47] AC winner: warm (h25+h50 s42 = 162; sequential LIP anchor-era = 88+74)
+[12:16:46] eval lipacwin_warm_h25_s43: 92.0
+[12:17:02] eval lipacwin_warm_h25_s42: 88.0
+[12:17:15] eval lipacwin_warm_h25_s44: 76.0
+[12:21:53] eval lipacwin_warm_h50_s43: 86.0
+[12:22:57] eval lipacwin_warm_h50_s42: 74.0
+[12:23:46] eval lipacwin_warm_h50_s44: 62.0
+[12:23:46] DONE. Compare lipacwin_warm_* vs LIP v1 (88/96/78 h25, 74.0 h50 mean) in /workspace/results/summary.csv
+[12:23:46] PIPELINE: pipeline complete

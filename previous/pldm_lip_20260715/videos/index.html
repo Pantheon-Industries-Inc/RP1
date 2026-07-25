@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>LIPv4-AC rollout galleries — OGBench cube</title>
+<style>body{font-family:sans-serif;background:#111;color:#eee;margin:40px} a{color:#3498db;font-size:18px}
+li{margin:12px 0} p{color:#aaa;max-width:800px}</style></head><body>
+<h1>LIPv4-AC rollout video galleries (draw s42, h25 — identical 50 tasks)</h1>
+<p>Every episode of each champion, 3 panels per video: agent | dataset expert | goal.
+Success = block within 4cm of target. See stable-worldmodel/docs/lip_results.md for the full writeup.</p>
+<ul>
+<li><a href="lewm_champ_s42/index.html">LeWM (v2WM) champion — 88% (44/50)</a> — fails only the 5 core airborne-grasp tasks + 1 marginal; carries all transports.</li>
+<li><a href="k12s0_s42/index.html">PLDM champion (k12 seed 0) — 68% (34/50)</a> — same core failures, plus 5 transports dropped at the step-25 replan boundary and 6 marginal misses.</li>
+</ul>
+<p>Cross-WM viewing tip: open both galleries side by side and compare the blue-tagged tasks
+(31, 24, 0, 46, 1) — the same task succeeding on LeWM and collapsing mid-carry on PLDM is the
+campaign's central mechanism finding.</p>
+</body></html>

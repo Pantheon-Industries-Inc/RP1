@@ -1,0 +1,9 @@
+
+==== swm/TwoRoom-v1 wm=dinowm_tworoom n=40 cross_wall=True horizon=20 samples=200 ====
+| condition   | mode        |   success% |
+|-------------|-------------|------------|
+| latent      | latent      |       57.5 |
+| reg20       | replacement |       22.5 |
+| reg100      | replacement |       55   |
+| reg200      | replacement |       65   |
+| td_ref      | replacement |       95   |

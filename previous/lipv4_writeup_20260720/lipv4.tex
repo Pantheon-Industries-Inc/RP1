@@ -1,0 +1,65 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.72in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,microtype,xcolor}
+\usepackage{titlesec}
+\usepackage[colorlinks=true,urlcolor=blue!55!black,linkcolor=black]{hyperref}
+\titlespacing*{\section}{0pt}{6pt}{2pt}
+\titleformat{\section}{\normalfont\large\bfseries\color{blue!30!black}}{}{0pt}{}
+\setlength{\parskip}{2pt}\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\begin{document}
+
+{\LARGE\bfseries LIPv4: a learned iterative planner for latent world models}\\[2pt]
+{\small\itshape Learned Iterative Planning, ``min0'' variant --- goal-reaching in a frozen world model. Internal note, 2026-07-20.}
+
+\vspace{2pt}
+\hrule
+\vspace{4pt}
+
+LIPv4 replaces sampling-based CEM planning with a \emph{learned} refinement rule. A small MLP $f_\theta$ (two hidden layers, width 512) is applied $K$ times, weight-tied, to an action plan $A\in\mathbb{R}^{H\times a}$ ($H{=}5$ blocks of $a{=}25$ dims $=5$ primitives $\times$ 5-d action):
+\[
+A^{(0)}=0,\qquad
+A^{(k{+}1)}=\underbrace{\mathrm{clip}_{\pm a_{\max}}}_{\text{clip}}\!\Big(\underbrace{A^{(k)}+f_\theta\big(A^{(k)},\,\nabla_{\!A}V,\,V\big)}_{\text{residual update}}\Big),\quad k=0,\dots,K{-}1 .
+\]
+Here $V=V_\phi(\hat z_H, z_g)$ is a learned, goal-conditioned terminal value evaluated on the plan's imagined final latent $\hat z_H$ --- obtained by rolling the \emph{frozen} world model forward under $A$ --- and $\nabla_{\!A}V$ is its gradient back through the world model. The v4 (``min0'') form is \textbf{input-minimal and gate-free}: the actor sees only $[\,A,\ \nabla_{\!A}V,\ V\,]$ --- no raw state, no raw goal. Task information reaches the planner \emph{only} through the value.
+
+\textbf{Clipped residual (our v4 form).} $f_\theta$ emits a \emph{residual} $\Delta$, not an absolute plan, so each of the $K$ weight-tied iterations refines the previous one and every iterate is hard-clipped to $\pm a_{\max}$: the update uses \emph{both} the residual (incremental, near-identity at init) \emph{and} the clip (bounds the plan to the training action range). v4 drops the sigmoid gate of earlier versions --- the clip takes over its damping role, so ``gate-free'' is not ``unbounded.'' Deploy is receding-horizon: run $K$ iterations from $A^{(0)}{=}0$, execute the first block, re-plan.
+
+\textbf{Critic.} $V_\phi$ is a goal-conditioned temporal-distance value (quasimetric head) trained by $n$-step TD ($n{=}50$) with hindsight (HER) goals and a low expectile ($\tau{=}0.03$, optimistic toward the min), warm-started from a sequential-TD checkpoint and co-trained 1:1 with the actor through an EMA teacher.
+
+\section*{Results --- OGBench cube, LeWM world model (3 eval draws $\times$ 50 tasks)}
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+planner (success rate, \%) & h25 & h50 \\
+\midrule
+random floor (tasks already solved at start) & 50.7 & 30.7 \\
+native CEM (world model's own latent-MSE cost) & 75.3 & 54.0 \\
+TD+CEM (learned value, CEM search) & 79.3 & 64.7 \\
+\textbf{LIPv4 (learned value + learned optimizer)} & \textbf{87.6} & \textbf{74.0} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{-2pt}
+The architecture transfers \emph{unchanged} to a different world model (PLDM): $+12.3$ at h25, $+7.0$ at h50 over base PLDM+CEM, with the largest relative gain exactly where the world model's native cost is weakest (over-floor ratio $1.93\times$ vs.\ CEM on PLDM at h25, vs.\ $1.51\times$ on LeWM).
+
+\section*{Why it works}
+\textbf{The value-gradient is the load-bearing input.} Ablating it ($[A,\nabla_{\!A}V,V]\!\to\![A,V]$) collapses success $87.6\!\to\!54.0$ --- the gradient carries $\approx$91\% of all above-floor performance. A scalar value cannot steer a 125-d action space; the gradient supplies direction (CEM substitutes brute-force sampling for it).
+
+\textbf{$\sim$500$\times$ cheaper planning.} $\approx$16 world-model rollout-equivalents per replan versus $\approx$9{,}000 for CEM --- at \emph{higher} success.
+
+\textbf{Less input is more.} Dropping raw state, raw goal, and the gate ties or beats the full-input actor at lower variance: the value is the only teacher, and the only input.
+
+\section*{Limits}
+About 12 ``grasp-with-airborne-goal'' tasks fail for \emph{every} planner (LIPv4 and CEM alike): a property of expert-only data --- zero attempted-and-missed grasps in 2M frames --- fixable only by a negative-data world-model fine-tune ($89.3$, breaking the long-standing 88 plateau), not by any planner-side change. The gradient refiner is also more sensitive than CEM to off-manifold states at the receding-horizon replan boundary.
+
+\vfill
+{\footnotesize\color{black!55}
+Recipe: $K{=}8$, $a_{\max}{=}3.5\sigma$, actor lr $3\!\times\!10^{-4}$, critic $n{=}50$/$\tau{=}0.03$, $A^{(0)}{=}0$, 1 restart.\quad
+Code: \code{stable\_worldmodel/solver/lip.py} (\code{kind='lip4'}); trainer \code{scripts/plan/train\_lip\_ac.py}.}
+
+\end{document}

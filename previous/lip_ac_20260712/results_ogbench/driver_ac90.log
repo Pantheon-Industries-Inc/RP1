@@ -1,0 +1,35 @@
+[17:11:19] round A: plain s44 baselines + restart configs on existing actors
+[17:16:17] eval rstA_warm_r8m4_h25_s42: 82.0
+[17:16:24] eval rstA_warm_r8m0_h25_s42: 84.0
+[17:16:38] eval anchor_lip_h25_s44: 78.0
+[17:16:46] eval lipac_warm_h25_s44: 76.0
+[17:21:02] eval rstA_seq_r8m0_h25_s42: 88.0
+[17:21:17] eval rstA_seq_r8m4_h25_s42: 86.0
+[17:21:28] eval rstA_warm_r8m4_h25_s44: 76.0
+[17:21:35] eval rstA_warm_r8m0_h25_s44: 76.0
+[17:25:50] eval rstA_seq_r8m4_h25_s44: 72.0
+[17:25:52] eval rstA_seq_r8m0_h25_s44: 72.0
+[17:25:52] round A warm sums: plain=164 r8m0=160 r8m4=158
+[17:25:52] round A seq sums: plain=166 r8m0=160 r8m4=158
+[17:25:52] chosen eval config: plain
+[17:25:52] round B: training sched / amax35 / md5 / schedamax
+[19:08:57] round B trained
+[19:13:46] eval lipac90_sched_h25_s42: 86.0
+[19:13:47] eval lipac90_md5_h25_s42: 86.0
+[19:13:53] eval lipac90_schedamax_h25_s42: 88.0
+[19:13:55] eval lipac90_amax35_h25_s42: 78.0
+[19:19:15] eval lipac90_schedamax_h25_s44: 80.0
+[19:19:26] eval lipac90_md5_h25_s44: 76.0
+[19:19:28] eval lipac90_sched_h25_s44: 72.0
+[19:19:31] eval lipac90_amax35_h25_s44: 74.0
+[19:19:31] arm sched: s42+s44 = 158
+[19:19:31] arm amax35: s42+s44 = 152
+[19:19:31] arm md5: s42+s44 = 162
+[19:19:32] arm schedamax: s42+s44 = 168
+[19:19:32] round B winner: schedamax (s42+s44 = 168, baseline warm = 164)
+[19:19:32] confirm: winner schedamax on h25 x 3 seeds + h50 s42
+[19:23:10] eval win90_schedamax_h25_s43: 96.0
+[19:23:47] eval win90_schedamax_h25_s42: 88.0
+[19:24:14] eval win90_schedamax_h25_s44: 80.0
+[19:25:26] eval win90_schedamax_h50_s42: 74.0
+[19:25:26] DONE. h25 mean of win90_schedamax = 88 (target >90; sequential champion 87.3)

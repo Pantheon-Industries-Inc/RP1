@@ -1,0 +1,26 @@
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+2026-07-12 17:25:57.444 | INFO     | stable_worldmodel.wm.utils:_resolve_folder:138 - Loading checkpoint from folder /workspace/ckpts/ogbench_cube_single_v2WM...
+/workspace/code/stable-worldmodel/stable_worldmodel/wm/utils.py:81: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(checkpoint_path, map_location='cpu')
+17:26:01 | INFO  | atomic_chec~| [atomic_save] installed crash-safe checkpoint plugin (write to sibling .tmp + fsync + atomic rename)
+17:26:01 | INFO  | utils.py    | Created ViT-tiny from scratch with config: {'hidden_size': 192, 'num_hidden_layers': 12, 'num_attention_heads': 3, 'intermediate_size': 768, 'image_size': 224, 'patch_size': 14}
+step 0: E_final 20.711 E_first 19.732 td_loss 2.7831 tau 0.100 clr 1.00e-03 alr 3.00e-04
+step 500: E_final 5.169 E_first 19.069 td_loss 2.5263 tau 0.095 clr 9.87e-04 alr 2.97e-04
+step 1000: E_final 4.597 E_first 21.194 td_loss 2.4994 tau 0.089 clr 9.47e-04 alr 2.90e-04
+step 1500: E_final 5.364 E_first 22.264 td_loss 2.3614 tau 0.084 clr 8.83e-04 alr 2.77e-04
+step 2000: E_final 4.492 E_first 19.671 td_loss 2.1664 tau 0.078 clr 8.00e-04 alr 2.60e-04
+step 2500: E_final 2.848 E_first 17.862 td_loss 1.9756 tau 0.073 clr 7.02e-04 alr 2.40e-04
+step 3000: E_final 3.017 E_first 18.166 td_loss 1.8563 tau 0.067 clr 5.94e-04 alr 2.17e-04
+step 3500: E_final 3.375 E_first 19.194 td_loss 1.6890 tau 0.062 clr 4.84e-04 alr 1.91e-04
+step 4000: E_final 3.140 E_first 16.299 td_loss 1.6123 tau 0.056 clr 3.78e-04 alr 1.65e-04
+step 4500: E_final 2.751 E_first 20.252 td_loss 1.4104 tau 0.051 clr 2.82e-04 alr 1.39e-04
+step 5000: E_final 2.238 E_first 17.603 td_loss 1.2251 tau 0.045 clr 2.02e-04 alr 1.13e-04
+step 5500: E_final 2.253 E_first 17.388 td_loss 1.0690 tau 0.040 clr 1.43e-04 alr 9.00e-05
+step 6000: E_final 2.043 E_first 15.672 td_loss 0.9913 tau 0.034 clr 1.09e-04 alr 6.95e-05
+step 6400: critic+teacher frozen for the remaining 1600 actor steps
+step 6500: E_final 1.725 E_first 16.124 td_loss nan tau 0.030 clr 1.00e-04 alr 5.28e-05
+step 7000: E_final 1.405 E_first 14.718 td_loss nan tau 0.030 clr 1.00e-04 alr 4.03e-05
+step 7500: E_final 1.458 E_first 16.692 td_loss nan tau 0.030 clr 1.00e-04 alr 3.26e-05
+saved teacher value -> /workspace/metrics/lip_ac90_schedamax_value.pt
+saved learned planner -> /workspace/actors/lip_ac90_schedamax.pt

@@ -1,0 +1,5 @@
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+2026-07-11 03:53:35.034 | INFO     | __main__:main:69 - loaded cache: 61811 latents dim=192 on cuda
+2026-07-11 03:59:01.868 | SUCCESS  | stable_worldmodel.trm.learners.td:fit:105 - TD trained (n=5 γ=1.0 head=quasimetric), final loss=1.1132
+2026-07-11 03:59:01.877 | SUCCESS  | __main__:main:106 - saved td metric -> /workspace/metrics/td_e0.3_n5.pt

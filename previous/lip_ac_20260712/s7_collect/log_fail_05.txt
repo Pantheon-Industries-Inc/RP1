@@ -1,0 +1,7 @@
+worker 5/14 mode=fail events_avail=704 target=75 excl_eps=149
+tried=20 banked=16 extras=4 rate=8.5s/clip
+tried=40 banked=30 extras=10 rate=8.5s/clip
+tried=60 banked=46 extras=14 rate=8.5s/clip
+tried=80 banked=62 extras=18 rate=8.5s/clip
+DONE banked=75 extras_kept=15 tried=95
+WROTE /workspace/datasets/lewm_cube_negatives/shard_fail_05.h5 eps=90 steps=5850

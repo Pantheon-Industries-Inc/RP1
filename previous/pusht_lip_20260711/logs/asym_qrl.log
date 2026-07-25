@@ -1,0 +1,10 @@
+/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
+  from stable_worldmodel.envs import ale  # noqa: F401
+forward d(a,b): mean 15.88
+reverse d(b,a): mean 38.53
+asymmetry gap (rev-fwd): mean 22.65, |gap|/fwd median 94.24%
+frac pairs with rev > fwd: 75.38%
+Spearman(gap, block-pose change) = 0.604
+Spearman(gap, agent-only motion) = 0.084
+low-block-motion pairs: gap mean 0.36 (vs all 22.65)
+high-block-motion pairs: gap mean 48.61

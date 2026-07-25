@@ -1,0 +1,11 @@
+
+==== swm/TwoRoom-v1 wm=dinowm_tworoom n=40 cross_wall=True horizon=20 samples=200 ====
+| condition       | mode        |   success% |
+|-----------------|-------------|------------|
+| latent          | latent      |       57.5 |
+| trm_regression  | replacement |       50   |
+| trm_td          | replacement |       95   |
+| trm_contrastive | replacement |       52.5 |
+| hybrid          | hybrid      |       75   |
+| shuffled        | shuffled    |       15   |
+| oracle          | oracle      |      100   |

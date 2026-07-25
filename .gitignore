@@ -1,0 +1,25 @@
+# --- regenerable / environment ---------------------------------------------
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# stable-worldmodel is VENDORED (not a submodule): its working tree carries 9
+# modified + 29 untracked files -- including solver/lip.py, train_lip_ac.py and
+# config/solver/lip.yaml, i.e. the whole LIP implementation, which exists in NO
+# upstream commit. A submodule pin would ship a tree with no LIP in it.
+# Upstream base: galilai-group/stable-worldmodel @ b298aa70.
+stable-worldmodel/.git/
+stable-worldmodel/.venv/
+
+# --- large archives (redundant snapshots of content already tracked) --------
+*.tgz
+*.tar.gz
+*.tar.zst
+*.zip
+
+# --- individual files over GitHub's hard 100 MB limit -----------------------
+# (kept out so a push can never be rejected mid-transfer)
+pod_archive/poda_20260715/lewm_cube_negatives/
+previous/pod_migration_20260709/pod_bundle_20260709.tgz
+stable-worldmodel/checkpoints/ogbench_cube_full_handoff_*/models/*/weights_step_100000.pt

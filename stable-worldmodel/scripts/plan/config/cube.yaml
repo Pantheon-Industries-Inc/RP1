@@ -1,0 +1,67 @@
+defaults:
+  - launcher: local
+  - solver: cem
+  - _self_
+
+world:
+  env_name: swm/OGBCube-v0
+  num_envs: ${eval.num_eval}
+  max_episode_steps: ??? # make sure it's >= eval_budget
+  env_type: single
+  ob_type: states
+  multiview: False
+  width: 224
+  height: 224
+  visualize_info: False
+  terminate_at_goal: True
+
+dataset:
+  # z-scoring stats source. MUST match the checkpoint's TRAINING dataset.
+  # Default (eval dataset) is correct for v2WM/ftmisses/PLDM (trained on the
+  # expert h5). For OGBench play-data retrains override with e.g.:
+  #   dataset.stats=ogbench/visual_cube_single_play_v0.h5
+  stats: ${eval.dataset_name}
+  keys_to_cache:
+    - action
+
+seed: 42
+policy: random # ckpt name or random
+
+plan_config:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5 # frameskip
+
+# evaluation from dataset (replay expert trajectories)
+eval:
+  num_eval: 50
+  goal_offset_steps: 25
+  eval_budget: 50
+  img_size: 224
+  # train_res: checkpoint's native training image resolution. Images (env
+  # obs + goals) are bottlenecked through it before the final resize, so a
+  # model trained on upscaled low-res frames sees its training domain.
+  # null for 224-native checkpoints (v2WM etc.); 64 for OGBench play retrains.
+  train_res: null
+  dataset_name: ogbench/cube_single_expert.h5
+  callables:
+    # -- set state
+    - method: set_state
+      args:
+        qpos:
+          value: qpos
+        qvel:
+          value: qvel
+    # -- set target pos
+    - method: set_target_pos
+      args:
+        cube_id:
+          value: 0
+          in_dataset: False
+        target_pos:
+          value: goal_privileged_block_0_pos
+        target_quat:
+          value: goal_privileged_block_0_quat
+
+output:
+  filename: ogb_cube_results.txt
