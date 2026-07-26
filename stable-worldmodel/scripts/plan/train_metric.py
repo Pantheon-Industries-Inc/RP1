@@ -13,6 +13,11 @@ Example::
 
     python scripts/trm/train_metric.py --cache caches/tworoom_state.pt \
         --learner regression --out metrics/tworoom_regression.pt --scale 100
+
+If the cache was built with ``cache_latents.py --compress <spec>`` (flat
+patch-token bases such as DINO), pass the SAME ``--compress <spec>`` here: the
+head trains on the compressed rows and is wrapped in ``CompressedMetric`` so the
+planner can keep handing it full flat tokens.
 """
 
 import argparse
@@ -21,6 +26,7 @@ import torch
 from loguru import logger as logging
 
 from stable_worldmodel.trm import LatentCache, learners, save_metric
+from stable_worldmodel.trm.io import CompressedMetric, compress_arch, projection_sha256
 from stable_worldmodel.trm.learners.contrastive import ContrastiveConfig
 from stable_worldmodel.trm.learners.regression import RegressionConfig
 from stable_worldmodel.trm.learners.td import TDConfig
@@ -61,6 +67,13 @@ def main():
     # contrastive
     p.add_argument("--rep-dim", type=int, default=64)
     p.add_argument("--temperature", type=float, default=1.0)
+    # latent compression (flat patch-token bases)
+    p.add_argument("--compress", default=None,
+                   help="compressor the cache was built with: mean | rp<D> | spatial<k>. "
+                        "Recorded in arch so load_metric rebuilds the CompressedMetric "
+                        "wrapper (the planner passes full flat tokens).")
+    p.add_argument("--pool-patches", type=int, default=0,
+                   help="[legacy] equivalent to --compress mean with P patches")
     p.add_argument("--device", default="auto")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
@@ -103,6 +116,36 @@ def main():
         )
         module = learners.contrastive.fit(cache, cfg, device)
         arch = {"hidden_dim": args.hidden_dim, "rep_dim": args.rep_dim, "depth": args.depth}
+
+    spec = args.compress or ("mean" if args.pool_patches else None)
+    if spec:
+        # the head trained on compressed rows; wrap it so the planner can hand it
+        # full flat patch tokens at deploy time (dispatch is by last dim)
+        meta = cache.meta or {}
+        cache_spec = meta.get("compress") or ("mean" if meta.get("pool_patches") else None)
+        assert cache_spec == spec, (
+            f"cache was built with compress={cache_spec!r} but --compress={spec!r}"
+        )
+        full = meta.get("compress_full_dim")
+        patches = meta.get("compress_patches") or meta.get("pool_patches")
+        token_dim = meta.get("compress_token_dim")
+        seed = int(meta.get("compress_seed", 0))
+        if full is None:  # legacy mean-pool cache without the new meta keys
+            patches = int(patches or 196)
+            token_dim = int(token_dim or cache.latent_dim)
+            full = patches * token_dim
+        module = CompressedMetric(module, spec, full, cache.latent_dim,
+                                  patches=patches, token_dim=token_dim, seed=seed)
+        if meta.get("compress_sha256"):
+            # hard closure: the projection rebuilt here must be bit-identical to
+            # the one the cache was encoded with, else train and deploy disagree
+            got = projection_sha256(module.proj)
+            assert got == meta["compress_sha256"], (
+                f"rp matrix mismatch: cache {meta['compress_sha256'][:16]} vs rebuilt {got[:16]}"
+            )
+            logging.info(f"rp matrix sha256 matches cache ({got[:16]})")
+        arch.update(compress_arch(spec, full, cache.latent_dim, patches, token_dim, seed))
+        logging.info(f"wrapped head in CompressedMetric({spec}: {full} -> {cache.latent_dim})")
 
     save_metric(module.cpu(), learner, cache.latent_dim, arch, args.out)
     logging.success(f"saved {learner} metric -> {args.out}")

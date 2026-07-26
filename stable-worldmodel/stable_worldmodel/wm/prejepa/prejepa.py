@@ -71,11 +71,11 @@ class PreJEPA(torch.nn.Module):
         B = pixels.shape[0]
         pixels = rearrange(pixels, 'b t ... -> (b t) ...')
 
-        kwargs = (
-            {'interpolate_pos_encoding': True}
-            if self.interpolate_pos_encoding
-            else {}
-        )
+        kwargs = {}
+        if self.interpolate_pos_encoding:
+            import inspect as _insp
+            if "interpolate_pos_encoding" in _insp.signature(self.backbone.forward).parameters:
+                kwargs["interpolate_pos_encoding"] = True
         pixels_embed = self.backbone(pixels, **kwargs)
 
         if hasattr(pixels_embed, 'last_hidden_state'):
@@ -94,11 +94,11 @@ class PreJEPA(torch.nn.Module):
 
     def _encode_video(self, pixels):
         B, T, C, H, W = pixels.shape
-        kwargs = (
-            {'interpolate_pos_encoding': True}
-            if self.interpolate_pos_encoding
-            else {}
-        )
+        kwargs = {}
+        if self.interpolate_pos_encoding:
+            import inspect as _insp
+            if "interpolate_pos_encoding" in _insp.signature(self.backbone.forward).parameters:
+                kwargs["interpolate_pos_encoding"] = True
 
         pixels_embeddings = []
 

@@ -73,6 +73,8 @@ class DinoWMTokens(nn.Module):
         predict_bf16: bool = False,
         grad_checkpoint: bool = False,
         compile_predictor: bool = False,
+        cost_chunk: int = 128,
+        keep_pred_frames: int = 2,
     ):
         super().__init__()
         self.backbone = encoder
@@ -98,6 +100,24 @@ class DinoWMTokens(nn.Module):
         if proprio_encoder is not None:
             self.register_buffer("pro_mu", torch.zeros(proprio_dim))
             self.register_buffer("pro_std", torch.ones(proprio_dim))
+        # planning knobs (not part of the checkpoint)
+        self.cost_chunk = int(cost_chunk)
+        self.keep_pred_frames = int(keep_pred_frames)
+        # One-time additive calibration of the predictor's output offset. The
+        # released PreJEPA predictors land in a SHIFTED copy of the encoder's
+        # feature space: pred = f(z) + c with c fixed (cosine 0.999 across
+        # independent data splits). Subtracting c takes the 1-step
+        # pred/copy-last MSE ratio from ~2.6 to ~0.5 on held-out reacher data.
+        # Defaults to zeros => byte-identical behaviour for every existing
+        # checkpoint; a calibrated checkpoint simply ships a non-zero buffer.
+        self.register_buffer("pred_bias", torch.zeros(self.latent_dim))
+        # tolerate checkpoints written before pred_bias existed (strict load)
+        self._register_load_state_dict_pre_hook(self._pred_bias_compat)
+
+    def _pred_bias_compat(self, state_dict, prefix, *args, **kwargs):
+        key = prefix + "pred_bias"
+        if key not in state_dict:
+            state_dict[key] = torch.zeros(self.latent_dim)
 
     @property
     def wants_proprio(self) -> bool:
@@ -181,7 +201,139 @@ class DinoWMTokens(nn.Module):
             out = fn(x)
         out = rearrange(out, "b (t p) d -> b t p d", t=T)
         out = out[..., : self.tok_dim]  # strip predicted action slice
-        return out.reshape(B, T, self.latent_dim)
+        return out.reshape(B, T, self.latent_dim) - self.pred_bias
+
+    ####################
+    ## Inference only ##
+    ####################
+
+    def _pad_hist(self, z: torch.Tensor) -> torch.Tensor:
+        """(B, T, D) -> (B, history_size, D); short histories repeat frame 0."""
+        n = self.history_size
+        if z.shape[1] < n:
+            pad = z[:, :1].expand(-1, n - z.shape[1], -1)
+            z = torch.cat([pad, z], dim=1)
+        return z[:, -n:]
+
+    def rollout_traj(self, z_hist, plan, a_hist=None):
+        """Autoregressive block unroll — the exact convention LIP plans with
+        (``solver.lip.rollout_traj``).
+
+        z_hist: (B, history_size, D) latent history,
+        plan:   (B, H, action_dim) z-scored action BLOCKS (fs * a_dim),
+        a_hist: (B, history_size - 1, action_dim) past blocks; LIP uses zeros
+                (the true past blocks are not available to the planner).
+        Returns the H imagined latents (B, H, D). Differentiable in ``plan``.
+        """
+        hs = self.history_size
+        if a_hist is None:
+            a_hist = plan.new_zeros(plan.shape[0], hs - 1, plan.shape[-1])
+        embs = list(z_hist.unbind(dim=1))
+        acts = list(a_hist.unbind(dim=1))
+        outs = []
+        for t in range(plan.shape[1]):
+            acts.append(plan[:, t])
+            win_e = torch.stack(embs[-hs:], dim=1)
+            win_a = torch.stack(acts[-hs:], dim=1)
+            nxt = self.predict(win_e, self.action_encoder(win_a))[:, -1]
+            embs.append(nxt)
+            outs.append(nxt)
+        return torch.stack(outs, dim=1)
+
+    def _plan_encode(self, info_dict: dict, pixels_key: str, proprio_keys):
+        """Encode a (B, [S,] T, C, H, W) stack -> (B, T, D) flat token latents.
+
+        The sample axis inserted by the solvers is dropped (the observation is
+        identical across action candidates), mirroring ``LeWM.rollout``.
+        """
+        px = info_dict[pixels_key]
+        sampled = px.ndim == 6  # (B, S, T, C, H, W): solvers tile over samples
+        if sampled:
+            px = px[:, 0]
+        dev = next(self.parameters()).device
+        px = px.to(dev).float()
+        enc_in = {self.obs_key: px}
+        if self.wants_proprio:
+            pro = next(
+                (info_dict[k] for k in proprio_keys if info_dict.get(k) is not None),
+                None,
+            )
+            if pro is None:
+                raise KeyError(
+                    f"proprio-variant DinoWMTokens: info_dict lacks any of "
+                    f"{list(proprio_keys)} (raw proprio for the {pixels_key} latent)"
+                )
+            if not torch.is_tensor(pro):
+                import numpy as np
+
+                pro = torch.as_tensor(np.asarray(pro))
+            pro = pro.to(dev).float()
+            if sampled and pro.ndim >= 3:
+                pro = pro[:, 0]
+            B, T = px.shape[0], px.shape[1]
+            pdim = int(self.pro_mu.numel())
+            flat = pro.reshape(B, -1)
+            if flat.shape[1] == T * pdim:  # one proprio per frame
+                pro = flat.reshape(B, T, pdim)
+            else:  # a single state (the goal case): tile it over the frames
+                pro = flat[:, -pdim:].unsqueeze(1).expand(-1, T, -1)
+            enc_in["proprio"] = pro
+        return self.encode(enc_in)["emb"].float()
+
+    def get_cost(self, info_dict: dict, action_candidates: torch.Tensor):
+        """Goal-MSE planning cost for CEM / MPPI / gradient solvers.
+
+        ``action_candidates``: (B, S, H, action_dim) z-scored action blocks.
+        Returns (B, S) — the solvers assert exactly that shape.
+
+        The rollout is the one LIP already uses on this class: ``history_size``
+        encoded frames (short histories repeat frame 0), zero past action
+        blocks, H autoregressive predictor steps, cost = MSE between the
+        terminal imagined latent and the goal latent. Observation and goal
+        latents are cached in ``info_dict`` so the DINOv2 encoder runs once per
+        solve rather than once per optimizer iteration (as ``LeWM.get_cost``
+        does). The rollout is chunked over the flattened (B*S) axis because the
+        flat-token latent is ~75k-d and the predictor sees history_size*196
+        tokens per candidate.
+        """
+        assert "goal" in info_dict, "goal not in info_dict"
+        assert action_candidates.ndim == 4, (
+            f"expected (B, S, H, A) action candidates, got {tuple(action_candidates.shape)}"
+        )
+        B, S, H, A = action_candidates.shape
+        dev = next(self.parameters()).device
+
+        # -- goal latent (cached across solver iterations)
+        if "goal_emb" not in info_dict:
+            zg = self._plan_encode(info_dict, "goal", ("goal_proprio", "goal_state"))
+            info_dict["goal_emb"] = zg[:, -1:].contiguous()  # (B, 1, D), keeps a time axis
+        zg = info_dict["goal_emb"][:, -1]  # (B, D)
+
+        # -- observation history latent (cached across solver iterations)
+        if "emb" not in info_dict:
+            z = self._plan_encode(info_dict, self.obs_key, ("proprio",))
+            info_dict["emb"] = self._pad_hist(z).contiguous()  # (B, hs, D)
+        z_hist = info_dict["emb"]
+
+        plans = action_candidates.reshape(B * S, H, A).to(dev).float()
+        env_of = torch.arange(B, device=dev).repeat_interleave(S)
+        chunk = self.cost_chunk if self.cost_chunk > 0 else B * S
+
+        costs, kept = [], []
+        for i in range(0, B * S, chunk):
+            idx = env_of[i : i + chunk]
+            traj = self.rollout_traj(z_hist[idx], plans[i : i + chunk])  # (n, H, D)
+            costs.append(
+                F.mse_loss(traj[:, -1], zg[idx], reduction="none").mean(dim=-1)
+            )
+            if self.keep_pred_frames > 0:
+                kept.append(traj[:, -self.keep_pred_frames :])
+
+        if kept:  # (B, S, k, D) — what the TD/value cost hook re-scores
+            info_dict["predicted_emb"] = torch.cat(kept).reshape(
+                B, S, -1, self.latent_dim
+            )
+        return torch.cat(costs).view(B, S)
 
 
 __all__ = ["DinoWMTokens"]
