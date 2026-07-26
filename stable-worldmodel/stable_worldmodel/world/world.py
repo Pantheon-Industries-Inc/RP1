@@ -559,6 +559,31 @@ class World:
 
         goal_snapshot = {k: self.infos[k].copy() for k in goal_state}
 
+        # SWM_RECORD_PATH: optionally record per-step columns to a lance
+        # dataset -- on-policy collection through the eval path
+        # (goal-conditioned, unlike collect()). Mirrors collect()'s buffering,
+        # squeeze and action-rotation conventions.
+        #
+        # The default column set is the union across envs and columns absent
+        # from world.infos are skipped: MuJoCo envs supply qpos/qvel, TwoRoom
+        # supplies state/proprio. proprio matters -- the DINO-WM proprio
+        # variant cannot be fine-tuned on data that lacks it, and the skip is
+        # silent, so override with SWM_RECORD_COLS if you need to be strict.
+        import os as _os
+        _rec_path = _os.environ.get('SWM_RECORD_PATH')
+        _rec_bufs = None
+        if _rec_path:
+            _rec_cols = tuple(
+                q.strip()
+                for q in _os.environ.get(
+                    'SWM_RECORD_COLS',
+                    'pixels,action,qpos,qvel,state,proprio',
+                ).split(',')
+                if q.strip()
+            )
+            _rec_bufs = [defaultdict(list) for _ in range(n)]
+            _rec_done = np.zeros(n, dtype=bool)
+
         results = {
             'success_rate': 0.0,
             'episode_successes': np.zeros(n, dtype=bool),
@@ -568,6 +593,24 @@ class World:
 
         def on_step(world):
             world.infos.update(deepcopy(goal_snapshot))
+            if _rec_bufs is not None:
+                for _col in _rec_cols:
+                    if _col not in world.infos:
+                        continue
+                    _d = world.infos[_col]
+                    if not isinstance(_d, (np.ndarray, torch.Tensor)):
+                        continue
+                    if _d.ndim > 1 and _d.shape[1] == 1:
+                        _d = (_d.squeeze(1) if isinstance(_d, torch.Tensor)
+                              else np.squeeze(_d, axis=1))
+                    for _i in range(n):
+                        if _rec_done[_i]:
+                            continue
+                        _v = _d[_i]
+                        _v = (_v.detach().cpu().numpy()
+                              if isinstance(_v, torch.Tensor) else _v.copy())
+                        _rec_bufs[_i][_col].append(_v)
+                _rec_done[:] = _rec_done | world.terminateds | world.truncateds
             results['episode_successes'] |= world.terminateds
             if frames is not None:
                 for i in range(world.num_envs):
@@ -576,6 +619,31 @@ class World:
                     frames[i].append(np.asarray(frame).copy())
 
         self._run(max_steps=eval_budget, mode=mode, on_step=on_step)
+
+        if _rec_bufs is not None:
+            from stable_worldmodel.data.format import get_format as _get_format
+
+            _MIN_LEN = 25  # drop episodes shorter than one plan horizon
+            _stats = {'kept': 0, 'dropped': 0}
+
+            def _rec_iter():
+                for _i in range(n):
+                    _ep = {k: list(v) for k, v in _rec_bufs[_i].items()}
+                    if not _ep or len(_ep.get('action', ())) < _MIN_LEN:
+                        _stats['dropped'] += 1
+                        continue
+                    _ep['action'].append(_ep['action'].pop(0))
+                    _stats['kept'] += 1
+                    yield _ep
+
+            _got = sorted({k for _b in _rec_bufs for k in _b})
+            _missing = [c for c in _rec_cols if c not in _got]
+            with _get_format('lance').open_writer(_rec_path) as _w:
+                _w.write_episodes(_rec_iter())
+            print('[record] kept=%(kept)d dropped=%(dropped)d' % _stats
+                  + ' cols=' + ','.join(_got)
+                  + (' MISSING=' + ','.join(_missing) if _missing else '')
+                  + ' -> ' + _rec_path, flush=True)
 
         results['success_rate'] = (
             float(results['episode_successes'].sum()) / n * 100.0

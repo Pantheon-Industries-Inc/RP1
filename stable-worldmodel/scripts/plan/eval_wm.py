@@ -209,9 +209,17 @@ def run(cfg: DictConfig):
                     if goal.ndim < pred.ndim:
                         goal = goal.unsqueeze(1)
                     goal = goal.expand_as(pred)
-                    # ensemble: pessimistic (max) distance across members
+                    # ensemble: pessimistic (max) distance across members.
+                    # forward(), NOT cost(): cost() is @torch.no_grad, which
+                    # detaches the score, so solver=adam (GradientSolver) trips
+                    # its `costs.requires_grad` assert and no TD+Adam cell can
+                    # run. CEM and MPPI both solve under @torch.inference_mode,
+                    # so forward() builds no graph there and the numbers are
+                    # unchanged; only the GD path gains the action gradient it
+                    # needs. This is the same call LIPSolver makes on its own
+                    # critic (lip_value(...)) for exactly this reason.
                     mcost = torch.stack(
-                        [m.cost(pred.float(), goal.float()) for m in self.metrics]
+                        [m(pred.float(), goal.float()) for m in self.metrics]
                     ).max(dim=0).values
                     if self.mode == 'replacement':
                         return mcost
