@@ -1,24 +1,44 @@
 #!/bin/bash
 # TwoRoom full planner x cost matrix on the author-released pretrained bases,
-# PRE-Dyna. Companion: tworoom_dyna_perplanner.sh supplies the post-Dyna half.
+# run under the AUTHORS' protocol so the numbers are comparable to the LeWM
+# paper's baseline table (docs/baselines.md).
 #
-# Protocol (fixed everywhere): env swm/TwoRoom-v1, dataset tworoom_play.lance,
-# repo-default plan_config (horizon 5 / receding 5 / action_block 5), 50 envs
-# per cell. Card = 12 cells:
-#     surface {std, hard(+eval.cross_wall=true)}
-#   x eval seed {42, 43, 44}
-#   x horizon  {h25 = offset 25 budget 50, h50 = offset 50 budget 100}
-# Reference (docs/baselines.md, authors' TwoRoom): DINO-WM 100, PLDM 97, LeWM 87.
+# Scope: the bases exactly as shipped. No Dyna / on-policy fine-tuning arm --
+# a post-Dyna column would need one fine-tune per planner (each arm on its own
+# rollouts, or the comparison is confounded by whichever planner's state
+# distribution the WM was adapted to), which is out of scope here.
+#
+# PROTOCOL -- what makes this paper-comparable (and what does not):
+#   config      scripts/plan/config/tworoom.yaml   <- the AUTHORS' plan config
+#                 (state keys pos_agent/goal_pos_agent, keys_to_cache
+#                 [action, proprio] so the DINO proprio variant is fed)
+#               NOT tworoom_lewm.yaml, which points at our noised
+#               tworoom_play.lance and uses state/goal_state.
+#   dataset     tworoom.h5 -- both the task draw AND dataset.stats (the action
+#               z-score the frozen predictors were trained under).
+#   budget      h25 = offset 25 / budget 50. docs/baselines.md states the
+#               benchmark uses a fixed 50-step budget, so *** std x h25 is THE
+#               paper-comparable cell ***: LeWM 87, PLDM 97, DINO-WM 100.
+#   extensions  h50 (offset 50 / budget 100) and the `hard` surface
+#               (+eval.cross_wall=true, start and goal on opposite sides of the
+#               wall) are OURS -- they have no counterpart in the paper table.
+#               Reported, but never compared to 87/97/100.
+#
+# Card = 12 cells: {std, hard} x eval seed {42,43,44} x {h25, h50}, 50 envs each.
 #
 # Conditions (7 arms):
 #   Latent+CEM   Latent+MPPI   Latent+Adam    (native latent-MSE cost)
-#   TD+CEM       TD+MPPI       TD+Adam        (learned TD quasimetric as cost,
+#   TD+CEM       TD+MPPI       TD+Adam        (learned MRN quasimetric as cost,
 #                                              x3 TD training seeds)
 #   LIPv4 tandem                              (x3 actor training seeds)
 #
-# Usage: tworoom_matrix.sh <base:lejepa|pldm|dinowm> <gpu> [iters]
-#   iters only picks which LIP actors to read (the "k<N>" suffix), it does not
-#   train anything -- run tworoom_phase1_matrix.sh first.
+# Usage: tworoom_matrix.sh <base:lejepa|pldm|dinowm> <gpu> [iters] [stages]
+#   stages: "anchor" = the 3 paper-comparable Latent+CEM cells only (run this
+#           FIRST and check against the reference before spending the matrix);
+#           "full" = all 7 arms x 12 cells. Default "anchor full".
+#   iters only selects which LIP actors to read (the "k<N>" suffix); train them
+#   with tworoom_phase1_matrix.sh first.
+# Env overrides: CANON (dataset path).
 # Idempotent per cell via results/summary_matrix_tworoom_<base>.csv.
 set -u
 export STABLEWM_HOME=${STABLEWM_HOME:-/workspace/swm_home}
@@ -33,10 +53,14 @@ export MKL_NUM_THREADS=$OMP_NUM_THREADS
 BASE=$1
 GPU=$2
 ITERS=${3:-8}
+STAGES=${4:-"anchor full"}
 SUFF=""; [ "$ITERS" != "8" ] && SUFF="k${ITERS}"
 
+# paper reference for the std x h25 cell (docs/baselines.md TwoRoom column)
 case "$BASE" in
-  lejepa|pldm|dinowm) ;;
+  lejepa) PAPER=87  ;;   # LeWM
+  pldm)   PAPER=97  ;;
+  dinowm) PAPER=100 ;;   # DINO-WM, proprio variant (the paper's DINO-WM)
   *) echo "unknown base $BASE (expected lejepa|pldm|dinowm)"; exit 1;;
 esac
 
@@ -47,6 +71,7 @@ MET=/workspace/metrics
 ACT=/workspace/actors
 PY=python3
 CKPT="${BASE}_tworoom"
+CANON=${CANON:-/workspace/datasets_canon/tworoom/tworoom.h5}
 SUM=$RES/summary_matrix_tworoom_${BASE}${SUFF}.csv
 DRV=$LOGS/driver_matrix_tworoom_${BASE}${SUFF}.log
 EVAL_TIMEOUT=${EVAL_TIMEOUT:-14400}
@@ -54,6 +79,7 @@ EVAL_TIMEOUT=${EVAL_TIMEOUT:-14400}
 mkdir -p "$LOGS" "$RES"; touch "$SUM"
 log(){ echo "[$(date -u +%m%d-%H:%M:%S)][mx-${BASE}] $*" | tee -a "$DRV"; }
 sc(){ grep "^${1}," "$SUM" | tail -1 | cut -d, -f2; }
+[ -f "$CANON" ] || { log "FATAL: canonical dataset $CANON not found"; exit 1; }
 
 ev(){ # name seed offset budget surface extra...
   local nm=$1 seed=$2 off=$3 bud=$4 surface=$5; shift 5
@@ -61,7 +87,8 @@ ev(){ # name seed offset budget surface extra...
   local hard=()
   [ "$surface" = "hard" ] && hard=("+eval.cross_wall=true")
   CUDA_VISIBLE_DEVICES=$GPU timeout $EVAL_TIMEOUT $PY "$PLAN/eval_wm.py" \
-    --config-name tworoom_lewm policy="$CKPT" \
+    --config-name tworoom policy="$CKPT" \
+    eval.dataset_name="$CANON" dataset.stats="$CANON" \
     seed="$seed" eval.goal_offset_steps="$off" eval.eval_budget="$bud" \
     solver.batch_size=10 output.filename="${nm}.txt" \
     "${hard[@]}" "$@" \
@@ -79,7 +106,8 @@ card(){ # tag extra...  -> the 12 cells
       ev "mx_${tag}_${surface}_h50_s${seed}" "$seed" 50 100 "$surface" "$@"
     done
   done
-  mean_of "mx_${tag}_" "CARD ${tag}"
+  mean_of "mx_${tag}_"          "CARD ${tag} (12-cell)"
+  mean_of "mx_${tag}_std_h25_"  "  paper-cell ${tag} (std h25)"
 }
 
 mean_of(){ # row-name-prefix label  -> mean over every matching cached cell
@@ -92,32 +120,56 @@ mean_of(){ # row-name-prefix label  -> mean over every matching cached cell
   [ "$n" -gt 0 ] && log "${label}: mean $(awk "BEGIN{printf \"%.1f\", $t/$n}") over n=${n} cells"
 }
 
-log "===== PRE-Dyna matrix: base ${BASE} (ckpt ${CKPT}), GPU ${GPU}, K=${ITERS}"
+log "===== matrix: base ${BASE} (ckpt ${CKPT}), GPU ${GPU}, K=${ITERS}"
+log "dataset $CANON (authors' tworoom.h5); config tworoom.yaml; paper std-h25 ref = ${PAPER}"
 
-# ---- native latent-MSE cost x 3 solvers
-for slv in cem mppi adam; do
-  card "pre_latent_${slv}" solver=$slv
-done
+for st in $STAGES; do
+case "$st" in
 
-# ---- learned TD quasimetric as cost x 3 solvers x 3 TD training seeds
-for slv in cem mppi adam; do
-  for ts in 0 1 2; do
-    TD=$MET/td_${BASE}_e0.1_n50_s${ts}.pt
-    [ -f "$TD" ] || { log "missing TD $TD -- run tworoom_phase1_matrix.sh"; continue; }
-    card "pre_td_${slv}_t${ts}" solver=$slv "+metric=$TD"
+# ---- ANCHOR: the paper-comparable cell only. 3 evals. Validates that the
+# harness reproduces the published number BEFORE 180 more are spent.
+anchor)
+  log "--- ANCHOR: Latent+CEM, std, h25 (budget 50) -- the docs/baselines.md protocol"
+  for seed in 42 43 44; do
+    ev "mx_anchor_latent_cem_std_h25_s${seed}" "$seed" 25 50 std solver=cem
   done
-  mean_of "mx_pre_td_${slv}_t" "CARD pre_td_${slv}_3seed"
+  mean_of "mx_anchor_latent_cem_std_h25_" "ANCHOR ${BASE} Latent+CEM std h25"
+  log "ANCHOR vs paper: reference ${PAPER} for ${BASE}. A large gap means the"
+  log "  protocol still diverges (dataset convention / action stats / state key)"
+  log "  -- diagnose before running the full matrix."
+  ;;
+
+# ---- FULL: 7 arms x 12 cells
+full)
+  # native latent-MSE cost x 3 solvers
+  for slv in cem mppi adam; do
+    card "latent_${slv}" solver=$slv
+  done
+
+  # learned TD quasimetric as cost x 3 solvers x 3 TD training seeds
+  for slv in cem mppi adam; do
+    for ts in 0 1 2; do
+      TD=$MET/td_canon_${BASE}_e0.1_n50_s${ts}.pt
+      [ -f "$TD" ] || { log "missing TD $TD -- run tworoom_phase1_matrix.sh"; continue; }
+      card "td_${slv}_t${ts}" solver=$slv "+metric=$TD"
+    done
+    mean_of "mx_td_${slv}_t" "CARD td_${slv}_3seed"
+  done
+
+  # LIPv4 tandem x 3 actor training seeds
+  for s in 0 1 2; do
+    A=$ACT/trm_canon_${BASE}_v4${SUFF}_s${s}.pt
+    [ -f "$A" ] || { log "missing actor $A -- run tworoom_phase1_matrix.sh"; continue; }
+    card "lip_s${s}" solver=lip "solver.actor_path=$A"
+  done
+  mean_of "mx_lip_s" "CARD lip_3seed"
+  ;;
+
+*) log "unknown stage $st" ;;
+esac
 done
 
-# ---- LIPv4 tandem x 3 actor training seeds
-for s in 0 1 2; do
-  A=$ACT/trm_${BASE}_v4${SUFF}_s${s}.pt
-  [ -f "$A" ] || { log "missing actor $A -- run tworoom_phase1_matrix.sh"; continue; }
-  card "pre_lip_s${s}" solver=lip "solver.actor_path=$A"
-done
-mean_of "mx_pre_lip_s" "CARD pre_lip_3seed"
-
-log "===== ${BASE} PRE MATRIX SUMMARY"
+log "===== ${BASE} MATRIX SUMMARY"
 sort "$SUM" >> "$DRV"
-grep "CARD " "$DRV" | tail -40
-log "MATRIX_PRE_${BASE}${SUFF}_DONE"
+grep -E "CARD |ANCHOR " "$DRV" | tail -40
+log "MATRIX_${BASE}${SUFF}_DONE"
