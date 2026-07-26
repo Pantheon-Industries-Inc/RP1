@@ -16,8 +16,11 @@
 #   * the eval draws tasks BY REPLAYING dataset rows (start = row t, goal =
 #     row t+offset), so the dataset IS the eval set, and dataset.stats is the
 #     action z-score source the frozen predictor was trained under.
-# Fetch: s3://lancedb-datasets-dev-us-east-2-devrel/training/stableworldmodel/
-#        tworoom/tworoom.h5  (per scripts/benchmark/configs/benchmark.yaml)
+# Fetch: HF dataset `quentinll/lewm-tworooms` -> tworoom.tar.zst (3.43 GB,
+#        public), the TwoRoom sibling of lewm-cube / lewm-reacher. Note the
+#        PLURAL "tworooms" in the repo id. tworoom_pod_setup.sh does this.
+#        (benchmark.yaml also lists an s3:// path, but that dev bucket needs
+#        credentials -- the HF repo does not.)
 #
 # Differs from tworoom_bases_phase1.sh in two ways that matter: the dataset
 # above, and TD trained with THREE initialization seeds (not one), because the
