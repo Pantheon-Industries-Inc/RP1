@@ -37,6 +37,7 @@ collect_call(){ # actor_seed call_idx
   SWM_RECORD_PATH=$rec CUDA_VISIBLE_DEVICES=$GPU timeout 7200 $PY \
     "$PLAN/eval_wm.py" --config-name reacher seed=$seed \
     eval.goal_offset_steps=25 eval.eval_budget=50 \
+    +eval.ep_range=${COLLECT_EP_RANGE:-0:8000} \
     policy="${WM}_reacher" solver=lip \
     "solver.actor_path=/workspace/actors/lip4_reacher_${WM}_a22_s${a}.pt" \
     output.filename="${tag}.txt" > "$LOGS/collect_${tag}.log" 2>&1

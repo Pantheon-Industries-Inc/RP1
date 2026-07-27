@@ -114,6 +114,26 @@ def run(cfg: DictConfig):
         dataset.get_col_data(col_name), return_index=True
     )
 
+    # Optional episode-range restriction, e.g. `+eval.ep_range=0:8000`.
+    # Tasks are drawn by sampling episodes, so a Dyna loop that COLLECTS
+    # on-policy rollouts and later EVALUATES on the same dataset trains on the
+    # very (start, goal) pairs it is scored on — different seeds still draw from
+    # the same pool. Give collection and evaluation disjoint ranges over the
+    # same file to keep the eval tasks genuinely held out.
+    _rng_spec = cfg.eval.get('ep_range', None)
+    if _rng_spec:
+        _lo, _hi = (int(x) for x in str(_rng_spec).split(':'))
+        _keep = ep_indices[(ep_indices >= _lo) & (ep_indices < _hi)]
+        assert len(_keep) >= cfg.eval.num_eval, (
+            f'ep_range {_rng_spec} leaves {len(_keep)} episodes, '
+            f'need >= {cfg.eval.num_eval}'
+        )
+        print(
+            f'[eval] ep_range {_lo}:{_hi} -> {len(_keep)}/{len(ep_indices)} '
+            'episodes eligible for the task draw'
+        )
+        ep_indices = _keep
+
     process = {}
     for col in cfg.dataset.keys_to_cache:
         if col in ['pixels']:

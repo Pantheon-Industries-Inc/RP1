@@ -1,5 +1,30 @@
 # Reacher Dyna round-1 across three WM bases (2026-07-25)
 
+> **CORRECTIONS 2026-07-27 — read before any number below.**
+>
+> 1. **Every divergence figure in this document is an artifact and is RETRACTED**
+>    (the 42.3 "baseline", the ~49.5 post-Dyna values, and the mechanism claim
+>    built on them). `dyna_harness/ab_divergence.py` pairs consecutive probe
+>    rounds *by position*, but round t+1 contains only the envs still alive
+>    (50 -> 36 -> 30 -> ...), so nearly every row was mismatched. Joining on the
+>    goal latent instead gives **+1.27 (LeWM)** and **+3.01 (PLDM)**. The claim
+>    "divergence stays high, so the gain is WM-fidelity repair rather than
+>    exploitation-closure" rested on the broken numbers and does not stand.
+>    The same tool produced the OGBench campaign's 20.9 / 36.1 figures.
+>
+> 2. **The Dyna loop trained on rollouts from its own eval set.**
+>    `reacher_collect_r1.sh` never overrode `eval.dataset_name`, so on-policy
+>    collection drew tasks from the same 1,024-episode file the evaluation drew
+>    from (~2,100 draws over 1,024 episodes = essentially full coverage).
+>    Fixed by an `eval.ep_range` filter: collection now uses episodes 0:8000 and
+>    evaluation 8000:10000 over the same canonical file.
+>
+> 3. **Headline numbers superseded.** On the authors' canonical data with
+>    held-out draws: LeWM LIP 76.9 -> 78.2 (+1.3, NOT +29.3); PLDM LIP
+>    78.8 -> 89.2 (+10.4, which *does* reproduce). Full matrix in
+>    `MATRIX_reacher.md`. The 80/20 arm was used throughout, not the 50/50
+>    specified; the 50/50 WM exists but never received a fresh actor.
+
 Env `swm/ReacherDMControl-v0`, task qpos_match. Card = {h25 (offset 25, budget
 50), h50 (offset 50, budget 100)} × eval seeds {42,43,44}, n=50/cell; means are
 over the 6-cell card. LIP = LIPv4 amax 2.2, 3 training seeds. 80/20 on-policy
