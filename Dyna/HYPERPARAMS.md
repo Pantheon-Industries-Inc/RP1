@@ -114,13 +114,23 @@ Anchor after conversion: latent+CEM s43 = **88.0** vs historical 84 ✓.
 ## 4. LIPv4 actor-critic (RLP) — `scripts/plan/train_lip_ac.py`
 
 ```
---horizon 5 --iters 8 --steps 6000 --n-step 50 --amax 3.5
+--horizon 5 --iters 8 --steps 6000 --n-step 50 --amax 1.6      # <- 1.6, NOT 3.5
 --expectile 0.1 --expectile-final 0.03
 --critic-lr 1e-3 --critic-lr-final 1e-4
 --actor-lr 3e-4 --actor-lr-final 3e-5
 --arch v4 --seed {0..8}
 --cache <fs5> --cache-td <fs1> --h5 expert_actions.h5 --wm <WM> --init-value <TD>
 ```
+
+> **`--amax 1.6` is the campaign default as of 2026-07-27.** The historical 3.5
+> costs ~7 pts (79.3 vs 86.4 3-seed) and triggers a catastrophic-seed failure
+> mode (seed 0 = 68.0; seed spread 20.7 → 4.7 at 1.6). The optimum is a broad
+> flat plateau over 1.4–2.2, so the exact value inside that range does not
+> matter — see [`RESULTS_amax_sweep.md`](RESULTS_amax_sweep.md) for the full
+> 45-eval card, the held-out selection, and two caveats (draw 43 is saturated;
+> everything ran under `MUJOCO_GL=osmesa`, which reacher found to be
+> out-of-domain by ~7 pts). `train_lip_ac.py`'s `--amax` default stays at 2.5
+> because that file is shared with other campaigns — pass 1.6 explicitly.
 | | |
 |---|---|
 | arch | **v4** = gate-free min0 (campaign default; clip substitutes for the gate) |

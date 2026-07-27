@@ -154,7 +154,12 @@ def main():
                         "'vonly' = [A_t, grad_t, RAW z_t, V(z_t, zg)] — no projections, "
                         "goal only via the learned quasimetric")
     p.add_argument("--amax", type=float, default=2.5,
-                   help="plan clamp in z-scored action units (expert tails reach ~3.5 on cube)")
+                   help="plan clamp in z-scored action units (expert tails reach ~3.5 on "
+                        "cube). CUBE: use 1.6 -- swept 1.0-3.5 x 3 seeds x 3 draws, flat "
+                        "optimum over 1.4-2.2 (86.4 3-seed) and 3.5 costs ~7 pts plus a "
+                        "catastrophic-seed mode (spread 20.7 -> 4.7). Default left at 2.5 "
+                        "because reacher/tworoom share this file. See "
+                        "Dyna/RESULTS_amax_sweep.md")
     # critic (train_metric.py --learner td parity)
     p.add_argument("--head", choices=["mlp", "quasimetric"], default="quasimetric")
     p.add_argument("--hidden-dim", type=int, default=256)
