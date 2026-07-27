@@ -142,9 +142,37 @@ This converts tuning-on-test into honest held-out selection. It is weaker than a
 episode split (43/44 are still inside LIP's training pool) but it removes the selection
 bias, which is the part that actually inflates the headline.
 
-## 3. Enforcement gap
+## 3. Enforcement — `eval.ep_range`, and the two bugs that made it a no-op
 
-`eval_wm.py` has **no episode-range filter**; adding one (e.g.
-`eval.episode_range=[8000,10000]`, applied to the valid-start-row mask before the
-`rng.choice` draw) is the blocking prerequisite for rule 3 and for change #1. Until it
-exists, `episode_split.py overlap` measures the leak but nothing prevents it.
+`eval_wm.py` **does** have an episode-range filter, `+eval.ep_range=LO:HI`, added by the
+reacher campaign in `8fe3d04`. Earlier revisions of this file said it didn't exist; wrong.
+But it did not work, for two independent reasons:
+
+1. **KeyError on every intended use.** `ep_range` shrinks `ep_indices` but not the
+   dataset, and `max_start_per_row` looked up *every* row's episode in a dict built only
+   from the kept ones. Any row outside the range → `KeyError`. **Fixed**: rows outside the
+   range are masked out instead. With no `ep_range` the mask is all-True, so the
+   no-filter path is byte-identical (verified: same tasks drawn).
+2. **The reacher ranges are inert on a 1,024-episode file.** The collector passes
+   `+eval.ep_range=0:8000`, but every reacher episode id is < 8000, so *all* 1,024 are
+   kept — the filter is a no-op and collection still covers the whole file. The eval side
+   passes no `ep_range` at all (grep: `ep_range` appears in exactly one script). Had it
+   passed `8000:10000`, `_keep` would be empty and the `num_eval` assert would fire.
+   ⇒ **The reacher "held-out draws" in `reacher_dyna_20260724/RESULTS_reacher_dyna.md`
+   are not held out**, and the revised headlines there (LeWM 76.9→78.2, PLDM 78.8→89.2)
+   still carry the leak they were meant to remove. Reacher needs ranges sized to its
+   actual episode count, e.g. collect `0:820` / eval `820:1024`.
+
+### Correct usage (cube, 10k episodes — the ranges here are real)
+
+Keep the **canonical eval seeds 42/43/44**; change only the *pool* they sample from:
+
+```bash
+# collection — episodes 0-7999
+eval_wm.py ... seed=$((1000+i)) +eval.ep_range=0:8000
+# evaluation — episodes 8000-9999, standard seeds
+eval_wm.py ... seed=42 +eval.ep_range=8000:10000
+```
+
+Same seed + different pool = different tasks, so these numbers are **not** comparable to
+the historical 42/43/44 cards; they form a new baseline that both Dyna arms must share.

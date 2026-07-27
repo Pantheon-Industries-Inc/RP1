@@ -286,12 +286,18 @@ def run(cfg: DictConfig):
     # columns: lance serves them as (N,1), h5 as (N,)).
     _row_epi = np.asarray(dataset.get_col_data(col_name)).reshape(-1)
     _row_step = np.asarray(dataset.get_col_data('step_idx')).reshape(-1)
-    max_start_per_row = np.array(
-        [max_start_idx_dict[ep_id] for ep_id in _row_epi]
-    )
+    # `ep_range` shrinks ep_indices but NOT the dataset, so rows belonging to
+    # excluded episodes have no entry in max_start_idx_dict — looking them up
+    # unconditionally raises KeyError and made ep_range unusable. Mask them out
+    # instead. With no ep_range every row is in range, so this is a no-op.
+    _row_in_range = np.isin(_row_epi, ep_indices)
+    max_start_per_row = np.full(len(_row_epi), -1, dtype=np.int64)
+    max_start_per_row[_row_in_range] = [
+        max_start_idx_dict[ep_id] for ep_id in _row_epi[_row_in_range]
+    ]
 
     # remove all the lines of dataset for which dataset['step_idx'] > max_start_per_row
-    valid_mask = _row_step <= max_start_per_row
+    valid_mask = _row_in_range & (_row_step <= max_start_per_row)
     valid_indices = np.nonzero(valid_mask)[0]
     print(valid_mask.sum(), 'valid starting points found for evaluation.')
 
