@@ -93,18 +93,37 @@ PY
 grep -q "preflight. ok" "$DRV" || die "dataset preflight failed (see $DRV)"
 
 # ------------------------------------------------------------------ caches
+# COMPRESS: flat patch-token bases only (dinowm). A stride-1 cache at
+# 77,224-d over 920,809 frames is 284 GB; 'rp1024' random projection brings it
+# to 3.8 GB. rp is L2-geometry preserving, so it keeps the distances the TD
+# quasimetric is actually learning -- unlike 'mean', which pools away the patch
+# grid and violates this campaign's no-pooling directive. Deployment stays
+# honest: train_metric records the compressor in the saved arch, and
+# load_metric rebuilds a CompressedMetric wrapper, so the planner still hands
+# the value FULL flat tokens at eval time and compression happens inside.
+COMPRESS=${COMPRESS:-}
+CFLAG=(); MFLAG=()
+if [ -n "$COMPRESS" ]; then
+  CFLAG=(--compress "$COMPRESS" --compress-seed "${COMPRESS_SEED:-0}")
+  MFLAG=(--compress "$COMPRESS")
+  CACHE1=$CACHES/tworoom_canon_${BASE}_${COMPRESS}_fs1.pt
+  CACHE5=$CACHES/tworoom_canon_${BASE}_${COMPRESS}_fs5.pt
+  log "COMPRESS=$COMPRESS -> caches ${CACHE1##*/}, TD arch records the compressor"
+fi
+
 if [ ! -f "$CACHE1" ]; then
   log "fs1 latent cache from $(basename "$CANON") (stride 1 -- dense states, per the TD cache-stride lesson)"
   CUDA_VISIBLE_DEVICES=$GPU $PY "$TRM/cache_latents.py" --wm "$CKPT" \
     --dataset "$CANON" --out "$CACHE1" --state-key "$STATE_KEY" --batch-size 256 \
-    > "$LOGS/cache_canon_${BASE}_fs1.log" 2>&1 || die "fs1 cache failed"
+    "${CFLAG[@]}" \
+    > "$LOGS/cache_canon_${BASE}${COMPRESS:+_$COMPRESS}_fs1.log" 2>&1 || die "fs1 cache failed"
 fi
 log "fs1 ok ($(du -h "$CACHE1" | cut -f1))"
 
 if [ ! -f "$CACHE5" ]; then
   log "fs5 subsample (frameskip 5 -- the LIP/action-block view)"
   $PY "$TRM/subsample_cache.py" --in "$CACHE1" --out "$CACHE5" --frameskip 5 \
-    > "$LOGS/cache_canon_${BASE}_fs5.log" 2>&1 || die "fs5 subsample failed"
+    > "$LOGS/cache_canon_${BASE}${COMPRESS:+_$COMPRESS}_fs5.log" 2>&1 || die "fs5 subsample failed"
 fi
 log "fs5 ok"
 
@@ -112,13 +131,13 @@ log "fs5 ok"
 # tau 0.1: LOW expectile for cost-to-go / quasimetric distance (optimistic
 # toward the min). n-step 50 in primitive steps. Head is MRN.
 for ts in 0 1 2; do
-  TD=$MET/td_canon_${BASE}_e0.1_n50_s${ts}.pt
+  TD=$MET/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${ts}.pt
   if [ ! -f "$TD" ]; then
     log "TD warm-start seed ${ts} (tau 0.1, n-step 50, 6k steps)"
     CUDA_VISIBLE_DEVICES=$GPU $PY "$PLAN/train_metric.py" --cache "$CACHE1" \
       --learner td --head quasimetric --expectile 0.1 --n-step 50 \
-      --steps 6000 --seed "$ts" --out "$TD" \
-      > "$LOGS/td_canon_${BASE}_s${ts}.log" 2>&1 || die "TD seed ${ts} failed"
+      --steps 6000 --seed "$ts" --out "$TD" "${MFLAG[@]}" \
+      > "$LOGS/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_s${ts}.log" 2>&1 || die "TD seed ${ts} failed"
   fi
   log "TD s${ts} ok"
 done
@@ -127,9 +146,18 @@ done
 # Canonical TwoRoom recipe: arch v4 (gate-free min0), amax 2.2, max-delta 12.
 # Each actor warm-starts from the TD critic of the SAME seed so the two 3-seed
 # families stay paired.
+if [ -n "$COMPRESS" ]; then
+  log "SKIPPING LIPv4: train_lip_ac.py has no --compress support and asserts"
+  log "  init-value latent_dim == cache latent_dim, so a compressed cache cannot"
+  log "  warm-start from the compressed TD checkpoint. The Latent and TD arms of"
+  log "  this base are complete; LIPv4 needs code work first."
+  log "PHASE1_${BASE}_${COMPRESS}_DONE (latent+TD only)"
+  exit 0
+fi
+
 for s in 0 1 2; do
   OUT=$ACT/trm_canon_${BASE}_v4${SUFF}_s${s}.pt
-  TD=$MET/td_canon_${BASE}_e0.1_n50_s${s}.pt
+  TD=$MET/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${s}.pt
   if [ ! -f "$OUT" ]; then
     [ -f "$TD" ] || die "missing TD warm-start $TD"
     log "LIPv4 train seed ${s} (K=${ITERS})"
