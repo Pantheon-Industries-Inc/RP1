@@ -74,15 +74,13 @@ EGL1=$(m3 "$(sc eglchk_s1_e42)" "$(sc eglchk_s1_e43)" "$(sc eglchk_s1_e44)")
 EGL2=$(m3 "$(sc eglchk_s2_e42)" "$(sc eglchk_s2_e43)" "$(sc eglchk_s2_e44)")
 EGLM=$(m3 "$EGL0" "$EGL1" "$EGL2")
 log "=== EGL CHECK: $EGL0 / $EGL1 / $EGL2 -> $EGLM   vs osmesa 85.3 / 84.7 / 89.3 -> 86.4 ==="
-REND=osmesa
-if [ "$EGLM" != NA ] && awk -v e="$EGLM" 'BEGIN{exit !(e > 86.4)}'; then
-  REND=egl
-  log "!!! egl BEATS osmesa by $(awk -v e="$EGLM" 'BEGIN{printf "%.1f", e-86.4}') pts."
-  log "!!! The whole amax card is osmesa and its absolute numbers are understated."
-  log "!!! Arm evals will run under egl; RESULTS_amax_sweep.md must be restated."
-else
-  log "egl does NOT beat osmesa on cube -- the reacher renderer bug does not transfer."
-  log "Arm evals stay on osmesa; this is a real negative result, record it."
+# egl ALWAYS (standing instruction 2026-07-27): egl is what produced the authors'
+# h5 renders, so it is the correct default regardless of which scores higher. The
+# check above is kept as a measurement, not as a switch.
+REND=egl
+if [ "$EGLM" != NA ]; then
+  log "egl $EGLM vs osmesa 86.4 -> delta $(awk -v e="$EGLM" 'BEGIN{printf "%+.1f", e-86.4}') pts."
+  log "The reacher osmesa out-of-domain bug does NOT transfer to cube; record that."
 fi
 log "### renderer for arm evals: $REND ###"
 

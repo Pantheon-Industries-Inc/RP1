@@ -25,12 +25,22 @@
 # Do NOT pick a different epoch or arm after seeing the numbers.
 #
 # Ops: OMP=8; <=4 concurrent trainings; evals STRICTLY sequential (3-way -> SIGABRT).
-# Renderer osmesa: Phase A of lr_sweep_a16.sh measured egl == osmesa on cube
-# (seed0 86.0 vs 85.3), so the reacher renderer bug does not transfer here.
+#
+# RENDERER: egl, always (standing instruction 2026-07-27). egl is what produced
+# the authors' h5 renders, and the reacher campaign found osmesa is out-of-domain
+# against them -- worth +7.3 pts there. On cube the two measured equal (seed 0:
+# egl 86.0 vs osmesa 85.3), so this does not move our numbers, but egl is the
+# correct default and removes a whole class of domain-gap doubt.
+# Two egl requirements this script satisfies:
+#   * MUJOCO_EGL_DEVICE_ID must be pinned, or every render context piles onto
+#     physical GPU 0 regardless of CUDA_VISIBLE_DEVICES (parallelization audit).
+#   * egl crashes under concurrent training -- every eval phase below is gated on
+#     a `while pgrep ... train` wait loop, and rendering phases never overlap
+#     training. The concurrent phases (P3/P8 LIP training) do not render at all.
 # Fully resumable: every phase is marker- or artifact-gated; safe to re-run.
 set -u
 export PYTHONPATH=/workspace/code/stable-worldmodel STABLEWM_HOME=/workspace/swm_home
-export MUJOCO_GL=osmesa PYOPENGL_PLATFORM=osmesa TQDM_DISABLE=1
+export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=0 TQDM_DISABLE=1
 export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
 CODE=/workspace/code/stable-worldmodel; P=$CODE/scripts/plan; TRM=$CODE/scripts/trm
 L=/workspace/logs; R=/workspace/results; D=/workspace/dyna_split

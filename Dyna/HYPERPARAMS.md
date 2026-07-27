@@ -190,7 +190,9 @@ scripts/plan/eval_wm.py --config-name cube
 | success | block within **4 cm** of target |
 | plan_config | horizon 5, receding_horizon 5, action_block 5 |
 | reported | mean over draws 42/43/44, then mean over seeds |
-| **concurrency** | **evals MUST run sequentially.** 3-way parallel → SIGABRT; 2-way silently corrupts results (cost us an 8-pt baseline error). Use `MUJOCO_GL=osmesa` when anything else occupies a GPU — EGL crashes under concurrent training. |
+| **renderer** | **`MUJOCO_GL=egl`, always** (standing instruction 2026-07-27). egl is what produced the authors' h5 renders; the reacher campaign found osmesa is out-of-domain against them, worth **+7.3 pts** there. On cube the two measure equal (seed 0: egl 86.0 vs osmesa 85.3), so egl does not move our numbers — but it is the correct default and removes a class of domain-gap doubt. Pin **`MUJOCO_EGL_DEVICE_ID`**, or every render context piles onto physical GPU 0 regardless of `CUDA_VISIBLE_DEVICES`. |
+| **concurrency** | **evals MUST run sequentially.** 3-way parallel → SIGABRT; 2-way silently corrupts results (cost us an 8-pt baseline error). egl additionally crashes under *concurrent training*, so gate every eval phase on a wait loop until training is idle. Do **not** reach for osmesa to dodge this — serialize instead. |
+| **historical note** | Every cube number before 2026-07-27 was measured under **osmesa**, including the amax sweep. Completed scripts still say `osmesa` on purpose: that is an accurate record of what ran. Since egl == osmesa on cube, those cards stand. |
 
 ---
 
@@ -198,7 +200,7 @@ scripts/plan/eval_wm.py --config-name cube
 
 `torch 2.4.1+cu124` · `transformers==4.49.0` (5.x breaks on torch 2.4.1; <4.47 lacks
 `TimmWrapperModel`) · `stable-pretraining 0.1.7` · `lightning 2.6.5` · `mujoco 3.10.0` ·
-`dm_control 1.0.43` · `ogbench 1.2.1` · `pylance 8.0.0` · `MUJOCO_GL=egl` (or `osmesa`) ·
+`dm_control 1.0.43` · `ogbench 1.2.1` · `pylance 8.0.0` · **`MUJOCO_GL=egl`** (+ `MUJOCO_EGL_DEVICE_ID`; never osmesa — see §6) ·
 `OMP_NUM_THREADS=8–16` (uncapped OMP exhausts the cgroup pid quota on crash-restart).
 
 DDP (only needed for WM training): **`NCCL_NVLS_ENABLE=0` and P2P must stay ENABLED** —
