@@ -345,17 +345,29 @@ def main():
     only = set(q for q in args.only.split(",") if q)
 
     os.makedirs(EXTRACT, exist_ok=True)
-    for f in ("lewm", "pldm", "dinowm", "dinowm_noprop"):
-        path = os.path.join(EXTRACT, "tworoom")
-        marker = {"lewm": "lejepa_weights.ckpt", "pldm": "pldm_weights.ckpt",
-                  "dinowm": "dinowm_weights.ckpt",
-                  "dinowm_noprop": "dinowm_noprop_weights.ckpt"}[f]
-        if not os.path.exists(os.path.join(path, marker)):
-            print(f"extracting {f}.tar.zst", flush=True)
-            subprocess.run(
-                ["tar", "-I", "zstd", "--no-same-owner", "--no-same-permissions",
-                 "-xf", os.path.join(ARCH, f"{f}.tar.zst"), "-C", EXTRACT],
-                check=True)
+    # Extract only the archives the requested bases need. This used to extract
+    # all four unconditionally, so running --only lejepa,pldm,dinowm still died
+    # on a missing dinowm_noprop.tar.zst -- you had to have every archive on
+    # disk to convert any one base.
+    TARBALLS = {  # base key -> (archive stem, marker file proving it is extracted)
+        "lejepa": ("lewm", "lejepa_weights.ckpt"),
+        "pldm": ("pldm", "pldm_weights.ckpt"),
+        "dinowm": ("dinowm", "dinowm_weights.ckpt"),
+        "dinowmnp": ("dinowm_noprop", "dinowm_noprop_weights.ckpt"),
+    }
+    wanted = [k for k in TARBALLS if not only or k in only]
+    for key in wanted:
+        stem, marker = TARBALLS[key]
+        if os.path.exists(os.path.join(EXTRACT, "tworoom", marker)):
+            continue
+        archive = os.path.join(ARCH, f"{stem}.tar.zst")
+        if not os.path.exists(archive):
+            raise SystemExit(f"missing archive {archive} (needed for base {key!r})")
+        print(f"extracting {stem}.tar.zst", flush=True)
+        subprocess.run(
+            ["tar", "-I", "zstd", "--no-same-owner", "--no-same-permissions",
+             "-xf", archive, "-C", EXTRACT],
+            check=True)
 
     imgs, pro, blocks, stats = load_transitions()
     print(f"validation transitions: imgs {tuple(imgs.shape)} pro {tuple(pro.shape)} "
