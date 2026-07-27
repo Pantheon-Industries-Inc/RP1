@@ -21,9 +21,12 @@ Harness scripts mirrored in `Dyna/dyna_harness/`.
 > — including the `amax` sweep — are tuned on test.
 >
 > Required split and the reasoning: **[`DATA_SPLIT_POLICY.md`](DATA_SPLIT_POLICY.md)**
-> (collect 0–7999 / eval 8000–9999, `dyna_harness/episode_split.py`). Not yet
-> enforced: `eval_wm.py` has no episode-range filter. Until it does, every
-> number in this file is an upper bound, not a generalization estimate.
+> (collect 0–7999 / eval 8000–9999, `dyna_harness/episode_split.py`).
+> **Now enforceable and being enforced:** `eval.ep_range` exists and its
+> KeyError bug is fixed (`3fbc6f1`), and the episode-disjoint Dyna control is
+> running via `dyna_harness/dyna_split_control.sh`. Every number in this file
+> that predates that control is still an upper bound, not a generalization
+> estimate.
 >
 > **Calibration, so this is not over-read:** the eval draw is a 150-task
 > *subsample of* LIP's own ~2M-pair training pool, unweighted — so LIP is not
@@ -127,15 +130,16 @@ Anchor after conversion: latent+CEM s43 = **88.0** vs historical 84 ✓.
 > mode (seed 0 = 68.0; seed spread 20.7 → 4.7 at 1.6). The optimum is a broad
 > flat plateau over 1.4–2.2, so the exact value inside that range does not
 > matter — see [`RESULTS_amax_sweep.md`](RESULTS_amax_sweep.md) for the full
-> 45-eval card, the held-out selection, and two caveats (draw 43 is saturated;
-> everything ran under `MUJOCO_GL=osmesa`, which reacher found to be
-> out-of-domain by ~7 pts). `train_lip_ac.py`'s `--amax` default stays at 2.5
-> because that file is shared with other campaigns — pass 1.6 explicitly.
+> 45-eval card and the held-out selection. One caveat stands (draw 43 is
+> saturated, mean 94.1 / spread 6, so a 3-draw mean is nearly "draw 44 plus a
+> constant"); the osmesa caveat is **resolved** — egl and osmesa measure equal on
+> cube (§6). `train_lip_ac.py`'s `--amax` default stays at 2.5 because that file
+> is shared with other campaigns — pass 1.6 explicitly.
 | | |
 |---|---|
 | arch | **v4** = gate-free min0 (campaign default; clip substitutes for the gate) |
 | plan | horizon 5 action *blocks* × frameskip 5 = **25 env steps**; 8 inner optimization iters |
-| amax | 3.5 (action clip) |
+| amax | **1.6** (action clip) — see the note above; 3.5 was the pre-2026-07-27 default |
 | annealing | expectile 0.1→0.03, critic lr 1e-3→1e-4, actor lr 3e-4→3e-5 |
 | tandem | critic is **co-trained** during actor training (`c_opt.step()`), with a frozen EMA `teacher` copy the actor's gradient flows *through*, never into |
 | actor goal sampling | `d ~ U{1..max_delta}` in **fs5 units** (×5 = env steps), `p_cross 0.3`; **`--max-delta` default 10 ⇒ goals only 5–50 env steps** (see §8) |
