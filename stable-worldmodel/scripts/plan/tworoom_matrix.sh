@@ -86,15 +86,25 @@ ev(){ # name seed offset budget surface extra...
   grep -q "^${nm}," "$SUM" && { log "eval ${nm}: cached ($(sc "$nm"))"; return 0; }
   local hard=()
   [ "$surface" = "hard" ] && hard=("+eval.cross_wall=true")
+  # Log and artifact paths MUST carry $BASE. Cell names are base-agnostic
+  # (mx_anchor_..._s42) and only the CSV was per-base, so running bases
+  # concurrently had every one of them writing AND parsing the same
+  # eval_<cell>.log -- the score was read from whichever process wrote last.
+  # That silently returned byte-identical numbers for different checkpoints.
+  local elog="$LOGS/eval_${BASE}${SUFF}_${nm}.log"
   CUDA_VISIBLE_DEVICES=$GPU timeout $EVAL_TIMEOUT $PY "$PLAN/eval_wm.py" \
     --config-name tworoom policy="$CKPT" \
     eval.dataset_name="$CANON" dataset.stats="$CANON" \
     seed="$seed" eval.goal_offset_steps="$off" eval.eval_budget="$bud" \
-    solver.batch_size=10 output.filename="${nm}.txt" \
+    solver.batch_size=10 output.filename="${BASE}${SUFF}_${nm}.txt" \
     "${hard[@]}" "$@" \
-    > "$LOGS/eval_${nm}.log" 2>&1
+    > "$elog" 2>&1
   local sr
-  sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$LOGS/eval_${nm}.log" | tail -1 | grep -oE "[0-9.]+$")
+  sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$elog" | tail -1 | grep -oE "[0-9.]+$")
+  # Cross-check: the log we just parsed must be the one we just wrote.
+  if [ -n "${sr:-}" ] && ! grep -q "policy=${CKPT}\|${CKPT}" "$elog" 2>/dev/null; then
+    log "eval ${nm}: WARNING parsed log does not mention ${CKPT}"
+  fi
   echo "${nm},${sr:-FAIL}" >> "$SUM"; log "eval ${nm}: ${sr:-FAIL}"
 }
 

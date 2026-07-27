@@ -67,9 +67,14 @@ ev(){ # name wm seed offset budget extra...
   CUDA_VISIBLE_DEVICES=$GPU timeout 14400 python3 "$PLAN/eval_wm.py" --config-name reacher \
     policy="$wm" eval.dataset_name="$CANON" dataset.stats="$CANON" \
     seed="$seed" eval.goal_offset_steps="$off" eval.eval_budget="$bud" \
-    solver.batch_size=10 output.filename="${nm}.txt" "$@" \
-    > "$LOGS/eval_${nm}.log" 2>&1
-  local sr; sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$LOGS/eval_${nm}.log" | tail -1 | grep -oE "[0-9.]+$")
+    solver.batch_size=10 output.filename="${BASE}_${nm}.txt" "$@" \
+    > "$LOGS/eval_${BASE}_${nm}.log" 2>&1
+  # $BASE in the log path is load-bearing: cell names (mx_pre_latent_cem_h25_s42)
+  # are base-agnostic and only $SUM was per-base, so running two bases at once
+  # had both writing AND parsing the same eval_<cell>.log -- each read whichever
+  # process wrote last. Same defect found and fixed in tworoom_matrix.sh, where
+  # it made two checkpoints with 4x different fidelity report identical scores.
+  local sr; sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$LOGS/eval_${BASE}_${nm}.log" | tail -1 | grep -oE "[0-9.]+$")
   echo "${nm},${sr:-FAIL}" >> "$SUM"; log "eval ${nm}: ${sr:-FAIL}"
 }
 
