@@ -279,7 +279,31 @@ def run(cfg: DictConfig):
     # opposite sides of the dividing wall (wall center 112; axis inferred
     # from the first door center in the observation vector)
     if cfg.eval.get('cross_wall', False):
-        st_all = np.asarray(dataset.get_col_data('state'))
+        # The agent-position column name is a dataset convention, not fixed:
+        # our tworoom_play.lance calls it 'state', the authors' tworoom.h5
+        # calls it 'pos_agent' and has no 'state' at all -- so hardcoding
+        # 'state' made every `hard` cell die with
+        #   KeyError: object 'state' doesn't exist
+        # i.e. half of every 12-cell card, on the canonical dataset only.
+        # Take the column from this config's own _set_state callable (the very
+        # column the env is reset from), then fall back, so both conventions work.
+        _cands = []
+        for _c in OmegaConf.to_container(cfg.eval.get('callables') or [], resolve=True):
+            if isinstance(_c, dict) and _c.get('method') == '_set_state':
+                _v = (_c.get('args') or {}).get('state', {})
+                _v = _v.get('value') if isinstance(_v, dict) else None
+                if _v:
+                    _cands.append(str(_v))
+        _cands += ['state', 'pos_agent', 'proprio']
+        _cols = set(getattr(dataset, 'column_names', None) or [])
+        _key = next((k for k in _cands if k in _cols), None)
+        if _key is None:
+            raise KeyError(
+                f'cross_wall needs an agent-position column; tried {_cands}, '
+                f'dataset has {sorted(_cols)}'
+            )
+        print(f'[cross_wall] agent-position column: {_key!r}')
+        st_all = np.asarray(dataset.get_col_data(_key))
         first_door = np.asarray(dataset.get_col_data('observation'))[0, 4:6]
         axis = 0 if abs(float(first_door[0]) - 112.0) < 1e-3 else 1
         off = cfg.eval.goal_offset_steps
