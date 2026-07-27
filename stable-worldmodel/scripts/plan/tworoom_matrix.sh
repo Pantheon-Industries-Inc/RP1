@@ -57,10 +57,28 @@ STAGES=${4:-"anchor full"}
 SUFF=""; [ "$ITERS" != "8" ] && SUFF="k${ITERS}"
 
 # paper reference for the std x h25 cell (docs/baselines.md TwoRoom column)
+# BASE_OVERRIDES: per-base hydra overrides applied to every eval of that base.
+#
+# dinowm drops `proprio` from keys_to_cache. That is NOT a protocol change --
+# it removes a DOUBLE normalization. eval_wm.py fits a StandardScaler for every
+# key in keys_to_cache and policy.py applies it to the info dict; DinoWMTokens
+# then normalizes proprio AGAIN inside encode() using pro_mu/pro_std, which the
+# converter fit from the same dataset. The two transforms are numerically
+# identical (mu 111.80/84.99, sigma 36.87/38.19 on both sides), so applying both
+# maps every agent position to ~-3: positions 2 px apart arrive identical to 3
+# decimals, the goal's position signal is destroyed, and the value sits ~3 sigma
+# outside anything the predictor saw in training.
+# Measured, same checkpoint/seed/solver: 36.0 double-normalized -> 100.0 single
+# (paper reference 100). Only dinowm reads proprio, so the twins are unaffected
+# and need no override. This also makes the eval path agree with cache_latents,
+# which feeds proprio RAW -- so the TD caches and the eval now see the same
+# convention.
+BASE_OVERRIDES=()
 case "$BASE" in
   lejepa) PAPER=87  ;;   # LeWM
   pldm)   PAPER=97  ;;
-  dinowm) PAPER=100 ;;   # DINO-WM, proprio variant (the paper's DINO-WM)
+  dinowm) PAPER=100      # DINO-WM, proprio variant (the paper's DINO-WM)
+          BASE_OVERRIDES=("dataset.keys_to_cache=[action]") ;;
   *) echo "unknown base $BASE (expected lejepa|pldm|dinowm)"; exit 1;;
 esac
 
@@ -97,7 +115,7 @@ ev(){ # name seed offset budget surface extra...
     eval.dataset_name="$CANON" dataset.stats="$CANON" \
     seed="$seed" eval.goal_offset_steps="$off" eval.eval_budget="$bud" \
     solver.batch_size=10 output.filename="${BASE}${SUFF}_${nm}.txt" \
-    "${hard[@]}" "$@" \
+    "${BASE_OVERRIDES[@]}" "${hard[@]}" "$@" \
     > "$elog" 2>&1
   local sr
   sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$elog" | tail -1 | grep -oE "[0-9.]+$")
