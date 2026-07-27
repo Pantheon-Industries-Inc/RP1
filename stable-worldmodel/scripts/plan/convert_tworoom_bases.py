@@ -39,8 +39,15 @@ HOME = os.environ.get("STABLEWM_HOME", "/workspace/swm_home")
 CKPT = os.path.join(HOME, "checkpoints")
 ARCH = "/workspace/code/stable-worldmodel/checkpoints/tworoom/pretrained"
 EXTRACT = "/workspace/pretrained"
-H5 = "/workspace/caches/tworoom_play.h5"
-PLAY = "tworoom_play.lance"
+# Validation data. Defaults kept for reproducing the July run, but the matrix
+# campaign validates on the AUTHORS' canonical tworoom.h5 -- the dataset the
+# released bases were trained on and the one the eval draws its tasks from.
+# Validating on our noised tworoom_play.lance (ExpertPolicy action_noise=2.0)
+# would measure open-loop fidelity on a distribution we never score.
+# Both may point at the same file: the h5 side needs `action` + `ep_offset`,
+# the dataset side needs `pixels`, `proprio`, `episode_idx`, `step_idx`.
+H5 = os.environ.get("TWOROOM_VAL_H5", "/workspace/caches/tworoom_play.h5")
+PLAY = os.environ.get("TWOROOM_VAL_DATASET", "tworoom_play.lance")
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
 
 VIT_RENAMES = [  # old HF ViT layout -> transformers-5.x vit_hf layout (validated on cube)
