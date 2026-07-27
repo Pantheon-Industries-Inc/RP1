@@ -177,7 +177,7 @@ full)
   # learned TD quasimetric as cost x 3 solvers x 3 TD training seeds
   for slv in cem mppi adam; do
     for ts in 0 1 2; do
-      TD=$MET/td_canon_${BASE}_e0.1_n50_s${ts}.pt
+      TD=$MET/td_canon_${BASE}${TDTAG:-}_e0.1_n50_s${ts}.pt
       [ -f "$TD" ] || { log "missing TD $TD -- run tworoom_phase1_matrix.sh"; continue; }
       card "td_${slv}_t${ts}" solver=$slv "+metric=$TD"
     done
@@ -186,8 +186,27 @@ full)
 
   # LIPv4 tandem x 3 actor training seeds
   for s in 0 1 2; do
-    A=$ACT/trm_canon_${BASE}_v4${SUFF}_s${s}.pt
+    A=$ACT/trm_canon_${BASE}${ACTTAG:-}_v4${SUFF}_s${s}.pt
     [ -f "$A" ] || { log "missing actor $A -- run tworoom_phase1_matrix.sh"; continue; }
+    card "lip_s${s}" solver=lip "solver.actor_path=$A"
+  done
+  mean_of "mx_lip_s" "CARD lip_3seed"
+  ;;
+
+# ---- CEMONLY: latent+CEM, TD+CEM x3, LIPv4 x3. For dinowm, whose cells cost
+# ~34 min each -- MPPI is a known-untuned instrument and Adam ranked below CEM
+# on both twins, so CEM carries the comparison.
+cemonly)
+  card "latent_cem" solver=cem
+  for ts in 0 1 2; do
+    TD=$MET/td_canon_${BASE}${TDTAG:-}_e0.1_n50_s${ts}.pt
+    [ -f "$TD" ] || { log "missing TD $TD"; continue; }
+    card "td_cem_t${ts}" solver=cem "+metric=$TD"
+  done
+  mean_of "mx_td_cem_t" "CARD td_cem_3seed"
+  for s in 0 1 2; do
+    A=$ACT/trm_canon_${BASE}${ACTTAG:-}_v4${SUFF}_s${s}.pt
+    [ -f "$A" ] || { log "missing actor $A"; continue; }
     card "lip_s${s}" solver=lip "solver.actor_path=$A"
   done
   mean_of "mx_lip_s" "CARD lip_3seed"

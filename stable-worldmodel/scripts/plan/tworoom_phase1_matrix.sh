@@ -41,6 +41,9 @@ export TQDM_DISABLE=1
 # OMP cap is load-bearing on this box: uncapped threads cost ~40x on TwoRoom.
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-16}
 export MKL_NUM_THREADS=$OMP_NUM_THREADS
+# DINO's LIPv4 OOM'd with 2.4 GB reserved-but-unallocated; expandable segments
+# reclaims that fragmentation. Harmless for the 192-d twins.
+export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 BASE=$1
 GPU=$2
@@ -146,6 +149,9 @@ if [ ! -f "$CACHE5" ]; then
 fi
 log "fs5 ok"
 
+if [ "${LIP_ONLY:-0}" = 1 ]; then
+  log "LIP_ONLY=1 -> skipping caches/TD (reusing existing artifacts)"
+fi
 # ------------------------------------------------- TD warm-starts x 3 seeds
 # tau 0.1: LOW expectile for cost-to-go / quasimetric distance (optimistic
 # toward the min). n-step 50 in primitive steps. Head is MRN.
@@ -175,7 +181,7 @@ if [ -n "$COMPRESS" ]; then
 fi
 
 for s in 0 1 2; do
-  OUT=$ACT/trm_canon_${BASE}${TAGSUF}_v4${SUFF}_s${s}.pt
+  OUT=$ACT/trm_canon_${BASE}${TAGSUF}${HYP:-}_v4${SUFF}_s${s}.pt
   TD=$MET/td_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${s}.pt
   if [ ! -f "$OUT" ]; then
     [ -f "$TD" ] || die "missing TD warm-start $TD"
@@ -183,14 +189,15 @@ for s in 0 1 2; do
     CUDA_VISIBLE_DEVICES=$GPU timeout $TRAIN_TIMEOUT $PY "$PLAN/train_lip_ac.py" \
       --cache "$CACHE5" --cache-td "$CACHE1" --h5 "$CANON" --wm "$CKPT" \
       --init-value "$TD" \
-      --arch v4 --amax 2.2 --max-delta 12 --iters "$ITERS" --horizon 5 --steps 8000 \
+      --arch v4 --amax "${AMAX:-2.2}" --max-delta "${MAXDELTA:-12}" --iters "$ITERS" \
+      --batch "${LIP_BATCH:-128}" --horizon 5 --steps 8000 \
       --n-step 50 --expectile 0.1 --expectile-final 0.03 \
       --critic-lr 1e-3 --critic-lr-final 1e-4 \
       --actor-lr 3e-4 --actor-lr-final 3e-5 \
       --seed "$s" \
-      --out "$OUT" --out-value "$MET/trm_canon_${BASE}${TAGSUF}_v4${SUFF}_s${s}_value.pt" \
-      > "$LOGS/train_lip_canon_${BASE}${TAGSUF}${SUFF}_s${s}.log" 2>&1 \
-      || die "LIP seed ${s} failed (see $LOGS/train_lip_canon_${BASE}${TAGSUF}${SUFF}_s${s}.log)"
+      --out "$OUT" --out-value "$MET/trm_canon_${BASE}${TAGSUF}${HYP:-}_v4${SUFF}_s${s}_value.pt" \
+      > "$LOGS/train_lip_canon_${BASE}${TAGSUF}${HYP:-}${SUFF}_s${s}.log" 2>&1 \
+      || die "LIP seed ${s} failed (see $LOGS/train_lip_canon_${BASE}${TAGSUF}${HYP:-}${SUFF}_s${s}.log)"
   fi
   log "LIP s${s} ok"
 done
