@@ -101,8 +101,27 @@ grep -q "preflight. ok" "$DRV" || die "dataset preflight failed (see $DRV)"
 # honest: train_metric records the compressor in the saved arch, and
 # load_metric rebuilds a CompressedMetric wrapper, so the planner still hands
 # the value FULL flat tokens at eval time and compression happens inside.
+# MAX_ROWS: cap the cache at N rows instead of compressing. This is the route
+# that unblocks LIPv4 on dinowm. PlannerNetV3 bakes z_dim into zp/gp
+# (Linear(z_dim, zproj)), so an actor trained on a COMPRESSED cache (1024-d)
+# shape-mismatches the 77,224-d latents LIPSolver feeds it at deploy -- the
+# critic survives that (CompressedMetric dispatches on width) but the actor
+# cannot. Capping rows keeps the full width, so actor, critic and deploy all
+# agree and no solver change is needed. 200k rows x 77,224 x 4B ~ 62 GB, which
+# fits RAM easily; the reacher campaign used the same 200k cap.
+# Note the cap takes a contiguous PREFIX of rows (~2.2k of 10k episodes), which
+# also happens to leave the high episodes free for a held-out eval.ep_range.
+MAX_ROWS=${MAX_ROWS:-}
+TAGSUF=""
 COMPRESS=${COMPRESS:-}
 CFLAG=(); MFLAG=()
+if [ -n "$MAX_ROWS" ]; then
+  CFLAG+=(--max-rows "$MAX_ROWS")
+  CACHE1=$CACHES/tworoom_canon_${BASE}_r${MAX_ROWS}_fs1.pt
+  CACHE5=$CACHES/tworoom_canon_${BASE}_r${MAX_ROWS}_fs5.pt
+  TAGSUF="_r${MAX_ROWS}"
+  log "MAX_ROWS=$MAX_ROWS -> uncompressed cache at full latent width (LIPv4-capable)"
+fi
 if [ -n "$COMPRESS" ]; then
   CFLAG=(--compress "$COMPRESS" --compress-seed "${COMPRESS_SEED:-0}")
   MFLAG=(--compress "$COMPRESS")
@@ -116,14 +135,14 @@ if [ ! -f "$CACHE1" ]; then
   CUDA_VISIBLE_DEVICES=$GPU $PY "$TRM/cache_latents.py" --wm "$CKPT" \
     --dataset "$CANON" --out "$CACHE1" --state-key "$STATE_KEY" --batch-size 256 \
     "${CFLAG[@]}" \
-    > "$LOGS/cache_canon_${BASE}${COMPRESS:+_$COMPRESS}_fs1.log" 2>&1 || die "fs1 cache failed"
+    > "$LOGS/cache_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_fs1.log" 2>&1 || die "fs1 cache failed"
 fi
 log "fs1 ok ($(du -h "$CACHE1" | cut -f1))"
 
 if [ ! -f "$CACHE5" ]; then
   log "fs5 subsample (frameskip 5 -- the LIP/action-block view)"
   $PY "$TRM/subsample_cache.py" --in "$CACHE1" --out "$CACHE5" --frameskip 5 \
-    > "$LOGS/cache_canon_${BASE}${COMPRESS:+_$COMPRESS}_fs5.log" 2>&1 || die "fs5 subsample failed"
+    > "$LOGS/cache_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_fs5.log" 2>&1 || die "fs5 subsample failed"
 fi
 log "fs5 ok"
 
@@ -131,13 +150,13 @@ log "fs5 ok"
 # tau 0.1: LOW expectile for cost-to-go / quasimetric distance (optimistic
 # toward the min). n-step 50 in primitive steps. Head is MRN.
 for ts in 0 1 2; do
-  TD=$MET/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${ts}.pt
+  TD=$MET/td_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${ts}.pt
   if [ ! -f "$TD" ]; then
     log "TD warm-start seed ${ts} (tau 0.1, n-step 50, 6k steps)"
     CUDA_VISIBLE_DEVICES=$GPU $PY "$PLAN/train_metric.py" --cache "$CACHE1" \
       --learner td --head quasimetric --expectile 0.1 --n-step 50 \
       --steps 6000 --seed "$ts" --out "$TD" "${MFLAG[@]}" \
-      > "$LOGS/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_s${ts}.log" 2>&1 || die "TD seed ${ts} failed"
+      > "$LOGS/td_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_s${ts}.log" 2>&1 || die "TD seed ${ts} failed"
   fi
   log "TD s${ts} ok"
 done
@@ -156,8 +175,8 @@ if [ -n "$COMPRESS" ]; then
 fi
 
 for s in 0 1 2; do
-  OUT=$ACT/trm_canon_${BASE}_v4${SUFF}_s${s}.pt
-  TD=$MET/td_canon_${BASE}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${s}.pt
+  OUT=$ACT/trm_canon_${BASE}${TAGSUF}_v4${SUFF}_s${s}.pt
+  TD=$MET/td_canon_${BASE}${TAGSUF}${COMPRESS:+_$COMPRESS}_e0.1_n50_s${s}.pt
   if [ ! -f "$OUT" ]; then
     [ -f "$TD" ] || die "missing TD warm-start $TD"
     log "LIPv4 train seed ${s} (K=${ITERS})"
@@ -169,9 +188,9 @@ for s in 0 1 2; do
       --critic-lr 1e-3 --critic-lr-final 1e-4 \
       --actor-lr 3e-4 --actor-lr-final 3e-5 \
       --seed "$s" \
-      --out "$OUT" --out-value "$MET/trm_canon_${BASE}_v4${SUFF}_s${s}_value.pt" \
-      > "$LOGS/train_lip_canon_${BASE}${SUFF}_s${s}.log" 2>&1 \
-      || die "LIP seed ${s} failed (see $LOGS/train_lip_canon_${BASE}${SUFF}_s${s}.log)"
+      --out "$OUT" --out-value "$MET/trm_canon_${BASE}${TAGSUF}_v4${SUFF}_s${s}_value.pt" \
+      > "$LOGS/train_lip_canon_${BASE}${TAGSUF}${SUFF}_s${s}.log" 2>&1 \
+      || die "LIP seed ${s} failed (see $LOGS/train_lip_canon_${BASE}${TAGSUF}${SUFF}_s${s}.log)"
   fi
   log "LIP s${s} ok"
 done
