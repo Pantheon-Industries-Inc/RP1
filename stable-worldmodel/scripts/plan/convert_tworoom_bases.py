@@ -172,7 +172,12 @@ def load_transitions(n=256, span=6, seed=0):
     consecutive frame pair."""
     fs = 5
     ds = swm.data.load_dataset(PLAY)
-    ep = np.asarray(ds.get_col_data("episode_idx")).reshape(-1)
+    # Episode column naming differs by source: lance keeps 'episode_idx' as a
+    # writer-managed index column, the authors' tworoom.h5 lists 'ep_idx'.
+    # Same rule eval_wm.episode_col() uses -- hardcoding either one breaks on
+    # the other, and get_col_data raises rather than returning empty.
+    ep_name = "ep_idx" if "ep_idx" in ds.column_names else "episode_idx"
+    ep = np.asarray(ds.get_col_data(ep_name)).reshape(-1)
     st = np.asarray(ds.get_col_data("step_idx")).reshape(-1)
     with h5py.File(H5, "r") as h:
         act = h["action"][:]
