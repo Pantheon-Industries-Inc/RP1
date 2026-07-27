@@ -69,6 +69,29 @@ DINO_RENAMES = [  # PreJEPA save layout -> DinoWMTokens attribute layout
 ]
 
 
+def vit_renames():
+    """VIT_RENAMES, but only when the installed transformers needs them.
+
+    The released twins were saved under the OLD HF ViT layout
+    (`encoder.encoder.layer.N.attention.attention.query`, `intermediate.dense`,
+    `output.dense`), which is exactly what transformers 4.x still builds.
+    transformers 5.x renamed the ViT internals (-> `encoder.layers.N.attention
+    .q_proj`, `mlp.fc1`, `mlp.fc2`), so the renames are required there and
+    actively WRONG under 4.x: applying them produces a state_dict where every
+    single encoder key is unexpected and every expected one missing, and
+    `load_state_dict(strict=True)` rejects the lot. Gate on the major version so
+    one script covers both.
+    """
+    import transformers
+
+    major = int(transformers.__version__.split(".")[0])
+    if major >= 5:
+        return VIT_RENAMES
+    print(f"[renames] transformers {transformers.__version__} (4.x ViT layout): "
+          "skipping VIT_RENAMES, checkpoint keys already match", flush=True)
+    return []
+
+
 def rename(sd, rules):
     out = {}
     for k, v in sd.items():
@@ -280,7 +303,7 @@ def write_ckpt(name, sd, cfg):
 def convert_twin(src_name, out_name, target_cls, imgs, pro, blocks):
     sd_old = torch.load(os.path.join(EXTRACT, "tworoom", src_name), map_location="cpu",
                         weights_only=True)
-    sd_new = rename(sd_old, VIT_RENAMES)
+    sd_new = rename(sd_old, vit_renames())
     assert len(sd_new) == len(sd_old)
     cfg = lewm_config(target_cls)
     from hydra.utils import instantiate
