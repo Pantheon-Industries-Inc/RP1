@@ -90,4 +90,40 @@ for am in $AMAXES; do
   log "  $am   $A   $B   $C    $(awk -v a="$A" -v b="$B" -v c="$C" 'BEGIN{if(a=="NA"||b=="NA"||c=="NA"){print "NA"}else{printf "%.1f",(a+b+c)/3}}')"
 done
 log "  refs @2.2: 84.0 / 84.7 / 88.7 -> 85.8   |   @3.5: 68.0 / 81.3 / 88.7 -> 79.3"
+
+# ---------------------------------------------------------------------------
+# HELD-OUT MODEL SELECTION -- see ../DATA_SPLIT_POLICY.md § REQUIRED CHANGES #2.
+# Selecting and reporting on the same draws is tuning on test: with n=150 binary
+# trials SE ~ 2.9 pts, and a max over 6 candidates buys ~3 pts of optimism.
+# Fix costs nothing -- the per-draw cells are already computed:
+#   SELECT the winning amax on draw 42 alone;  REPORT it on draws 43+44 only.
+# Still imperfect (43/44 remain inside LIP's training pool) but the selection
+# bias -- the part that inflates the headline -- is gone.
+m2(){ awk -v a="$1" -v b="$2" 'BEGIN{if(a==""||b==""||a=="FAIL"||b=="FAIL"){print "NA"}else{printf "%.1f",(a+b)/2}}'; }
+log ""
+log "=== HELD-OUT SELECTION (select on draw 42, report on 43+44) ==="
+log "  amax   sel(42) 3-seed   report(43,44) 3-seed"
+best=""; bestsel=-1
+for am in $AMAXES; do
+  t=${am/./}
+  S=$(awk -v a="$(sc amsw_a${t}_s0_e42)" -v b="$(sc amsw_a${t}_s1_e42)" -v c="$(sc amsw_a${t}_s2_e42)" \
+      'BEGIN{if(a==""||b==""||c==""||a=="FAIL"||b=="FAIL"||c=="FAIL"){print "NA"}else{printf "%.1f",(a+b+c)/3}}')
+  R=$(awk -v x="$(m2 "$(sc amsw_a${t}_s0_e43)" "$(sc amsw_a${t}_s0_e44)")" \
+         -v y="$(m2 "$(sc amsw_a${t}_s1_e43)" "$(sc amsw_a${t}_s1_e44)")" \
+         -v z="$(m2 "$(sc amsw_a${t}_s2_e43)" "$(sc amsw_a${t}_s2_e44)")" \
+      'BEGIN{if(x=="NA"||y=="NA"||z=="NA"){print "NA"}else{printf "%.1f",(x+y+z)/3}}')
+  log "  $am    $S                $R"
+  [ "$S" != NA ] && awk -v s="$S" -v b="$bestsel" 'BEGIN{exit !(s>b)}' && { bestsel=$S; best=$am; }
+done
+if [ -n "$best" ]; then
+  t=${best/./}
+  R=$(awk -v x="$(m2 "$(sc amsw_a${t}_s0_e43)" "$(sc amsw_a${t}_s0_e44)")" \
+         -v y="$(m2 "$(sc amsw_a${t}_s1_e43)" "$(sc amsw_a${t}_s1_e44)")" \
+         -v z="$(m2 "$(sc amsw_a${t}_s2_e43)" "$(sc amsw_a${t}_s2_e44)")" \
+      'BEGIN{printf "%.1f",(x+y+z)/3}')
+  log ""
+  log "  SELECTED amax=$best (best on draw 42: $bestsel)"
+  log "  >>> REPORT THIS NUMBER: $R  (held-out draws 43+44, 3 seeds) <<<"
+  log "  The all-3-draw mean for amax=$best above is selection-biased; do not report it."
+fi
 log "AMAX_SWEEP2_DONE"

@@ -24,6 +24,16 @@ Harness scripts mirrored in `Dyna/dyna_harness/`.
 > (collect 0–7999 / eval 8000–9999, `dyna_harness/episode_split.py`). Not yet
 > enforced: `eval_wm.py` has no episode-range filter. Until it does, every
 > number in this file is an upper bound, not a generalization estimate.
+>
+> **Calibration, so this is not over-read:** the eval draw is a 150-task
+> *subsample of* LIP's own ~2M-pair training pool, unweighted — so LIP is not
+> meaningfully memorizing eval tasks, and critic memorization is **not** the
+> problem. The two real bites are (i) `amax` was **selected on test**, worth
+> ~3 pts of optimism, and (ii) the **Dyna comparison is uncontrolled** — see
+> `DATA_SPLIT_POLICY.md` § REQUIRED CHANGES, which is blocking for the Dyna
+> claim. Do not report the Dyna delta as "+11.4" until that control has run:
+> the pre- and post-Dyna arms currently use **different `amax`** (2.2/1.8 vs
+> 3.5), which alone confounds the result.
 
 ---
 
@@ -135,7 +145,7 @@ pixels/action/qpos/qvel through the *eval* path, because the actor needs goals i
 |---|---|
 | policy | the 3 pre-Dyna LIPv4 actors, rolled out in the real sim |
 | protocol | `goal_offset_steps 25`, `eval_budget 50`, `num_eval 50` envs/call |
-| seeds | 1000+ (disjoint from eval draws 42/43/44) |
+| seeds | 1000+ — **seed**-disjoint from eval draws 42/43/44, but NOT episode-disjoint: both sample the same 10k pool (see `DATA_SPLIT_POLICY.md`) |
 | volume | 40 calls × 3 actors → **1,743 episodes / 80,746 steps** |
 | filtering | episodes < 25 steps dropped (successes terminate early ⇒ the kept data is failure-enriched) |
 

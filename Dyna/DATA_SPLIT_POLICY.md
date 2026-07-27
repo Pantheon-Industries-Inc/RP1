@@ -28,9 +28,33 @@ eval            ->  eval_wm.py with seeds 42/43/44 ->  draws tasks from the SAME
 ```
 
 So WM₁ was fine-tuned on rollouts starting at or near the very states it is later scored
-on. Exact (episode, start-step) collisions are unlikely — 50 rows drawn from ~1.7M valid
-start rows — but **episode-level overlap is expected to be large**, and the Dyna gain is
-the novel claim, so it is the one that most needs the control.
+on.
+
+## How bad is it, per stage — calibrate before panicking
+
+There is no separate "eval set". There is **one** lance; the eval draw is a
+150-task **subsample of** LIP's own training pool (~2M valid (state, goal) pairs).
+That distinguishes two very different failure modes, and only the second is live:
+
+| failure mode | risk | live here? |
+|---|---|---|
+| trained *on* the eval items, overweighted | severe — memorization | **no** — 150 of ~2M pairs, unweighted, and the critic is a 192-d MLP; it cannot have memorized them |
+| no holdout at all | can't separate generalization from in-distribution fit; **model selection happens on test** | **yes** |
+
+So the correct worry is *not* critic memorization. An earlier version of this file said
+"the leak lands in the load-bearing component" (the value gradient carries ~91% of LIP,
+per the [A,gradV,E]→[A,E] ablation 87.6→54.0) as though that were evidence the leak is
+biting. It is not — it says only where a leak *would* bite if one existed. Retracted.
+
+The two real bites, in order:
+
+1. **`amax` selection is on test.** The winner was chosen by its score on those same 150
+   tasks. With n=150 binary trials SE ≈ 2.9 pts, and a max over ~6 candidates buys
+   roughly 3 pts of optimism ⇒ **the winning amax's headline is ~3 pts inflated.** It
+   cannot explain seed 0's 68 → 86.7 swing, which is far too large for selection noise,
+   so amax genuinely helps; only its reported value is biased.
+2. **Dyna's exposure is orders of magnitude above LIP's** — see below. This is the one
+   that needs a redesigned control, not just a caveat.
 
 ## Why "it's closed-loop control" is not a defence
 
@@ -71,10 +95,56 @@ model has seen the eval episodes' pixels regardless. Fixing that would require r
 the base WM on a subset. The split above isolates the *Dyna* contribution, which is what
 the campaign is actually claiming.
 
-## Status
+---
 
-- `episode_split.py` — canonical ranges + `assert_disjoint()` + an overlap checker that
-  reports, for a given collection lance and eval seed, how many episodes are shared.
-- `eval_wm.py` has **no episode-range filter yet**; adding one (e.g.
-  `eval.episode_range=[8000,10000]`) is required before rule 3 can be enforced.
-- Until then: run the checker and report the measured overlap alongside any Dyna result.
+# REQUIRED CHANGES
+
+## 1. The Dyna control MUST be changed — blocking for the Dyna claim
+
+The Dyna result as it stands (83.0 → 94.4 at h25, 6 seeds, complete separation) is **not
+a valid controlled comparison** and must not be reported as one. Two independent defects,
+either of which alone invalidates it:
+
+**(a) Episode exposure, not task exposure.** LIP's leak is 150 pairs in ~2M — negligible.
+Dyna's is not remotely comparable: collection ran 40 calls × 3 actors → 1,743 episodes /
+80,746 steps, and *every one of those steps* entered the WM fine-tune at 25× duplication
+in the winning 50/50 arm. If a collected episode is also an eval episode, WM₁ was trained
+heavily and repeatedly on the exact demonstration it is scored against. Run
+`episode_split.py overlap` to get the measured number — but the fix is the split, not the
+measurement.
+
+**(b) The pre/post arms use different `amax`.** Pre-Dyna is now at amax 2.2/1.8; post-Dyna
+was trained at 3.5. The +11.4 therefore confounds the Dyna fine-tune with a boundary-clip
+change that is independently worth ~17 pts on seed 0. **This is the larger defect of the
+two** and it needs no new protocol to fix — just re-run the post-Dyna side at the same
+amax as the pre-Dyna side.
+
+Required design:
+
+```
+collect   from episodes 0-7999 only          (needs eval_wm.py episode-range filter)
+fine-tune on episodes 0-7999 only            (expert slice AND on-policy)
+eval      on episodes 8000-9999 only         (both arms)
+pre/post  identical amax, identical seeds, identical everything but the WM
+```
+
+Until that has run, describe the Dyna number as *uncontrolled* — not as "+11.4".
+
+## 2. Held-out model selection for `amax` — free, do it now
+
+Do **not** select and report on the same draws. The sweep already computes per-draw cells
+in `results/summary_amaxsweep.csv`, so this costs zero extra compute:
+
+- **select** the winning amax on draw **42** alone;
+- **report** that amax's mean on draws **43 + 44** only.
+
+This converts tuning-on-test into honest held-out selection. It is weaker than a real
+episode split (43/44 are still inside LIP's training pool) but it removes the selection
+bias, which is the part that actually inflates the headline.
+
+## 3. Enforcement gap
+
+`eval_wm.py` has **no episode-range filter**; adding one (e.g.
+`eval.episode_range=[8000,10000]`, applied to the valid-start-row mask before the
+`rng.choice` draw) is the blocking prerequisite for rule 3 and for change #1. Until it
+exists, `episode_split.py overlap` measures the leak but nothing prevents it.
