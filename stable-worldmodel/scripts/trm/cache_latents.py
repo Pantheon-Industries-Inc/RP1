@@ -133,6 +133,19 @@ def main():
               "train_res": args.train_res,
               "pool_patches": int(args.pool_patches) or None, **cmeta},
     )
+    # `**cmeta` above is expanded when this call's dict literal is built, but
+    # cmeta is only populated on the FIRST featurizer invocation, which happens
+    # INSIDE encode_dataset. So the eager expansion always serialized the
+    # initial {"compress": None} and the compressor was silently lost: the cache
+    # really was projected (z is 1024-d) but claimed it was not, and
+    # train_metric.py then refused it with
+    #   "cache was built with compress=None but --compress='rp1024'".
+    # Re-merge after encoding, when cmeta is actually filled in.
+    if cmeta.get("compress"):
+        cache.meta.update(cmeta)
+        logging.info(f"recorded compressor in cache meta: {cmeta['compress']} "
+                     f"({cmeta['compress_full_dim']} -> {cmeta['compress_out_dim']}, "
+                     f"seed={cmeta['compress_seed']}, sha={str(cmeta['compress_sha256'])[:16]})")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     cache.save(args.out)
     logging.success(f"cached {len(cache.z)} latents (dim={cache.latent_dim}) -> {args.out}")
