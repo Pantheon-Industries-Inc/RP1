@@ -12,6 +12,15 @@ steps vs expert 201, so the recipe's "8x" (episode-count parity) would give
 only ~20% by rows. The duplication factor is computed from the target
 fraction and logged.
 """
+# ############################################################################
+# # DATA SPLIT WARNING -- see ../DATA_SPLIT_POLICY.md
+# # The expert slice mixed in here, and the on-policy lances appended to it,
+# # MUST exclude every episode the evaluation draws tasks from. They currently
+# # do NOT: expert episodes are sampled from all 10k and the on-policy rollouts
+# # were collected from all 10k, while eval draws from the same pool. Required
+# # split: fine-tune on episodes 0-7999 only, eval on 8000-9999
+# # (episode_split.COLLECT / .EVAL; assert_disjoint() to enforce).
+# ############################################################################
 import argparse
 import os
 import shutil

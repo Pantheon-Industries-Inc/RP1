@@ -6,6 +6,25 @@ actual configs and launch scripts on the pod, not from notes.
 **Pod:** `157.66.254.11:15788`, 4× H100. Repo `/workspace/code/stable-worldmodel`.
 Harness scripts mirrored in `Dyna/dyna_harness/`.
 
+> ### ⚠ NO TRAIN/EVAL SPLIT EXISTS IN THIS PIPELINE
+>
+> Every stage below — v2WM, the fs1/fs5 latent caches, the TD teacher, the LIP
+> actor-critic, the Dyna on-policy collection, and the WM fine-tune — uses **all
+> 10,000 episodes** of `ogb_cube_single.lance`. `eval_wm.py` then draws its 50
+> tasks per seed **from that same lance**. Eval start states and goals are
+> literally training points for the critic.
+>
+> The base LeWM/DINO-WM numbers inherit this from the published protocol, so
+> they stay comparable to prior work. **The Dyna claim does not** — it adds an
+> avoidable second leak (collection seeds 1000+ cover eval episodes, then the WM
+> is fine-tuned on those rollouts). Hyperparameters tuned against seeds 42/43/44
+> — including the `amax` sweep — are tuned on test.
+>
+> Required split and the reasoning: **[`DATA_SPLIT_POLICY.md`](DATA_SPLIT_POLICY.md)**
+> (collect 0–7999 / eval 8000–9999, `dyna_harness/episode_split.py`). Not yet
+> enforced: `eval_wm.py` has no episode-range filter. Until it does, every
+> number in this file is an upper bound, not a generalization estimate.
+
 ---
 
 ## 0. Pipeline overview

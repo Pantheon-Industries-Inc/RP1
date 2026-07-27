@@ -1,4 +1,12 @@
 #!/bin/bash
+# ############################################################################
+# # DATA SPLIT WARNING -- see ../DATA_SPLIT_POLICY.md
+# # Dyna on-policy collection MUST come from episodes disjoint from the ones
+# # eval draws its tasks from. It currently does NOT: collection and eval both
+# # draw from the same 10k-episode expert lance, so the fine-tuned WM has seen
+# # the eval states. Required split: collect 0-7999, eval 8000-9999
+# # (episode_split.COLLECT / .EVAL). Numbers from this script are upper bounds.
+# ############################################################################
 # Dyna on-policy collection -- FIXED parallelism.
 #
 # Replaces collect_r1.sh. Four defects addressed (see PARALLELIZATION_ANALYSIS.md
