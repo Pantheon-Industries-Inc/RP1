@@ -31,15 +31,17 @@ import pyarrow as pa
 COLS = ["episode_idx", "step_idx", "pixels", "action"]
 
 
-def stream_source(ds, id_offset, next_id, remap):
+def stream_source(ds, id_offset, next_id, remap, filt=None):
     """Yield record batches with episode_idx remapped.
 
     remap=False: add id_offset to source ids (expert passthrough, offset 0).
     remap=True: assign fresh contiguous ids starting at next_id[0], bumping
     next_id in place; source episode boundaries detected by value change.
+    filt: optional lance filter expression, used to hold eval episodes out of
+    the expert slice (see ../DATA_SPLIT_POLICY.md).
     """
     prev_src = None
-    for batch in ds.to_batches(columns=COLS, batch_size=8192):
+    for batch in ds.to_batches(columns=COLS, batch_size=8192, filter=filt):
         ep = batch.column(0).to_numpy()
         if remap:
             new = ep.copy()
@@ -66,10 +68,24 @@ def main():
     p.add_argument("--out", required=True, help="path ending in <name>.lance")
     p.add_argument("--onpolicy-frac", type=float, required=True,
                    help="target on-policy fraction of total ROWS (0.5 / 0.2)")
+    p.add_argument("--expert-ep-hi", type=int, default=None,
+                   help="keep only expert episodes with episode_idx < this. REQUIRED for "
+                        "the episode-disjoint Dyna control: the eval episodes must not "
+                        "enter the fine-tune. See ../DATA_SPLIT_POLICY.md")
     args = p.parse_args()
 
     exp = lance.dataset(args.expert)
-    n_exp = exp.count_rows()
+    exp_filt = None
+    if args.expert_ep_hi is not None:
+        exp_filt = f"episode_idx < {args.expert_ep_hi}"
+        n_exp = exp.scanner(columns=["episode_idx"], filter=exp_filt).count_rows()
+        print(f"[split] expert restricted to {exp_filt}: {n_exp} of "
+              f"{exp.count_rows()} rows", flush=True)
+    else:
+        n_exp = exp.count_rows()
+        print("[split] WARNING: no --expert-ep-hi given, using ALL expert episodes. "
+              "If eval draws from this file the fine-tune is leaking. "
+              "See ../DATA_SPLIT_POLICY.md", flush=True)
     ons = [lance.dataset(q) for q in args.onpolicy]
     n_on = sum(d.count_rows() for d in ons)
     # f = K*n_on / (n_exp + K*n_on)  =>  K = f*n_exp / (n_on*(1-f))
@@ -83,7 +99,7 @@ def main():
     ref_schema = pa.schema([exp.schema.field(c) for c in COLS])
 
     def gen():
-        yield from stream_source(exp, 0, None, remap=False)
+        yield from stream_source(exp, 0, None, remap=False, filt=exp_filt)
         max_exp_id = 100000  # expert ids are 0..9999; start fresh ids high
         nid = [max_exp_id]
         for k in range(K):
