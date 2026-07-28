@@ -54,12 +54,18 @@ cd "$CODE"
 # ------------------------------------------------------------------ preflight
 log "=== COMPOSITE (pid $$): pool card + PLDM LIPv4 + lr_sweep ==="
 for f in "$FS1" "$FS5" "$TD" "$V2W" "$V2WM/config.json" "$AH5" \
-         "$PLDM/weights.pt" "$PLDM/config.json" /workspace/build_dyna_mix.py; do
+         /workspace/build_dyna_mix.py; do
   [ -e "$f" ] || die "preflight: missing $f"
 done
 [ -d "$EXPERT" ] || die "preflight: missing expert"
-N_PT=$(ls "$PLDM"/*.pt 2>/dev/null | wc -l)
-[ "$N_PT" = 1 ] || die "preflight: $PLDM must contain exactly one .pt (loader contract), has $N_PT"
+# PLDM is allowed to still be uploading at launch: nothing in lane A needs it,
+# and lane B runs the lrsw waves first, then waits for the EXACT byte size
+# (a partial scp is a valid-looking file; size is the only honest gate).
+PLDM_BYTES=72266017
+pldm_ready(){ [ -f "$PLDM/config.json" ] && \
+  [ "$(stat -c%s "$PLDM/weights.pt" 2>/dev/null || echo 0)" = "$PLDM_BYTES" ]; }
+if pldm_ready; then log "P0: PLDM checkpoint present"
+else log "P0: PLDM upload incomplete ($(stat -c%s "$PLDM/weights.pt" 2>/dev/null || echo 0)/$PLDM_BYTES bytes) -- lane B will wait for it"; fi
 for a in 0 1 2; do
   [ -d "$D/onpolicy_full_a${a}_lab.lance" ] || die "preflight: labeled lance a$a missing"
   [ -d "$D/chained_a${a}.lance" ] || die "preflight: chained lance a$a missing"
@@ -87,6 +93,33 @@ BASE_OPT=(--iters 8 --steps 6000 --actor-lr 3e-4 --actor-lr-final 3e-5)
 
 # ================================================================ lane B (bg)
 lane_b(){
+  # ---- B0: lrsw arms FIRST -- they need only v2 assets, so they run while
+  # the PLDM checkpoint may still be uploading.
+  local arm g s
+  for arm in it16 s12k alr; do
+    case "$arm" in
+      it16) EXTRA=(--iters 16 --steps 6000  --actor-lr 3e-4 --actor-lr-final 3e-5) ;;
+      s12k) EXTRA=(--iters 8  --steps 12000 --actor-lr 3e-4 --actor-lr-final 3e-5) ;;
+      alr)  EXTRA=(--iters 8  --steps 6000  --actor-lr 1e-4 --actor-lr-final 1e-5) ;;
+    esac
+    log "B0: lrsw $arm wave"
+    g=1
+    for s in $SEEDS; do
+      lip_train "$g" "$s" "$V2WM" "$FS5" "$FS1" "$TD" \
+        "/workspace/actors/lip4_lrsw_${arm}_s${s}.pt" "lrsw_${arm}" "${EXTRA[@]}" & g=$((g+1))
+    done; wait
+  done
+  log "B0: lrsw waves done"
+  # ---- B0b: wait for the PLDM upload (exact size), cap 3h
+  local T0; T0=$(date +%s)
+  until pldm_ready; do
+    if [ $(( $(date +%s) - T0 )) -gt 10800 ]; then
+      log "B0b: PLDM checkpoint never completed -- SKIPPING the PLDM lane"
+      touch "$D/COMPOSITE_B_DONE"; return 0
+    fi
+    sleep 60
+  done
+  log "B0b: PLDM checkpoint complete"
   # ---- B1: PLDM caches + TD (GPU 1)
   if [ ! -f "$QF1" ]; then
     log "B1: caching fs1 under PLDM (GPU 1)"
@@ -111,22 +144,6 @@ lane_b(){
       "/workspace/actors/lip4_pldm_s${s}.pt" pldm "${BASE_OPT[@]}" & g=$((g+1))
   done; wait
   log "B2: PLDM actors done"
-  # ---- B3: lr_sweep arms, 3 waves (GPUs 1-3), v2 train-split caches
-  local arm
-  for arm in it16 s12k alr; do
-    case "$arm" in
-      it16) EXTRA=(--iters 16 --steps 6000  --actor-lr 3e-4 --actor-lr-final 3e-5) ;;
-      s12k) EXTRA=(--iters 8  --steps 12000 --actor-lr 3e-4 --actor-lr-final 3e-5) ;;
-      alr)  EXTRA=(--iters 8  --steps 6000  --actor-lr 1e-4 --actor-lr-final 1e-5) ;;
-    esac
-    log "B3: lrsw $arm wave"
-    g=1
-    for s in $SEEDS; do
-      lip_train "$g" "$s" "$V2WM" "$FS5" "$FS1" "$TD" \
-        "/workspace/actors/lip4_lrsw_${arm}_s${s}.pt" "lrsw_${arm}" "${EXTRA[@]}" & g=$((g+1))
-    done; wait
-  done
-  log "B3: lrsw waves done"
   touch "$D/COMPOSITE_B_DONE"
 }
 rm -f "$D/COMPOSITE_B_DONE"
