@@ -163,7 +163,11 @@ if [ ! -f "$WMF/weights_epoch_1.pt" ]; then
   # fine-tuning does not change architecture; v2WM/config.json is the loader's.
   cp "$V2WM/config.json" "$WMF/config.json" || die "no arch config"
 fi
-grep -q "load_state_dict" "$WMF/config.json" || die "config.json in $WMF is the TRAINING config, not the arch config"
+# Validate by identity with the copy source, NOT by content heuristics: the
+# arch config's keys are _target_/encoder/predictor/... and contain no
+# "load_state_dict" (that string is a LOADER-side key; grepping for it here
+# false-positived and killed a finished fine-tune on 2026-07-28 12:47).
+cmp -s "$WMF/config.json" "$V2WM/config.json" || die "config.json in $WMF differs from the v2WM arch config"
 log "A3: WM_f13 ready"
 
 # ------------------------------------------------------- A4 caches, A5 TD
