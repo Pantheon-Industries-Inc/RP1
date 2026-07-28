@@ -274,26 +274,30 @@ training seeds.
 
 ### 9.2 Full matrix
 
+**COMPLETE** — all cells finished 2026-07-28.
+
 | arm | LeWM h25 | LeWM h50 | PLDM h25 | PLDM h50 | DINO h25 | DINO h50 |
 |---|---|---|---|---|---|---|
 | **LIPv4** | **100.0** ⁹ | **100.0** ⁹ | 97.1 ⁹ | 98.9 ⁹ | 99.3 ¹ | 99.3 ¹ |
-| **TD + CEM** | **100.0** ⁹ | 99.8 ⁹ | 98.7 ⁹ | 99.6 ⁹ | **99.8** ⁹ | **100.0** ⁸ |
+| **TD + CEM** | **100.0** ⁹ | 99.8 ⁹ | 98.7 ⁹ | 99.6 ⁹ | **99.8** ⁹ | **100.0** ⁹ |
 | TD + Adam | 96.4 ⁹ | 96.0 ⁹ | 96.0 ⁹ | 95.3 ⁹ | — | — |
 | TD + MPPI | 87.1 ⁹ | 87.1 ⁹ | 83.1 ⁹ | 83.8 ⁹ | — | — |
 | **Latent + CEM** | 89.3 ³ | **54.7** ³ | 96.7 ³ | **77.3** ³ | **100.0** ³ | **98.0** ³ |
-| Latent + Adam | 92.0 ³ | 67.3 ³ | 92.0 ³ | 72.0 ³ | — ᵃ | — ᵃ |
-| Latent + MPPI | 65.3 ³ | 47.3 ³ | 71.3 ³ | 55.3 ³ | 92.0 ¹ᶜ | 94.0 ¹ᶜ |
+| Latent + Adam | 92.0 ³ | 67.3 ³ | 92.0 ³ | 72.0 ³ | 96.7 ³ᵃ | 95.3 ³ᵃ |
+| Latent + MPPI | 65.3 ³ | 47.3 ³ | 71.3 ³ | 55.3 ³ | 95.3 ³ | 96.7 ³ |
 
-¹ 1 actor seed. ⁸ 8 of 9 cells. ¹ᶜ 1 cell only (partial). — not run (CEM-only scope for DINO).
+¹ 1 actor seed (K=8); the K=4 ablation gives 98.7/100.0 — the same 6-cell mean of 99.3.
+— TD+Adam and TD+MPPI not run on DINO (CEM-only scope; ~34 min/cell).
 
-ᵃ **DINO + Adam is out of scope and was not run.** Adam backpropagates through the
-world-model rollout, retaining `batch_size × num_samples` graphs. On DINO's 588-token
-predictor that is ~50 GB for 100 candidates and **78.5 GB for 200** — i.e. it OOMs an
-80 GB H100 at any `solver.batch_size ≥ 2`, and `expandable_segments` cannot help
-because this is live graph, not fragmentation. At `batch_size = 1` it fits (50 GB) but
-costs ~2–3 h/cell (~9 h for the arm), and Adam ranked *below* CEM on both twins, so the
-arm was dropped rather than paid for. CEM and MPPI are unaffected — both are
-inference-only (~25 GB).
+ᵃ DINO's Adam arm ran at `solver.batch_size=1` rather than 10, because Adam is the only
+planner that builds a backward graph and 200 retained candidates exhaust an 80 GB card
+(78.5 GB) while 100 fit at ~50 GB. This is environment-chunking, so it does not change
+the algorithm, but it does change the RNG realisation — statistically equivalent to the
+other two bases, not a bit-identical protocol. Cost ~2.5 h/cell.
+
+**Correction to an earlier version of this document:** DINO+Adam was previously recorded
+as "out of scope, memory-infeasible". It is feasible at `batch_size=1` and the numbers
+above are measured.
 
 DINO LIPv4 K-ablation (6 std cells each, 1 actor seed):
 **K=4 → h25 98.7 / h50 100.0** · **K=8 → h25 99.3 / h50 99.3** — identical 6-cell mean
@@ -319,9 +323,20 @@ The size of that correction is inversely proportional to how much geometry the l
 already carries. **This is invisible under the paper's single h25 cell**, where all
 three bases read 89–100.
 
-Qualification: DINO's latent cost is near-perfect under CEM (100.0/98.0) but only
-92–94 under MPPI, so the advantage is not purely representational — the optimizer
-still matters.
+**The effect is representational, not optimiser-specific.** With every cell in, all three
+optimisers hold 95–100 on DINO-WM at *both* horizons — including untuned MPPI, which does
+not degrade at all — whereas the same MPPI on LeWM falls from 65.3 to 47.3:
+
+| native latent cost | LeWM h25→h50 | PLDM h25→h50 | DINO-WM h25→h50 |
+|---|---|---|---|
+| CEM  | 89.3 → 54.7 | 96.7 → 77.3 | 100.0 → 98.0 |
+| Adam | 92.0 → 67.3 | 92.0 → 72.0 | 96.7 → 95.3 |
+| MPPI | 65.3 → 47.3 | 71.3 → 55.3 | 95.3 → **96.7** |
+
+A latent carrying 196 patch tokens makes the native distance good enough that even a
+badly-tuned sampler succeeds; a single 192-d CLS token needs both a strong optimiser and
+a learned cost. (An earlier version of this document inferred the opposite from one 92.0
+MPPI cell — that inference is **retracted**.)
 
 ### 10.2 LIPv4 matches the best sampling planner at ~1000× less search
 

@@ -24,10 +24,17 @@ All three bases reproduce the published TwoRoom values:
 
 LIPv4 vs the strongest native-latent planner, and the compute it takes:
 
+**Status: COMPLETE** — all cells finished 2026-07-28. All 26 artifacts verified to load.
+
 | | rollouts / plan step | LeWM h25/h50 | PLDM h25/h50 | DINO h25/h50 |
 |---|---|---|---|---|
-| Latent + CEM | 9,000 | 89.3 / 54.7 | 96.7 / 77.3 | 100.0 / 98.0 |
+| Latent + MPPI † | 9,000 | 65.3 / 47.3 | 71.3 / 55.3 | 95.3 / 96.7 |
+| Latent + Adam | 3,000 | 92.0 / 67.3 | 92.0 / 72.0 | 96.7 / 95.3 |
+| Latent + CEM | 9,000 | 89.3 / 54.7 | 96.7 / 77.3 | **100.0** / 98.0 |
+| TD + CEM | 9,000 | **100.0** / 99.8 | **98.7 / 99.6** | 99.8 / **100.0** |
 | **LIPv4** | **8** | **100.0 / 100.0** | 97.1 / 98.9 | 99.3 / 99.3 |
+
+† MPPI at repository defaults; temperature never tuned — a lower bound.
 
 The h50 column is where methods separate: the native latent cost degrades by −34.6
 (LeWM), −19.4 (PLDM) and −2.0 (DINO-WM) when the goal distance doubles — ordered by

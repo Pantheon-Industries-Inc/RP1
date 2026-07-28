@@ -1,2 +1,4 @@
 tworoom_matrix_20260727/checkpoints/*/weights.pt filter=lfs diff=lfs merge=lfs -text
 tworoom_matrix_20260727/metrics/td_canon_dinowm_*.pt filter=lfs diff=lfs merge=lfs -text
+tworoom_matrix_20260727/metrics/trm_canon_dinowm_*_value.pt filter=lfs diff=lfs merge=lfs -text
+tworoom_matrix_20260727/metrics/dinolip_*_value.pt filter=lfs diff=lfs merge=lfs -text

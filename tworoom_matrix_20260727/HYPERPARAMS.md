@@ -152,11 +152,22 @@ are a lower bound.
 | `action_noise` | 0 |
 | **rollouts / plan step** | **3,000** |
 
-**Memory:** backpropagates through the world-model rollout, retaining
-`batch_size × num_samples` graphs. On DINO-WM's 588-token predictor that is ≈50 GB for
-100 candidates and **78.5 GB for 200** — it exhausts an 80 GB H100 at any
-`solver.batch_size ≥ 2`, and `expandable_segments` does not help because the overflow is
-live activation memory, not fragmentation. Not run on DINO-WM for this reason.
+**Memory.** Adam is the only planner that builds a backward graph, retaining
+`batch_size × num_samples` candidate rollouts. Measured on DINO-WM's 588-token
+predictor (base model + context ≈25 GB; ≈0.27 GB per retained candidate):
+
+| `solver.batch_size` | candidates retained | peak | outcome |
+|---|---|---|---|
+| 10 (default) | 1,000 | — | OOM |
+| 2 | 200 | 78.5 GB | OOM |
+| **1** | **100** | **≈50 GB** | **fits, 30 GB headroom** |
+
+`expandable_segments` does not help, because the overflow is live activation memory
+rather than fragmentation. **DINO-WM's Adam arm was therefore run at
+`solver.batch_size=1`** (LeWM and PLDM used 10). `batch_size` is environment-chunking
+and does not change the algorithm, but it does change the RNG realisation, so DINO's
+Adam cells are statistically equivalent to — not a bit-identical protocol with — the
+other two bases. Cost: ≈2.5 h/cell versus ≈34 min for CEM.
 
 ### 4.4 LIPv4 — `config/solver/lip.yaml`, `train_lip_ac.py --arch v4`
 
