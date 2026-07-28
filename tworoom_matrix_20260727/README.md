@@ -58,6 +58,27 @@ results/             per-cell CSVs and driver logs (raw, unaggregated)
 code/                snapshot of the exact scripts and configs that ran
 ```
 
+## Verifying the archive still reproduces
+
+```bash
+STABLEWM_HOME=$(pwd) python3 verify_reproduction.py
+```
+
+Loads all three world models and compares their latents on a fixed synthetic input
+against `ref_latents.npz`, captured on the campaign machine (Linux / H100 /
+torch 2.4.1 / transformers 4.57.6). Needs no dataset and no GPU; runs in seconds.
+Observed drift on macOS / M2 Max / torch 2.12.1 / transformers 5.12.1:
+**1.6e-4, 6.6e-5, 4.2e-4** — float32 accumulation-order noise, means equal to six
+decimals.
+
+> **This check earned its keep.** `lejepa` and `pldm` originally would not load at
+> all under transformers 5.x: the stored state_dicts carry the 4.x ViT layout
+> (`encoder.encoder.layer.N.attention.attention.query`) while 5.x builds
+> `encoder.layers.N.attention.q_proj`, so every encoder key was missing.
+> `load_pretrained` now detects the mismatch and remaps in either direction
+> (`stable_worldmodel/wm/utils.py::_vit_layout_compat`, snapshot in
+> `code/stable_worldmodel/wm_utils.py`). DINOv2-backed models are unaffected.
+
 ## Reproducing
 
 1. Fetch the dataset: HF `quentinll/lewm-tworooms` → `tworoom.tar.zst` → `tworoom.h5`
