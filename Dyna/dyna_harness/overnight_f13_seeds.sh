@@ -59,7 +59,12 @@ for s in 0 1 2; do [ -f "/workspace/actors/lip4_dsp_pre_s${s}.pt" ] || die "pref
 grep -q "failure-frac" /workspace/build_dyna_mix.py || die "preflight: pod build_dyna_mix.py lacks --failure-frac (deploy the new one)"
 grep -q "ep_range" "$P/eval_wm.py" || die "preflight: eval_wm.py has no ep_range"
 grep -q "_row_in_range" "$P/eval_wm.py" || die "preflight: eval_wm.py lacks the ep_range KeyError fix"
-pgrep -f "train_lip_a[c]|train_metri[c]|lewm_exper[t]|eval_w[m]" >/dev/null && die "preflight: something is already running"
+# SKIP_PGREP=1: for relaunch while an orphaned lane B legitimately trains on.
+# Gotcha (§6 of the handoff): this pgrep also matches an ssh WRAPPER whose
+# command line spells out the patterns -- launch with a pattern-free wrapper.
+if [ "${SKIP_PGREP:-0}" != 1 ]; then
+  pgrep -f "train_lip_a[c]|train_metri[c]|lewm_exper[t]|eval_w[m]" >/dev/null && die "preflight: something is already running"
+fi
 log "P0: preflight OK"
 [ "${1:-}" = check ] && { log "check mode: exiting before any work"; exit 0; }
 
@@ -93,9 +98,18 @@ lane_b(){
   log "B2: POST-full wave done"
   touch "$D/OVR_LANE_B_DONE"
 }
-rm -f "$D/OVR_LANE_B_DONE"
-lane_b &
-LANE_B_PID=$!
+# SKIP_LANE_B=1: a previous invocation's lane B is still running as an orphan
+# (driver died on a lane-A failure; bash background jobs survive their parent).
+# Do NOT clear its marker and do not spawn a second wave onto its GPUs -- the
+# join below just waits for the orphan to touch the marker.
+if [ "${SKIP_LANE_B:-0}" = 1 ]; then
+  log "lane B: SKIPPED (orphan from a previous invocation owns GPUs 1-3)"
+  LANE_B_PID=""
+else
+  rm -f "$D/OVR_LANE_B_DONE"
+  lane_b &
+  LANE_B_PID=$!
+fi
 
 # ================================================================ lane A (fg)
 # --------------------------------------------- A1 relabel gate (CPU, no GPU)
@@ -126,6 +140,12 @@ if [ ! -f "$MIX/.done" ]; then
 fi
 log "A2: $(grep -h 'dup K_fail=' "$L/ovr_mix_f13.log" | tail -1)"
 log "A2: $(grep -h 'achieved:' "$L/ovr_mix_f13.log" | tail -1)"
+# Defense in depth on top of the mixer's own row-count assert: the achieved
+# on-policy fraction must be the planned 0.50. The union-keep bug shipped a
+# 0.609 mix and 15 min of fine-tune before the +10min check read this line.
+ACH_ON=$(grep -h 'achieved:' "$L/ovr_mix_f13.log" | tail -1 | grep -oE 'on-policy [0-9.]+' | grep -oE '[0-9.]+')
+awk -v x="${ACH_ON:-0}" 'BEGIN{exit !(x>=0.48 && x<=0.52)}' \
+  || die "A2: achieved on-policy ${ACH_ON:-unparsed} outside [0.48,0.52] -- mix composition wrong, refusing to fine-tune"
 
 # ------------------------------------------------------------ A3 WM fine-tune
 if [ ! -f "$WMF/weights_epoch_1.pt" ]; then
@@ -167,9 +187,16 @@ fi
 log "A4/A5: caches + TD ready"
 
 # ---------------------------------------------- join: wait for lane B's GPUs
-log "join: waiting for lane B (PID $LANE_B_PID) before taking GPUs 1-2"
+log "join: waiting for lane B (PID ${LANE_B_PID:-orphan}) before taking GPUs 1-2"
+JOIN_T0=$(date +%s)
 while [ ! -f "$D/OVR_LANE_B_DONE" ]; do
-  kill -0 "$LANE_B_PID" 2>/dev/null || { log "WARNING: lane B exited without marker -- its actors may be missing; continuing"; break; }
+  if [ -n "$LANE_B_PID" ]; then
+    kill -0 "$LANE_B_PID" 2>/dev/null || { log "WARNING: lane B exited without marker -- its actors may be missing; continuing"; break; }
+  else
+    # orphan mode: no PID to probe; cap the wait so a dead orphan cannot hang
+    # the chain forever (both waves are ~1.6h; 4h is generous)
+    [ $(( $(date +%s) - JOIN_T0 )) -gt 14400 ] && { log "WARNING: orphan lane B marker never appeared in 4h; continuing"; break; }
+  fi
   sleep 120
 done
 

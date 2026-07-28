@@ -232,10 +232,17 @@ def main():
                 f"uninterpretable)."
             )
         # failures first, then successes: ids stay monotone across both;
-        # zero-K pools are dropped, not floored to 1
-        pools = [(e, k) for e, k in
-                 [(np.concatenate(fail_eps), K_f), (np.concatenate(succ_eps), K_s)]
-                 if k > 0]
+        # zero-K pools are dropped, not floored to 1.
+        #
+        # keep-sets are PER LANCE, never a union: recorded episode ids restart
+        # at 0 in every lance, so id 37 can be a failure in a0 and a success in
+        # a1. A concatenated keep-set applied to every lance leaks each lance's
+        # colliding-id successes into the failure pool (and both-pool episodes
+        # get K_f+K_s copies -- straight back into the memorisation regime).
+        # Caught live on 2026-07-28: union build wrote 4,110,900 rows /
+        # on-policy 0.609 instead of 3,235,850 / 0.503.
+        pools = [(keeps, k) for keeps, k in
+                 [(fail_eps, K_f), (succ_eps, K_s)] if k > 0]
 
     # expert schema for the 4 columns is the reference
     ref_schema = pa.schema([exp.schema.field(c) for c in COLS])
@@ -244,10 +251,11 @@ def main():
         yield from stream_source(exp, 0, None, remap=False, filt=exp_filt)
         max_exp_id = 100000  # expert ids are 0..9999; start fresh ids high
         nid = [max_exp_id]
-        for keep, dup in pools:
+        for keeps, dup in pools:
+            per_lance = keeps if keeps is not None else [None] * len(ons)
             for k in range(dup):
-                for d in ons:
-                    yield from stream_source(d, 0, nid, remap=True, keep=keep)
+                for d, kp in zip(ons, per_lance):
+                    yield from stream_source(d, 0, nid, remap=True, keep=kp)
         print(f"final on-policy episode id: {nid[0] - 1}", flush=True)
 
     if os.path.exists(args.out):
@@ -260,11 +268,18 @@ def main():
     assert (np.diff(ep) >= 0).all(), "episode_idx not monotone!"
     n_out = chk.count_rows()
     print(f"wrote {args.out}: rows={n_out} episodes={len(np.unique(ep))}", flush=True)
+    # Post-write self-check: the ACHIEVED composition must match the plan.
+    # This is what caught the union-keep bug (achieved on-policy 0.609 vs
+    # planned 0.503) -- keep it a hard failure, not a report.
+    got_on = (n_out - n_exp) / n_out
+    plan_on = (K * n_on if n_fail is None else K_f * n_fail + K_s * n_succ)
+    plan_tot = n_exp + plan_on
+    assert n_out == plan_tot, (
+        f"MIX SELF-CHECK FAILED: wrote {n_out} rows, planned {plan_tot} -- "
+        "the stream did not deliver the planned composition; do NOT train on "
+        "this output.")
     if n_fail is not None:
-        # the achieved split is what the fine-tune actually sees; report it
-        # rather than the target, since both K are rounded to integers
-        got_on = n_out - n_exp
-        print(f"achieved: on-policy {got_on / n_out:.3f}, "
+        print(f"achieved: on-policy {got_on:.3f}, "
               f"failure {K_f * n_fail / n_out:.3f}", flush=True)
     print("BUILD_MIX_DONE", flush=True)
 
