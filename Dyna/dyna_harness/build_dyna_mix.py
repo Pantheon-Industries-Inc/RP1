@@ -30,11 +30,14 @@ directly comparable to the table above, and 0 <= failure_frac <= onpolicy_frac.
 Omit it (or pass 'auto') for the historical uniform-K behaviour.
 
 Requires a per-episode outcome label, which comes from the `success` column
-written by the SWM_RECORD_PATH recorder (world.py). Episodes collected before
-that column existed cannot be divided and must be re-collected: the label is
-NOT recoverable offline, because under terminate_at_goal=False (which
-full-length collection needs) world.terminateds never fires, and the goal pose
-the 0.04 m check needs is not among the recorded columns.
+written by the SWM_RECORD_PATH recorder (world.py). Lances collected before that
+column existed do NOT need re-collecting -- the label is recoverable offline,
+because the task draw is a deterministic function of the collection seed and
+full-length collection drops no episodes, so recorded episode k is drawn task k
+and the target pose can be read from the expert data at (episode, start+25).
+See ../HANDOFF_20260728.md §2.1. Relabelling also beats re-collecting on the
+merits: every failure-fraction cell is then built from identical on-policy rows,
+so the sweep isolates the ratio instead of confounding it with a reshuffle.
 """
 # ############################################################################
 # # DATA SPLIT -- see ../DATA_SPLIT_POLICY.md
@@ -113,9 +116,12 @@ def outcome_split(ds, path):
         raise SystemExit(
             f"{path}: no {OUTCOME!r} column, so it cannot be divided by outcome.\n"
             f"  columns: {sorted(ds.schema.names)}\n"
-            "  This lance predates the recorder's outcome label. Re-collect with\n"
-            "  SWM_RECORD_OUTCOME=1 (see world.py); the label cannot be recovered\n"
-            "  offline. Or drop --failure-frac to build with uniform duplication."
+            "  This lance predates the recorder's outcome label. It does NOT need\n"
+            "  re-collecting -- relabel it offline (../HANDOFF_20260728.md §2.1):\n"
+            "  the task draw is deterministic in the collection seed and\n"
+            "  full-length collection drops no episodes, so recorded episode k is\n"
+            "  drawn task k. New collections should set SWM_RECORD_OUTCOME=1.\n"
+            "  Or drop --failure-frac to build with uniform duplication."
         )
     t = ds.to_table(columns=["episode_idx", OUTCOME])
     ep = t.column(0).to_numpy().reshape(-1)
