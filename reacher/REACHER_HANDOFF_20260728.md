@@ -126,13 +126,38 @@ Paper reports LeWM 86 / PLDM 78 / DINO-WM 79 (h25).
    aren't on a common scale either. **The relative gap does reproduce: ours
    79.3−71.3 = 8.0 vs paper 86−78 = 8.**
 
+### 3a. Value-function attempts — all four dead, with mechanisms
+
+| value | lejepa 6-cell | pldm 6-cell | why it died |
+|---|---|---|---|
+| MRN quasimetric (steps-to-go) | 68.3 | 67.7 | hitting time: indifferent to arrival state, rewards overshoot |
+| discounted dwell, r=1{in ball} | 56.7 | 48.7 | reward sparsity flattened the range signal (3% dynamic range vs the quasimetric's 20x) |
+| at-rest quasimetric, `[z_t, z_t−z_{t−5}]` | **30.7** | **24.3** | motion signal too weak at the deployable lag; adds a noisy 4–5-step offset in the endgame; hackable by zero-action plans |
+| *(none — Latent+CEM, terminal MSE)* | **79.3** | **71.0** | **still the best arm** |
+
+**The single most useful measurement of the value line:** a plain 1-frame
+quasimetric separates (at-goal-MOVING) from (at-goal-STOPPED) at **exactly
+chance — AUC 0.496, gap −0.001**. `LeWM.encode` embeds each frame independently
+(one CLS per frame), so **a single-frame latent carries no velocity**; motion
+exists only in the predictor's attention. Therefore *no* value on single-frame
+latents can express settling, and the quasimetric's indifference to arrival
+state is a **representational** limit, not an objective-design flaw. The at-rest
+lag-1 control confirms the encoding idea works (AUC 0.89) — but lag 1 is not
+deployable (blocks are 5 primitive steps), and at lag 5 the delta is a large
+displacement (‖Δz‖≈8.7 vs ‖z‖≈13.8), not a velocity (0.34 sd, AUC 0.61).
+**Any future value work needs finer-grained frames or proprio, not another head.**
+
+Also: at-rest has the **highest ever-in-ball of any arm (88–100)** and the lowest
+held-at-end — passing-through inflation **+52 to +82** vs TD's +8/+34. The value
+built to reward settling produced the worst settling.
+
 ---
 
 ## 4. In flight
 
 | # | what | notes |
 |---|---|---|
-| **Stage A** | at-rest value + CEM (planner fixed) | values already trained: `/workspace/metrics/atrest_{lejepa,pldm}_lag{1,5}.pt`, `/workspace/train_atrest.py`. Gated on 3 diagnostics (see §5). Owns `summary_atrest_*`. |
+| ~~Stage A~~ | **DONE — at-rest value is DEAD, worst tried** | lejepa 36.7/24.7/**30.7**, pldm 26.0/22.7/**24.3** vs quasimetric 68.3/67.7 and Latent+CEM 79.3/71.0. See §3a. |
 | **Stage B** | LIPv4 trained against the at-rest value | 6 jobs (3 seeds × 2 bases), 3 per GPU. Queued at user's request regardless of Stage A. Owns `summary_lipatrest_*`, `actors/lip4_atrest_*`. |
 
 **At-rest design** (user's idea, and the one still alive): keep steps-to-go and
