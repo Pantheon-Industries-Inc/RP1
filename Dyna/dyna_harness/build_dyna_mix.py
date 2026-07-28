@@ -200,17 +200,19 @@ def main():
             print(f"[outcome] {q.split('/')[-1]}: {len(fe)} failed eps "
                   f"({fr} rows), {len(se)} succeeded eps ({sr} rows)", flush=True)
             fail_eps.append(fe); succ_eps.append(se); n_fail += fr; n_succ += sr
-        if n_fail == 0 or n_succ == 0:
+        if (n_fail == 0 and phi > 0) or (n_succ == 0 and phi < f):
             raise SystemExit(
-                f"one outcome pool is empty (failed rows {n_fail}, succeeded "
-                f"rows {n_succ}); --failure-frac cannot be targeted. If this is "
+                f"an outcome pool needed by --failure-frac {phi} is empty "
+                f"(failed rows {n_fail}, succeeded rows {n_succ}). If this is "
                 "full-length collection, check the recorder logged "
                 "kept_success>0 -- terminate_at_goal=False makes "
                 "world.terminateds useless as a label."
             )
-        # K_f*n_fail = phi*T ; K_s*n_succ = (f-phi)*T
-        K_f = max(1, round(phi * T / n_fail))
-        K_s = max(1, round((f - phi) * T / n_succ))
+        # K_f*n_fail = phi*T ; K_s*n_succ = (f-phi)*T. A pool whose target is
+        # zero rows (phi=0: success-only; phi=f: failure-only) gets K=0 and is
+        # excluded entirely -- flooring at 1 would silently leak it in.
+        K_f = 0 if phi == 0 else max(1, round(phi * T / n_fail))
+        K_s = 0 if phi == f else max(1, round((f - phi) * T / n_succ))
         tot = n_exp + K_f * n_fail + K_s * n_succ
         print(f"expert rows {n_exp}, on-policy rows {n_on} "
               f"(failed {n_fail}, succeeded {n_succ})", flush=True)
@@ -229,8 +231,11 @@ def main():
                 f"memorisation risk (K=87 is what made arm 1's null "
                 f"uninterpretable)."
             )
-        # failures first, then successes: ids stay monotone across both
-        pools = [(np.concatenate(fail_eps), K_f), (np.concatenate(succ_eps), K_s)]
+        # failures first, then successes: ids stay monotone across both;
+        # zero-K pools are dropped, not floored to 1
+        pools = [(e, k) for e, k in
+                 [(np.concatenate(fail_eps), K_f), (np.concatenate(succ_eps), K_s)]
+                 if k > 0]
 
     # expert schema for the 4 columns is the reference
     ref_schema = pa.schema([exp.schema.field(c) for c in COLS])
@@ -260,7 +265,7 @@ def main():
         # rather than the target, since both K are rounded to integers
         got_on = n_out - n_exp
         print(f"achieved: on-policy {got_on / n_out:.3f}, "
-              f"failure {pools[0][1] * n_fail / n_out:.3f}", flush=True)
+              f"failure {K_f * n_fail / n_out:.3f}", flush=True)
     print("BUILD_MIX_DONE", flush=True)
 
 
