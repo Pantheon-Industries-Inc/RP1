@@ -206,8 +206,14 @@ if [ ! -f "$WM1DIR/weights_epoch_1.pt" ]; then
     > "$L/dsp_ft.log" 2>&1 || die "fine-tune failed (see dsp_ft.log)"
   CK=/workspace/swm_home/checkpoints/dyna_dsp_5050
   mkdir -p "$WM1DIR"
-  cp "$CK/config.json" "$WM1DIR/" || die "no config.json in $CK"
   cp "$CK/weights_epoch_1.pt" "$WM1DIR/" || die "no weights_epoch_1.pt in $CK"
+  # ARCH config, not the checkpoint's config.json: lewm_expert.py writes the
+  # TRAINING config there (output_model_name, num_workers, ...) and the loader
+  # needs the architecture one (_target_, encoder, predictor, ...). Fine-tuning
+  # does not change architecture, and v2WM/config.json is byte-identical to the
+  # r1 run's packaged config (sha fd35a47c). Copying the wrong one fails with
+  # "ConfigAttributeError: Missing key load_state_dict" at cache_latents.
+  cp /workspace/models/v2WM/config.json "$WM1DIR/config.json" || die "no arch config"
 fi
 log "P7: WM1 ready at $WM1DIR"
 

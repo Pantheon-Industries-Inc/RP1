@@ -107,8 +107,15 @@ if [ ! -f "$WM2/weights_epoch_1.pt" ]; then
     trainer.devices=1 output_model_name=dyna_full_5050 subdir=dyna_full_5050 \
     +action_stats_pin=expert wandb.enabled=false > "$L/dsp_ft_full.log" 2>&1 || die "fine-tune failed"
   CK=/workspace/swm_home/checkpoints/dyna_full_5050
-  mkdir -p "$WM2"; cp "$CK/config.json" "$WM2/" || die "no config.json"
-  cp "$CK/weights_epoch_1.pt" "$WM2/" || die "no weights_epoch_1.pt"
+  mkdir -p "$WM2"
+  cp "$CK/weights_epoch_1.pt" "$WM2/" || die "no weights_epoch_1.pt in $CK"
+  # ARCH config, not the checkpoint's config.json: lewm_expert.py writes the
+  # TRAINING config there (output_model_name, num_workers, ...) and the loader
+  # needs the architecture one (_target_, encoder, predictor, ...). Fine-tuning
+  # does not change architecture, and v2WM/config.json is byte-identical to the
+  # r1 run's packaged config (sha fd35a47c). Copying the wrong one fails with
+  # "ConfigAttributeError: Missing key load_state_dict" at cache_latents.
+  cp /workspace/models/v2WM/config.json "$WM2/config.json" || die "no arch config"
 fi
 log "P3: WM2 ready"
 
