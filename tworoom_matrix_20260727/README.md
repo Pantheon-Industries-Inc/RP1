@@ -102,7 +102,12 @@ decimals.
   clean for it.
 - **MPPI is untuned** — no plan-time config shipped with the repository; ours mirrors CEM
   with the default temperature, never swept.
-- **DINO-WM coverage:** LIPv4 has 1 actor seed (twins have 3); Adam was not run
-  (memory-infeasible at comparable settings); MPPI is partial.
+- **DINO-WM coverage:** its three latent arms are complete (CEM, Adam, MPPI, all n=3),
+  but its *learned-cost* arms are CEM-only — TD+Adam and TD+MPPI were not run, since
+  DINO cells cost ~34 min each and CEM dominated both other optimisers on the two
+  smaller-latent bases. LIPv4 has 1 actor seed where the twins have 3. Its Adam arm ran
+  at `solver.batch_size=1` (~50 GB; 200 retained candidates need 78.5 GB and exhaust an
+  80 GB card) — env-chunking only, so the algorithm is unchanged, but the RNG
+  realisation differs from the twins' batch-10 runs.
 - **Statistical resolution:** n=50 binary trials ⇒ SE ≈ 2.8 points, so differences ≤2
   points between near-ceiling arms are unresolved. Several arms sit at 99–100.
