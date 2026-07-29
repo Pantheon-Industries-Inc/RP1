@@ -8,6 +8,7 @@ from .lip import LIPSolver
 from .mppi import MPPISolver
 from .pgd import PGDSolver
 from .predictive_sampling import PredictiveSamplingSolver
+from .pwm import PWMSolver
 from .solver import Solver
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     'LIPSolver',
     'HLIPSolver',
     'PredictiveSamplingSolver',
+    'PWMSolver',
 ]
