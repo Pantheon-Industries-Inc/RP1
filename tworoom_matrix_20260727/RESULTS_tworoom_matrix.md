@@ -241,6 +241,39 @@ lies in encoder space; on bases where it does not, the learned value degrades sh
 | training seeds | **0, 1, 2** (twins); **0** only for DINO |
 | wall-clock | ~58 min/seed (twins, 192-d); ~4 h/seed (DINO, 77,224-d) |
 
+## 7b. PWM-style reactive policy training (added 2026-07-29)
+
+`scripts/plan/train_pwm_ac.py`; deploy solver `stable_worldmodel/solver/pwm.py`
+(`solver=pwm`, config `config/solver/pwm.yaml`); driver `code/tworoom_pwm.sh`.
+
+Actor `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax` — the same
+goal-displacement parameterisation and action box as PlannerNetV3, so refiner and
+reactive policy see the goal identically.
+
+| setting | value |
+|---|---|
+| objective (dense, default) | `J = −Σ_{t=1..H} γ^t · teacher(z_t, z_g)`, loss `mean(−J/H)`; `z_t` imagined through the frozen WM via the same `rollout_traj` path LIPv4 trains through |
+| horizon H / γ / amax | 5 action blocks / 0.99 (PWM's) / 2.2 |
+| actor arch / lr | width 512 × 3 layers, zproj 256 / AdamW 5e-4 → 5e-5 (PWM's actor_lr), grad-norm 100 (PWM's) |
+| critic | the MRN quasimetric **co-trained**, warm-started from the same-seed TD checkpoint (`--init-value`); expectile 0.1 → 0.03, Huber β 1.0, lr 1e-3 → 1e-4 |
+| teacher | Polyak EMA of the critic, τ = 0.005 |
+| sampler | `NStepGoalSampler`: n_step 50, p_cross 0.3, max_delta 12, balanced |
+| steps / batch | 8,000 / 128 (twins), 16 (DINO — 77,224-d) |
+| caches | fs5 for actor rollout contexts, fs1 for critic TD pairs (DINO: r200000, rebuilt — §8) |
+| seeds / wall-clock | 0,1,2 twins (~12 min/seed), 0 DINO (~1.3 h) |
+
+What is and is not taken from PWM: kept — first-order policy extraction through a
+frozen* world model, γ, actor lr, grad clipping, H-step imagined returns. Replaced —
+the 3-ensemble TD-λ reward critic and learned reward model by the MRN quasimetric and
+its EMA teacher (per campaign decision); online interaction by fully offline caches.
+(*PWM fine-tunes the WM with a third optimizer; ours stays frozen.)
+
+Checkpoints: `actors/pwm_{lejepa,pldm}_s{0,1,2}.pt`, `actors/pwm_dinowm_r200000_s0.pt`.
+Co-trained critics (`metrics/pwm_*_value.pt`) are training *outputs*, not deploy
+inputs — `PWMSolver` loads only the actor. Twins critics are archived for inspection;
+the DINO critic (~150 MB) is not: it regenerates deterministically from the archived
+warm-start + seed.
+
 ## 8. Latent caches
 
 | cache | stride | purpose |
@@ -303,6 +336,22 @@ DINO LIPv4 K-ablation (6 std cells each, 1 actor seed):
 **K=4 → h25 98.7 / h50 100.0** · **K=8 → h25 99.3 / h50 99.3** — identical 6-cell mean
 of 99.3. Halving the refinement depth cost nothing.
 
+### 9.3 Paper-budget replication — CEM at 10 iterations (added 2026-07-29)
+
+The matrix above ran CEM at `n_steps=30`; the LeWM paper specifies **10 iterations in
+every environment except PushT**. Both CEM arms rerun at `solver.n_steps=10`, all else
+identical (72 cells; driver `code/it10_rerun.sh`, journal `results/it10_driver.log`):
+
+| arm @ 10 iters | LeWM h25 | LeWM h50 | PLDM h25 | PLDM h50 | DINO h25 | DINO h50 |
+|---|---|---|---|---|---|---|
+| Latent + CEM | 86.7 ³ | 54.0 ³ | 97.3 ³ | 76.7 ³ | 100.0 ³ | 99.3 ³ |
+| TD + CEM | 100.0 ⁹ | 100.0 ⁹ | 98.2 ⁹ | 99.1 ⁹ | 100.0 ⁹ | 100.0 ⁹ |
+
+Max shift vs 30 iterations: **−2.6** (LeWM latent h25); every other cell moves ≤ 1.3.
+Every finding in §10 survives unchanged at the paper's own budget, and the honest CEM
+cost is **3,000 rollouts / plan step** (300 × 10). Numbers quoted elsewhere in this
+document are the 30-iteration campaign values unless marked "@ 10 iters".
+
 ---
 
 ## 10. Findings
@@ -338,12 +387,35 @@ badly-tuned sampler succeeds; a single 192-d CLS token needs both a strong optim
 a learned cost. (An earlier version of this document inferred the opposite from one 92.0
 MPPI cell — that inference is **retracted**.)
 
-### 10.2 LIPv4 matches the best sampling planner at ~1000× less search
+### 10.2 LIPv4 matches the best sampling planner at 2–3 orders of magnitude less search — and its budget knob degrades gracefully
 
-| | rollouts / plan step | LeWM h25/h50 | PLDM h25/h50 | DINO h25/h50 |
+Search cost is counted in **WM rollout-equivalents per plan step**: CEM evaluates
+`num_samples` H-block rollouts per iteration; one LIPv4 refinement pass costs ~2
+rollout-equivalents (forward unroll + gradient). An earlier revision of this table
+wrote "8" for LIPv4 — that counted refinement *passes*, not rollout-equivalents; the
+convention is now uniform.
+
+| | rollout-eq / plan step | LeWM h25/h50 | PLDM h25/h50 | DINO h25/h50 |
 |---|---|---|---|---|
-| CEM | 9,000 | 100.0 / 99.8 | 98.7 / 99.6 | 99.8 / 100.0 |
-| **LIPv4** | **8** | **100.0 / 100.0** | 97.1 / 98.9 | 99.3 / 99.3 |
+| CEM, 30 iters (campaign) | 9,000 | 100.0 / 99.8 | 98.7 / 99.6 | 99.8 / 100.0 |
+| CEM, 10 iters (paper budget, §9.3) | 3,000 | 100.0 / 100.0 | 98.2 / 99.1 | 100.0 / 100.0 |
+| **LIPv4 K=8** (campaign) | **~16** | **100.0 / 100.0** | 97.1 / 98.9 | 99.3 / 99.3 |
+| LIPv4 K=4, truncated ᵗ | ~8 | 100.0 / 100.0 | 96.7 / 99.6 | (98.7 / 100.0 ʳ) |
+| LIPv4 K=2, truncated ᵗ | ~4 | 99.1 / 100.0 | 93.3 / 97.8 | — |
+
+ᵗ Deploy-time truncation (added 2026-07-29): the K=8-trained twins checkpoints re-saved
+with `ck["iters"]` patched to 4 / 2 — valid because the v4 refiner is weight-tied and
+`LIPSolver` iterates `self.lip_iters = ck["iters"]` externally. n=9 per cell (3 actor ×
+3 task seeds); driver `code/lipk_sweep.sh`, journal `results/lipk_driver.log`.
+ʳ The DINO K=4 row is the §9.2 *retrained* actor, not a truncation — listed for
+context, not protocol-identical to ᵗ.
+
+Reading: **K=4 is free on both twins** (LeWM 18/18 cells at 100.0; PLDM within noise),
+mirroring DINO's retrained K=4 ≡ K=8. **K=2 is free on LeWM** and costs −3.8/−1.1 on
+PLDM — the weaker latent needs the extra refinement, consistent with §10.1. Against the
+paper-budget CEM this puts the amortized planner at **~190× (K=8) to ~750× (K=2)**
+less search for the same 93–100 band; CEM's own budget knob did nothing between 10 and
+30 iterations, while LIPv4's degrades gracefully and only where the latent is weak.
 
 On LeWM, LIPv4 is the single best arm and produced **two perfect 12-cell cards**
 (600/600 episodes each, including the cross-wall surface). Wall-clock at deploy is
@@ -373,6 +445,36 @@ unsolvable task; it requires two independent fixes.
 A held-out (amax, K) sweep for PLDM LIPv4 — selected on seed 42 only, per §11.1 —
 gave: `a22k8` 94.0/100.0 (baseline), **`a28k8` 96.0/100.0 (selected)**, `a35k8`
 96.0/98.0, `a35k12` 96.0/96.0, `a22k12` 94.0/100.0. No arm reaches 100 at h25.
+
+### 10.5 Single-pass amortization fails where iterative refinement succeeds (added 2026-07-29)
+
+A reactive policy `π(z, z_g) → action block` trained fully offline in the style of PWM
+(arXiv 2407.02466) — first-order policy extraction by backpropagating imagined returns
+through the frozen WM — but keeping the campaign's **MRN quasimetric** as the value
+(no learned reward model, no 3-ensemble TD-λ critic; full recipe in §7b, deploy via
+`solver=pwm`, `stable_worldmodel/solver/pwm.py`).
+
+| regime | rollout-eq / plan step | LeWM h25/h50 | PLDM h25/h50 | DINO h25/h50 |
+|---|---|---|---|---|
+| proto — execute all 5 blocks, tail imagined | 4 | 35.3 / 21.1 ⁹ | 30.4 / 9.3 ⁹ | 36.0 / 20.7 ³ |
+| rh1 — pure reactive, replan every block | 0 | 38.0 / 22.9 ⁹ | 31.8 / 14.9 ⁹ | 36.0 / 20.7 ³ |
+| LIPv4 K=2 (same value class, 2 refine passes) | ~4 | 99.1 / 100.0 | 93.3 / 97.8 | — |
+
+- A single amortized pass lands at **30–38 (h25) / 9–23 (h50)** — below every arm in
+  §9.2, including untuned MPPI. Two learned refinement passes over the *same* MRN value
+  landscape (LIPv4 K=2, comparable deploy budget) recover 93–100. On this task the
+  **refinement loop, not the learned value, is what makes amortized planning work**;
+  goal-displacement parameterisation, action box and caches are identical between the
+  two actors.
+- **Replan frequency is not the bottleneck**: rh1 − proto ≤ +5.6 everywhere. On
+  LeWM-t0 and DINO the two regimes produced cell-identical scores — deterministic env,
+  deterministic policy: when the imagined tail matches what the policy would re-choose,
+  the executed trajectory is literally the same.
+- Caveats: this is deliberately **not** faithful PWM — offline, frozen WM, MRN teacher
+  in place of PWM's learned reward + ensemble critic, dense discounted-teacher
+  objective, one hyperparameter setting, no tuning. It is one datapoint against
+  *offline single-pass extraction on this stack*, not a refutation of PWM in its own
+  (online, reward-supervised) setting. DINO uses 1 training seed (twins: 3).
 
 ---
 
@@ -425,6 +527,9 @@ three were silent (produced plausible wrong numbers rather than crashing).
 | 6 | converter applied ViT renames unconditionally (they target transformers 5.x; 4.x uses the old layout) | all 192 encoder keys rejected |
 | 7 | converter extraction ignored `--only` | converting 3 bases required the 4th archive present |
 | 8 | cache compressor not recorded in the TD `arch` | `load_metric` could not rebuild the wrapper |
+| 9 | `trm/learners/__init__.py` eagerly imported `dwell` (a discarded reacher-campaign learner) while `dwell.py` was **untracked** — `git archive`, used to ship code to pods precisely because it is immune to working-tree drift, by the same token ships tracked files only | pods received an `__init__` referencing a module that was never sent; Python reports the missing submodule as a *circular import*; **every `+metric=` eval on the pod died** while latent cells kept passing (fixed by keeping only eval-path learners eager) |
+| 10 | PWM code written against the **working tree's** `rollout_traj(…, hs=)` — an uncommitted reacher-session signature; the committed function is `(wm, z_hist, a_hist, plan)` | all PWM training crashed at step 0 on the pod (which runs committed code) |
+| 11 | `PWMSolver` implemented `solve()` only, returned key `'action'`, on CUDA; `WorldModelPolicy` invokes solvers as **callables** and reads `outputs['actions']` (plural, CPU) — the `Solver` Protocol supplies no `__call__` shim, each concrete solver ships its own | **all 72 twins PWM eval cells** FAILed with `'PWMSolver' object is not callable` |
 
 `reacher_matrix.sh` carries defect #3 identically; any reacher matrix rows produced by
 running two bases concurrently should be re-run.

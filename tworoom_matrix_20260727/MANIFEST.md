@@ -66,3 +66,37 @@ regenerable from the stored world models in ~3 min (LeWM/PLDM) or ~4 min (DINO).
 | `actors/trm_canon_pldm_v4_s1.pt` | 1.3 MB | `8e732e0f2c4bed0c4c31ea57404f1719` |
 | `actors/trm_canon_pldm_v4_s2.pt` | 1.3 MB | `189d33eba24a6cb882d5f109a4d5a6de` |
 
+
+## PWM reactive policy (added 2026-07-29)
+
+| file | size | md5 (first 32) |
+|---|---|---|
+| `actors/pwm_lejepa_s0.pt` | 3.4M | `f9f9d4a23c3ef42bd5867d6affdccf96` |
+| `actors/pwm_lejepa_s1.pt` | 3.4M | `6d76789dd06989dca8b13f19d3fdafea` |
+| `actors/pwm_lejepa_s2.pt` | 3.4M | `e77e56e8d95fce763759e6516d7f4006` |
+| `actors/pwm_pldm_s0.pt` | 3.4M | `646159e86cff9d6cbd8f05cd6b160c8f` |
+| `actors/pwm_pldm_s1.pt` | 3.4M | `d985179160e0441622b01a1157d4ebcc` |
+| `actors/pwm_pldm_s2.pt` | 3.4M | `a740395ea774b321e158679378cb79bf` |
+| `actors/pwm_dinowm_r200000_s0.pt` | 154M | `3a96020e20f61c343a45fb11208ab535` |
+| `metrics/pwm_lejepa_s0_value.pt` | 584K | `90427a55cd1f26c44306759e3c14b30f` |
+| `metrics/pwm_lejepa_s1_value.pt` | 584K | `970a9a131b2a0d2ab563e2d9c6aa98a6` |
+| `metrics/pwm_lejepa_s2_value.pt` | 584K | `d85074ab98e68b01f990e96e70405479` |
+| `metrics/pwm_pldm_s0_value.pt` | 584K | `0afa89cd5eccb0a0480c9dd14bce3984` |
+| `metrics/pwm_pldm_s1_value.pt` | 584K | `60dce5dded833c12acb3e9604b19fc37` |
+| `metrics/pwm_pldm_s2_value.pt` | 584K | `768149a0dfdbc85cab46c3d8a8c241ca` |
+
+DINO PWM co-trained critic (~150 MB) intentionally not archived — regenerates
+deterministically from `metrics/td_canon_dinowm_r200000_e0.1_n50_s0.pt` + seed 0
+via `code/tworoom_pwm.sh train dinowm <gpu> 0`. LIP-K truncation checkpoints not
+archived — 2-line `ck["iters"]` patch (HYPERPARAMS §4.4) regenerates them from the
+archived K=8 actors.
+
+## Post-campaign journals & drivers (added 2026-07-29)
+
+| file | contents |
+|---|---|
+| `results/it10_driver.log` | 72 cells, CEM at paper budget (§9.3) |
+| `results/lipk_driver.log` | 72 cells, LIPv4 K∈{4,2} truncation (§10.2) |
+| `results/pwm_driver.log` | PWM train + 84 eval cells, proto & rh1 (§10.5) |
+| `code/it10_rerun.sh`, `code/lipk_sweep.sh`, `code/tworoom_pwm.sh` | drivers |
+| `logs_outputs_20260729.tar.gz` | all 238 per-cell eval/train logs |

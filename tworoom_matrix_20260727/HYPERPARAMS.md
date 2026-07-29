@@ -111,7 +111,7 @@ Shared receding-horizon controller for **all** planners:
 | parameter | value |
 |---|---|
 | `plan_config.horizon` | 5 action blocks |
-| `plan_config.receding_horizon` | 5 primitive steps (replan interval) |
+| `plan_config.receding_horizon` | **5 action blocks = 25 primitive steps** — the entire optimized sequence is executed before replanning, matching the paper. (An earlier revision of this file wrote "5 primitive steps"; the unit is *blocks*: `flatten_receding_horizon = receding_horizon × action_block = 25`.) |
 | `plan_config.action_block` | 5 (= frameskip) |
 | `solver.batch_size` | 10 environments per solver call (1 for DINO+Adam; pure chunking, numerically neutral) |
 | `world.max_episode_steps` | 2 × `eval_budget` |
@@ -121,10 +121,10 @@ Shared receding-horizon controller for **all** planners:
 | parameter | value |
 |---|---|
 | `num_samples` | 300 |
-| `n_steps` (iterations) | 30 |
+| `n_steps` (iterations) | 30 (campaign) · **10 = the paper's setting for non-PushT envs** — full rerun of both CEM arms at 10 in RESULTS §9.3; max cell shift −2.6, all findings unchanged |
 | `topk` (elites) | 30 |
 | `var_scale` | 1.0 |
-| **rollouts / plan step** | **9,000** |
+| **rollouts / plan step** | **9,000** at 30 iters · **3,000** at the paper budget |
 
 ### 4.2 MPPI — `config/solver/mppi.yaml`
 
@@ -190,7 +190,41 @@ emits its own ΔA_t and gate, applied as A_{k+1} = clip(A_k + σ(gate)·ΔA_t).
 | `iter_mode` | `emb` |
 | `cond_mode` | `token` |
 | **deploy** | `restarts 1`, `robust_m 0`, `n_steps 0` — **pure learned planner, no sampling** |
-| **rollouts / plan step** | **8** (= K) |
+| **rollout-equivalents / plan step** | **~16** at K=8 (~2 per refinement pass: forward unroll + gradient) |
+
+**Deploy-budget truncation (2026-07-29).** `LIPSolver` iterates
+`self.lip_iters = ck["iters"]` and the v4 refiner is weight-tied, so re-saving a
+checkpoint with `iters` patched truncates the refinement at deploy with no retraining:
+
+```python
+ck = torch.load(src, weights_only=False); ck["iters"] = K; torch.save(ck, dst)
+```
+
+Results (RESULTS §10.2): K=4 free on both twins; K=2 free on LeWM, −3.8/−1.1 on PLDM.
+Driver `code/lipk_sweep.sh`; the derived checkpoints are not archived (2-line patch
+above regenerates them from the archived K=8 actors).
+
+### 4.5 PWM-style reactive policy — `train_pwm_ac.py`, `config/solver/pwm.yaml` (2026-07-29)
+
+Reactive mapping `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax` — PlannerNetV3's
+goal-displacement parameterisation, **zero refinement**. First-order policy extraction
+à la PWM (arXiv 2407.02466), fully offline, with the campaign's MRN quasimetric as
+value (no reward model, no critic ensemble — deliberate substitution).
+
+| parameter | value |
+|---|---|
+| objective | dense: `J = −Σ_{t=1..H} γ^t · teacher(z_t, z_g)`, loss `mean(−J/H)`; imagined via the frozen WM (`rollout_traj`) |
+| H / γ / amax | 5 / 0.99 / 2.2 |
+| actor | width 512 × 3, zproj 256; AdamW 5e-4 → 5e-5 (PWM's actor_lr), grad-norm 100 |
+| critic (co-trained MRN) | warm start = same-seed TD ckpt; expectile 0.1 → 0.03; Huber β 1.0; lr 1e-3 → 1e-4 |
+| teacher | Polyak EMA, τ 0.005 |
+| sampler | n_step 50, p_cross 0.3, max_delta 12, balanced |
+| steps / batch | 8,000 / 128 twins, 16 DINO |
+| seeds | 0,1,2 twins; 0 DINO |
+| **deploy** | `solver=pwm`; `proto` = protocol regime (5 blocks, tail imagined, 4 rollout-eq) or `rh1` = `plan_config.receding_horizon=1` (pure reactive, **0 rollouts**) |
+
+Result (RESULTS §10.5): 30–38 h25 / 9–23 h50 — single-pass amortization collapses where
+LIPv4 K=2 (~same deploy budget) holds 93–100.
 
 ---
 

@@ -40,6 +40,25 @@ The h50 column is where methods separate: the native latent cost degrades by −
 (LeWM), −19.4 (PLDM) and −2.0 (DINO-WM) when the goal distance doubles — ordered by
 latent capacity — while the learned-cost and amortised arms do not degrade at all.
 
+## Post-campaign additions (2026-07-29)
+
+Three follow-ups, fully archived here (journals in `results/`, drivers in `code/`,
+per-cell logs in `logs_outputs_20260729.tar.gz`, LaTeX in `PAPER_EXPORT.md`):
+
+1. **Paper-budget rerun** (RESULTS §9.3): both CEM arms at the paper's 10 iterations
+   (campaign used 30). Max cell shift −2.6 — every conclusion above survives at
+   3,000 rollouts/plan-step, making the honest LIPv4-vs-CEM ratio ~190×.
+2. **LIPv4 deploy-budget truncation** (§10.2): K=8-trained refiners re-run at K=4/K=2
+   by patching `ck["iters"]` — no retraining. K=4 free on both twins (LeWM 18/18 cells
+   at 100.0); K=2 free on LeWM, −3.8/−1.1 on PLDM. The budget knob degrades gracefully,
+   and only where the latent is weak.
+3. **PWM-style reactive policy** (§7b, §10.5): offline first-order policy extraction
+   through the frozen WM, scored by the same MRN quasimetric (per design decision: no
+   reward model, no critic ensemble). Lands at 30–38 (h25) / 9–23 (h50) — **single-pass
+   amortization collapses where LIPv4's two refinement passes hold 93–100 at the same
+   deploy budget**. Replanning every block instead of every 5 changes ≤ +5.6. Actors in
+   `actors/pwm_*.pt` (7, all bases), deploy solver `code/pwm.py` (`solver=pwm`).
+
 ## Layout
 
 ```
