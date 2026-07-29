@@ -34,8 +34,14 @@ case $BASE in
   dinowm)      RTAG="_r200000"; BATCH=16 ;;   # 77,224-d latents: memory-bound
   *) echo "unknown base $BASE" >&2; exit 1 ;;
 esac
-FS5=/workspace/caches/tworoom_canon_${BASE}${RTAG}_fs5.pt
-FS1=/workspace/caches/tworoom_canon_${BASE}${RTAG}_fs1.pt
+# cache names on the pod exist under two conventions (phase1 writes
+# tworoom_canon_*, an earlier build wrote canon_*): accept either
+FS5=$(ls /workspace/caches/tworoom_canon_${BASE}${RTAG}_fs5.pt \
+         /workspace/caches/canon_${BASE}${RTAG}_fs5.pt 2>/dev/null | head -1)
+FS1=$(ls /workspace/caches/tworoom_canon_${BASE}${RTAG}_fs1.pt \
+         /workspace/caches/canon_${BASE}${RTAG}_fs1.pt 2>/dev/null | head -1)
+: "${FS5:=/workspace/caches/tworoom_canon_${BASE}${RTAG}_fs5.pt}"
+: "${FS1:=/workspace/caches/tworoom_canon_${BASE}${RTAG}_fs1.pt}"
 
 preflight(){
   local ok=1
