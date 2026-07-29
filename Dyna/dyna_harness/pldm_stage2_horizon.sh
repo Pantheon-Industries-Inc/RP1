@@ -54,7 +54,7 @@ run_wave(){ # tag extra-args...
     if [ ! -f "$out" ]; then
       CUDA_VISIBLE_DEVICES=$g timeout 28800 python3 "$P/train_lip_ac.py" \
         --cache "$QF5" --cache-td "$QF1" --h5 "$AH5" --wm "$PLDM" --init-value "$QTD" \
-        --iters 8 --steps 6000 --n-step 50 --amax "$AMAX" \
+        --iters 8 --steps 6000 --n-step 50 \
         --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4 \
         --arch v4 --seed "$s" "$@" \
         --out "$out" --out-value "${out%.pt}_value.pt" \
@@ -64,13 +64,15 @@ run_wave(){ # tag extra-args...
   done; wait
   log "P1: $tag done"
 }
-run_wave h3  --horizon 3 --actor-lr 3e-4 --actor-lr-final 3e-5
-run_wave h2  --horizon 2 --actor-lr 3e-4 --actor-lr-final 3e-5
-run_wave alr --horizon 5 --actor-lr 1e-4 --actor-lr-final 1e-5
+run_wave h3  --horizon 3 --amax "$AMAX" --actor-lr 3e-4 --actor-lr-final 3e-5
+run_wave h2  --horizon 2 --amax "$AMAX" --actor-lr 3e-4 --actor-lr-final 3e-5
+# a45 replaced the alr arm after stage 1: spread collapsed 9.3->0.7 at 3.5
+# (gentle-actor rationale gone) and the curve had not peaked -- probe the edge.
+run_wave a45 --horizon 5 --amax 4.5 --actor-lr 3e-4 --actor-lr-final 3e-5
 
 log "P2: eval queue (27 cells, sequential, egl, held-out $EVAL_RANGE)"
 while pgrep -f "train_lip_a[c]|train_metri[c]|lewm_exper[t]" >/dev/null; do sleep 60; done
-for tag in h3 h2 alr; do
+for tag in h3 h2 a45; do
   for s in $SEEDS; do for d in $DRAWS; do
     nm="pldm_${tag}_s${s}_e${d}"
     c=$(sc "$nm"); [ -n "$c" ] && [ "$c" != FAIL ] && { log "  $nm cached ($c)"; continue; }
@@ -101,7 +103,7 @@ def sm(arm, s):
 print(f"=== PLDM STAGE-2 CARD (amax {os.environ['AMAX']}, held-out, egl) ===")
 print("  refs: latent+CEM 66.0 | TD+CEM 73.3 | LIP@1.6/h5 69.8")
 best = (None, -1)
-for arm, label in (("pldm_h3", "h3"), ("pldm_h2", "h2"), ("pldm_alr", "alr"),
+for arm, label in (("pldm_h3", "h3"), ("pldm_h2", "h2"), ("pldm_a45", "a4.5/h5"),
                    ("pldm_a26", "stage1 a2.6/h5"), ("pldm_a35", "stage1 a3.5/h5")):
     ms = [sm(arm, s) for s in (0, 1, 2)]
     if all(m is not None for m in ms):
