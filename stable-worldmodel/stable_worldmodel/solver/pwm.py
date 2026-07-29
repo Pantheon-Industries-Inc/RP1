@@ -183,6 +183,11 @@ class PWMSolver:
         return z_now, z_goal
 
     # -- solve -------------------------------------------------------------
+    def __call__(self, *args, **kwargs) -> dict:
+        # WorldModelPolicy invokes solvers as callables; every concrete solver
+        # supplies this shim itself (the Solver Protocol does not)
+        return self.solve(*args, **kwargs)
+
     @torch.no_grad()
     def solve(self, info_dict: dict, init_action: torch.Tensor | None = None) -> dict:
         t0 = time.time()
@@ -216,7 +221,9 @@ class PWMSolver:
 
         plan = torch.stack(blocks, dim=1)          # (B, H, a_dim)
         return {
-            'action': plan,
+            # key is 'actions' (plural) and must be CPU: the policy slices it
+            # into a CPU warm-start buffer, exactly as it consumes CEM's output
+            'actions': plan.detach().cpu(),
             'costs': [float('nan')] * B,           # no cost is evaluated
             'mean': [], 'var': [],
             'time': time.time() - t0,
