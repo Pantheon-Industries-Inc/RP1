@@ -205,8 +205,10 @@ class PWMSolver:
                                      device=self.device)
                 from stable_worldmodel.solver.lip import rollout_traj
                 for _ in range(self._horizon - 1):
+                    # committed rollout_traj is (wm, z_hist, a_hist, plan);
+                    # its attention window is a fixed 3 frames
                     traj = rollout_traj(wm, z_hist, a_hist,
-                                        torch.stack(blocks, 1), hs=hs)
+                                        torch.stack(blocks, 1))
                     blocks.append(self.actor(traj[:, -1], zg))
         else:
             # pad the unused tail so the returned shape matches the contract

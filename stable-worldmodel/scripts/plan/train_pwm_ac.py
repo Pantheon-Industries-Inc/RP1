@@ -234,7 +234,9 @@ def main() -> None:
         disc = 1.0
         for t in range(a.horizon):
             plan.append(actor(z, zg))
-            traj = rollout_traj(wm, z_hist, a_hist, torch.stack(plan, 1), hs=hs)
+            # committed rollout_traj is (wm, z_hist, a_hist, plan) with a fixed
+            # 3-frame attention window -- the same path LIPv4 trained through
+            traj = rollout_traj(wm, z_hist, a_hist, torch.stack(plan, 1))
             z = traj[:, -1]
             disc = disc * a.gamma
             if a.dense:                              # dense per-step cost
