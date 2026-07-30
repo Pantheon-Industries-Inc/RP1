@@ -102,9 +102,12 @@ conversion) 65.3 vs published 79 (variant mismatch: theirs had proprio).
 
 ## Reproducibility
 
-Every driver/patch from this campaign is committed under
-`reacher/scripts_20260729/` (pod copies live in `/workspace/` on both pods):
-window value + L2 control (`train_window.py`, `make_l2window.py`), vframes=3
-LIP plumbing (`patch_vframes3.py`), pad-context + act-penalty + param-free
-critic trainer patches, detseed, clean-mix rebuild, the sweep/eval drivers, and
-the value-vs-planner diagnostic (`diag_value_vs_planner.py`).
+The drivers/patches still available locally (15 files) are committed under
+`reacher/scripts_20260729/`: the wave-A/TD-grid/act-penalty/boost/h100 drivers,
+clean-mix rebuild, Dyna gating + re-points, param-free-critic and act-penalty
+trainer patches, held-rescore, and the value-vs-planner diagnostic. The
+remainder — `train_window.py`, `make_l2window.py`, the oracle readout,
+`patch_vframes3.py`, pad-context, detseed, and the window/anchor/collect
+drivers — were authored in earlier app sessions and live on both pods'
+`/workspace/`; they get committed under `reacher/results_pod/` together with
+the CSVs as soon as a pod answers.
