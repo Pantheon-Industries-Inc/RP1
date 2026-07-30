@@ -36,7 +36,7 @@ if [ ! -f /workspace/.pip_done ]; then
     > "$L/setup_pip.log" 2>&1 || die "torch install failed"
   pip install -q --break-system-packages \
     "transformers==4.49.0" "lightning==2.6.5" "stable-pretraining==0.1.7" \
-    "mujoco==3.10.0" "dm_control==1.0.43" "ogbench==1.2.1" "pylance==8.0.0" \
+    "mujoco==3.10.0" "dm_control==1.0.43" "ogbench==1.2.1" "pylance==8.0.0" lancedb \
     hydra-core omegaconf h5py hf_transfer huggingface_hub loguru einops timm \
     imageio imageio-ffmpeg opencv-python-headless wandb \
     >> "$L/setup_pip.log" 2>&1 || die "deps install failed"
