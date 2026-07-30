@@ -12,6 +12,65 @@ the planner was never the problem — four harness/config defects were.
 
 ---
 
+## 0. CORRECTIONS 2026-07-28 (later the same day) — metric provenance, and a fifth harness defect
+
+**§2c and §2-"Still unresolved" are factually wrong about ownership.**
+`ReacherQPosMatchTask`, its `get_termination`, and `_DEFAULT_QPOS_THRESHOLD = 0.05`
+are **the authors' own released code** — added by LeWM co-author Quentin Le Lidec,
+commit `2096f6a1` (PR #158, 2026-03-11, galilai-group/stable-worldmodel),
+byte-identical at the paper-time commit `44c45bd1`. Neither the task nor the
+0.05 rad tolerance is ours. What IS ours is the no-early-termination stub +
+held-at-end scoring (the §2c "fix"). The units-copy theory (0.05 =
+`_BIG_TARGET` metres) may still explain *why they picked it*, but it is their
+number; if 0.05 rad needs a citation, cite their code, not their paper (neither
+paper states any tolerance).
+
+**The authors' published success convention IS latched.** Their `world.py` does
+`episode_successes |= terminateds` every step, and their task terminates the
+episode at first all-joints match (checked *inside* the `action_repeat=2` loop).
+So "swing-through scores" is not a bug we found in our harness — it is the
+published metric. §3's "the published numbers plausibly use the generous
+convention" is upgraded from plausible to **verified in code**. Our latched
+Latent+CEM h25 hitting 86.0 vs their 86 is the expected agreement.
+
+**DECISION (user, 2026-07-28): we keep HELD-AT-END as the reported metric** —
+a deliberate, documented departure that is stricter than the published
+convention (it measures arrive-AND-stay, which latching cannot see). For paper
+comparisons use the latched number, which every run already prints as
+`ever-in-ball` in the `[success-convention]` line. Crosswalk on the current
+cards (6-cell, strict protocol otherwise unchanged):
+
+| arm | lejepa latched (held) | pldm latched (held) |
+|---|---|---|
+| Latent + CEM | 93.7 (79.3) | 89.0 (71.0) |
+| TD + CEM | 94.0 (68.3) | 92.7 (67.7) |
+| LIP v4, 3 actor-seed pool | 93.7 (75.3) | 92.6 (68.0) |
+| ORACLE terminal cost | 95.0 (73.0) | 92.7 (71.7) |
+| at-rest lag5 | 96.3 (30.7) | 95.7 (24.3) |
+
+Under the authors' metric everything sits at 89–96 (vs published 86/78) and the
+planner/value ordering disappears entirely — the at-rest value, catastrophic
+under held-at-end, is nominally *best*. Every value-design conclusion in this
+campaign is a statement about held-at-end only.
+
+**FIFTH HARNESS DEFECT (found + fixed 07-28): the eval was nondeterministic.**
+`_evaluate_from_dataset` reset with `seed=init_state.get('seed')`; the h5 has no
+`seed` column ⇒ `seed=None` ⇒ each sub-env drew its **target-ball position**
+(salient red geom, mean 0.20 m from the dataset episode's ball, arm reach
+0.24 m) from an unseeded RNG on every invocation. The goal image meanwhile shows
+the *dataset's* ball. Measured: the same command at the same cfg.seed returned
+held-at-end **68 / 70 / 76 / 80 / 82** across five runs (task draw proven
+identical; outcomes flipped). Note the authors' harness has the same hole, so
+their 86 carries the same per-run jitter. Fixed in `world.py`: when the dataset
+provides no seed, derive one per env from the drawn `(episode, start)` pair —
+scene randomness becomes a deterministic property of the *task*, distribution
+unchanged. Verified: identical numbers across repeated invocations. Consequence:
+**all pre-fix cells carry ±≈6 invisible run-to-run jitter on top of task-draw
+noise** — do not interpret ≤6-point single-card deltas from before this fix.
+Backup of the pre-fix file: `/workspace/_bak_world_predetseed.py`.
+
+---
+
 ## 1. Pod and layout
 
 `ssh root@87.120.211.204 -p 19342 -i ~/.ssh/id_ed25519`
@@ -61,34 +120,97 @@ Now: `+plan_config.history_len=3`; the policy accumulates real frames at
 **T = H + P − 1** (H−1 real executed blocks, then the plan); at H=1 that reduces
 to the old behaviour. Logs print `[hist-inject] H=3 T=7` — check for it.
 
-**c) Strict success.** `ReacherQPosMatchTask.get_termination` (OUR addition —
-canonical dm_control reacher has *no* termination) ended the episode at first
-contact, and `world.py` OR-ed successes across steps. So an arm that **swung
-through** the ball scored. Fixed: no early termination, env publishes per-step
-`qpos_in_ball` / `qpos_maxdiff`, success = **entire arm (all joints, worst-joint)
-inside 0.05 rad AT THE FINAL STEP**. Measured inflation from latching: **+6 to
-+24, mean ≈ +17**. Logs print `[success-convention]` and `[threshold-sweep]`.
+**c) Strict success.** ~~`ReacherQPosMatchTask.get_termination` (OUR addition)~~
+**CORRECTED 07-28 (later): the termination task, the 0.05 rad threshold, AND the
+latched convention are the AUTHORS' OWN.** `ReacherQPosMatchTask` with
+`_DEFAULT_QPOS_THRESHOLD = 0.05` was added to stable-worldmodel by a LeWM
+co-author (commit `2096f6a1`, PR #158), is byte-identical at the paper-time
+commit `44c45bd1`, and their `world.py` scores `episode_successes |= terminateds`
+per step — i.e. **the published 86/78/79 mean "all joints within 0.05 rad at ANY
+step in the budget"**. Neither paper states a threshold; the citation for 0.05
+rad is their code. Our held-at-end scoring is therefore a **deliberate metric
+deviation**, not a bug fix — keep it (it measures settling, which latching
+cannot), but never compare it to the paper. The env publishes per-step
+`qpos_in_ball` / `qpos_maxdiff`; every run reports BOTH conventions
+(`[success-convention]`: held = reported `success_rate`, ever-in-ball = the
+authors' latched metric) plus `[threshold-sweep]` at 5 radii. Latching inflates
++6 to +24 (mean ≈ +17) under 3-frame, up to ~+40 under 1-frame.
+
+**e) Deterministic resets.** The eval was **nondeterministic**: `world.py` reset
+envs with `seed=None` (the h5 has no seed column), so the reacher's **visible
+red target ball** was re-drawn from an unseeded RNG on every invocation (mean
+0.20 m from the dataset episode's ball, arm reach 0.24 m). The same command at
+the same cfg.seed returned held 68–82 / latched 88–96 over five runs, task draw
+proven identical (5/50 episodes flipped). Fixed by `patch_detseed.py`: reset
+seed = f(episode, start), so the scene is a deterministic property of the TASK,
+distribution unchanged. Verified 74.0 ×3 bit-repeatable. **Single-cell deltas
+< ~14 pts from before this fix are within rerun noise — re-read old
+single-cell claims accordingly.**
 
 **d) CEM at 10 iterations, not 30.** Paper: *"300 candidate action sequences …
 30 iterations in PushT and 10 iterations in the other environments."* Our
 `cem.yaml` shipped `n_steps: 30`, so every CEM baseline had 3× the paper's budget.
 
-### Standing protocol
+### ⛔ THE BENCHMARK CONFIG — user directive 2026-07-28, emphatic. Nothing else counts.
 
-- eval draws from episodes **8000:10000**; Dyna collection from **0:8000** (`+eval.ep_range`)
-- card = {h25 = offset 25 / budget 50, h50 = offset 50 / budget 100} × seeds {42,43,44}, n=50
-- **h25 alone is the paper's reacher protocol**; h50 is ours and runs 5–8 higher. Report separately.
-- horizon 5, receding 5, action_block 5 — matches the paper; **do not shorten the horizon** (user's explicit call)
+**Every headline number from here on is the PAPER-EXACT config:**
 
-### Still unresolved
+- **1-frame conditioning** — no `+plan_config.history_len`, no `solver.use_frame_history`, anywhere. A `[hist-inject]` line in an eval log disqualifies the cell.
+- **CEM 300 × 10 iterations** (`solver.n_steps=10`)
+- **latched @0.05 rad** (`ever-in-ball` — the authors' metric) as the score; held-at-end recorded as diagnostic only
+- **EGL · h25 only** (offset 25 / budget 50) · **eval seeds 42/43/44**, n=50 · `+eval.ep_range=8000:10000` · deterministic resets (detseed)
+- horizon 5, receding 5, action_block 5 — do not shorten (user's explicit call)
 
-The **0.05 rad tolerance is ours alone** and its provenance is suspect: it equals
-dm_control's `_BIG_TARGET = .05`, which is a geom radius in **metres** for a
-finger-to-target test, not an angular tolerance — likely a units copy. Neither
-LeWM nor DINO-WM states any tolerance. It also sits on the steepest part of the
-sensitivity curve: full-arm held-at-end gives 10–20% at 0.015 rad, 26–42% at
-0.025, **70–88% at 0.05**, 94–100% at 0.10. Median worst-joint error is
-0.026–0.035 rad. Decide this deliberately.
+Reference points at THE config (`summary_anchor10_*`): Latent+CEM **86.7 / 77.3 / 65.3** (lejepa/pldm/dinowmnp); paper Fig. 6: 86 / 78 / 79.
+
+**Every 3-frame number in this document and in `summary_paper_* / summary_claim_* /
+fair-matrix` CSVs is a protocol deviation — diagnostic-only, never a headline,
+never comparable to the paper.** For LIP this cuts the other way too: actors must
+be *trained* for the 1-frame interface (`train_lip_ac.py --pad-context`, added
+07-28 — training contexts collapsed to `[z0]×3` + zero action history, exactly
+what the solver pads at deploy); the canonical 3-frame-window actors run under a
+train/deploy mismatch at THE config.
+
+### RESOLVED 07-28 (later): the tolerance and the convention
+
+~~"The 0.05 rad tolerance is ours alone"~~ — **wrong; it is the authors'**
+(`_DEFAULT_QPOS_THRESHOLD = 0.05` in their `custom_tasks/reacher.py`, see §2c).
+The units-copy suspicion may still explain *their* choice (it equals dm_control's
+`_BIG_TARGET = .05`, a geom radius in metres — and their own task table sets the
+*rendered* target to `_SMALL_TARGET = 0.015` m while scoring 0.05 in radians),
+but it is their number to defend, not our artifact. Also: the canonical h5's
+`success`/`reward` columns are NaN/sentinel garbage (define nothing);
+`observation` = `[qpos ‖ target−finger ‖ qvel]` (dm_control stock, verified to
+1e-8); a finger-space tolerance equivalent in strictness to 0.05 rad is
+**0.0047 m** vs dm_control's 0.015/0.05 m radii, i.e. our joint-space test is
+~10× stricter than the env's own physical target.
+
+**CONVENTION (user calls, 07-28): anything compared to the paper uses the
+authors' latched 0.05 rad metric; the campaign's own reported `success_rate`
+stays held-at-end (the settling diagnostic latching cannot measure).** Both
+come out of every run (`[success-convention]` line). The
+sensitivity curve still applies to held-at-end: 10–20% @0.015, 26–42% @0.025,
+70–88% @0.05, 94–100% @0.10 (3-frame numbers; the metric is steepest exactly at
+0.05). Under 1-frame conditioning, held@0.1 ≈ latched@0.05 for the LeWM-family
+bases — a useful "holds still, generous radius" reading.
+
+### Paper anchor, paper-exact protocol (07-28: 1 frame, CEM 300×10, latched, egl,
+held-out eps, deterministic resets) — `summary_anchor10_*.csv`
+
+| base | latched @0.05 (paper metric) | paper Fig. 6 | held @0.05 | held @0.1 |
+|---|---|---|---|---|
+| lejepa (= LeWM) | **86.7** (90/84/86) | **86** | 46.7 | 82.7 |
+| pldm | **77.3** (82/72/78) | **78** | 34.7 | 78.0 |
+| dinowmnp | 65.3 (62/62/72) | 79 | 22.7 | 59.3 |
+
+**LeWM and PLDM reproduce the paper to within a point** under the faithful
+protocol — the campaign's harness, conversions, and data are validated
+end-to-end. dinowmnp misses by ~14: ours is the **pixels-only** conversion,
+while the paper's DINO-WM number is their own re-implementation (LeWM re-trained
+it; DINO-WM's own paper says 0.92 on a different dataset/protocol with proprio —
+their reacher env is not even in the public DINO-WM repo, so the exact variant
+is unrecoverable). The earlier `summary_anchor_*` (86.0 lejepa / 86.0 pldm s42)
+ran CEM at 30 iters — 3× the paper's budget; anchor10 supersedes it.
 
 ---
 
