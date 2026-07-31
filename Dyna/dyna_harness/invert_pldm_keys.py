@@ -20,8 +20,14 @@ import sys
 
 import torch
 
-P = "/workspace/models/PLDM_OgBench_lewm"
-BACKUP = "/workspace/models/pldm_weights_transformers5_backup.pt"
+# Generalized 2026-07-31: the same transformers-5.x -> 4.49 ViT inversion is
+# needed for EVERY archived checkpoint on this pod, not just PLDM. v2WM has the
+# identical problem (HYPERPARAMS sec 1: "the archived v2WM is in transformers-5.x
+# ViT key layout; pods run 4.49.0").
+import sys as _sys
+P = _sys.argv[1] if len(_sys.argv) > 1 else "/workspace/models/PLDM_OgBench_lewm"
+WEIGHTS = _sys.argv[2] if len(_sys.argv) > 2 else "weights.pt"
+BACKUP = f"/workspace/models/{P.rstrip('/').split('/')[-1]}_transformers5_backup.pt"
 
 INV = [
     (r"^encoder\.layers\.(\d+)\.attention\.q_proj\.", r"encoder.encoder.layer.\1.attention.attention.query."),
@@ -44,7 +50,7 @@ def invert(k):
 
 
 def main():
-    sd = torch.load(f"{P}/weights.pt", map_location="cpu", weights_only=True)
+    sd = torch.load(f"{P}/{WEIGHTS}", map_location="cpu", weights_only=True)
     sd2 = {invert(k): v for k, v in sd.items()}
     assert len(sd2) == len(sd), "key collision during inversion"
     n_ren = sum(invert(k) != k for k in sd)
@@ -64,8 +70,8 @@ def main():
         e = m.encode({"pixels": x})["emb"]
     print(f"CPU encode forward OK, emb shape {tuple(e.shape)}")
 
-    shutil.copy(f"{P}/weights.pt", BACKUP)
-    torch.save(sd2, f"{P}/weights.pt")
+    shutil.copy(f"{P}/{WEIGHTS}", BACKUP)
+    torch.save(sd2, f"{P}/{WEIGHTS}")
     print(f"backup (transformers-5.x layout) -> {BACKUP}")
     print("INVERT_OK")
 
