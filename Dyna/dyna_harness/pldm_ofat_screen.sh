@@ -36,7 +36,7 @@
 # cheap way to run it is TD+CEM success (train the teacher, evaluate it with
 # search, no actor training at all).
 #
-# 24 arms, 3 waves of 8, ~2.5h.
+# 23 arms, 3 waves of 8, ~2.5h.
 set -u
 export PYTHONPATH=/workspace/code/stable-worldmodel STABLEWM_HOME=/workspace/swm_home
 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl TQDM_DISABLE=1
@@ -65,10 +65,9 @@ ARMS=(
   # --- objective shape: mean-weight DOWN is untested (0.3/1.0 both hurt) ---
   "mw003|--mean-weight 0.03"
   "mw000|--mean-weight 0.0"
-  # --- actor architecture, entirely untouched ---
-  "archv4r|--arch v4r"
-  "archmlp|--arch mlp"
-  "archtraj|--arch traj"
+  # --- INSIDE v4 only. --arch stays v4 by user directive: v4 was settled by
+  # the lipv2->v4 result and is not up for re-litigation; these vary how v4 is
+  # configured, not which architecture it is. ---
   "itemb|--iter-mode emb"
   "headprec|--head-mode precond"
   "wide|--width 512"
