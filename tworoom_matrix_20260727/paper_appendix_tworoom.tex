@@ -1,339 +1,200 @@
 % =====================================================================
-% TwoRoom appendix -- exact configuration, hyperparameters, protocol.
-% Every value transcribed from tworoom_matrix_20260727/HYPERPARAMS.md,
-% which was itself read out of the running configs / checkpoint
-% config.json rather than from notes.
-%
-% Drop in after the main body. If the paper already opens an appendix
-% (for app:proofs), delete the \appendix line below.
-% Requires \usepackage{booktabs} (already in the preamble).
+% TwoRoom appendix -- compact. Values transcribed from HYPERPARAMS.md
+% (read out of running configs / checkpoint config.json).
+% Delete \appendix below if the paper already opens one for app:proofs.
+% New bib key: georgiev2024pwm.
 % =====================================================================
 
 \appendix
 
-\section{TwoRoom: exact configuration and evaluation protocol}
+\section{TwoRoom: configuration and protocol}
 \label{app:tworoom}
 
-This appendix specifies everything needed to reproduce
-Section~\ref{sec:tworoom}. Values were read out of the running
-configuration and the checkpoint \texttt{config.json} files.
-
-\subsection{Environment}
-
 \begin{table}[h]
 \centering\small
+\caption{Environment and offline dataset. The same dataset pretrains the
+world models, fits every learned component, and generates the evaluation
+tasks.}
 \begin{tabular}{ll}
 \toprule
-observation & $224\times224$ RGB, pure CPU rasteriser (no physics engine) \\
-action space & $[-1,1]^2$, interpreted as a velocity direction \\
-max speed & $10.5$ px/step \\
-control rate & $10$ Hz; frameskip $5$ (one action block $=5$ primitive steps) \\
-geometry & image $224$, border $14$, vertical wall at $x = 112$ \\
-doorways & $1$--$3$, count and positions re-randomised every episode \\
-success & agent centre within $16$ px of the target; episode terminates \\
-randomised per reset & agent position, target position (target in the opposite room) \\
-episode cap & set by the plan config to $2\times$ the evaluation budget \\
+observation / action & $224\times224$ RGB, CPU rasteriser (no physics engine) / $[-1,1]^2$ velocity \\
+max speed / control rate / frameskip & $10.5$ px per step / $10$ Hz / $5$ (one action block) \\
+geometry & image $224$, border $14$, vertical wall at $x{=}112$, $1$--$3$ doorways \\
+randomised per reset & agent position, target position (opposite room), doorway count and placement \\
+success & agent centre within $16$ px of target; episode terminates \\
+\midrule
+frames / episodes & $920{,}809$ / $10{,}000$ ($\approx\!92$ per episode) \\
+collection policy & scripted weak expert, no action noise, no action repeat \\
+columns used & \texttt{pixels}, \texttt{action}$\in\mathbb R^2$, \texttt{proprio}$\in\mathbb R^2$, \texttt{pos\_agent}$\in\mathbb R^2$ \\
+action representation & $10$-d $z$-scored blocks $=$ $2$-d action $\times$ frameskip $5$; statistics from this file \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Offline dataset}
-
-A single demonstration set is used for pretraining the world models, for
-fitting every learned component, and for constructing the evaluation
-tasks (see~\ref{app:protocol}).
-
 \begin{table}[h]
 \centering\small
-\begin{tabular}{ll}
-\toprule
-frames / episodes & $920{,}809$ / $10{,}000$ ($\approx 92$ frames per episode) \\
-collection policy & the environment's scripted weak expert (no action noise, no repeat) \\
-columns used & \texttt{pixels} (uint8), \texttt{action} $\in\mathbb R^2$,
-                \texttt{proprio} $\in\mathbb R^2$, \texttt{pos\_agent} $\in\mathbb R^2$ \\
-action representation & $10$-d $z$-scored \emph{blocks} $=$ $2$-d action $\times$ frameskip $5$ \\
-action statistics & $z$-scoring fit on this same file, matching the pretraining convention \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{World models (frozen throughout)}
-
-All three are author-released checkpoints, used frozen; only the critic
-and the planner are trained here. LeWM and PLDM are architecturally
-identical---verified field-by-field from both configs---and differ only in
-pretraining objective, which makes them a controlled pair.
-
-\begin{table}[h]
-\centering\small
+\caption{World models, all author-released and frozen. LeWM and PLDM are
+architecturally identical (verified field-by-field) and differ only in
+pretraining objective. Conversion into our runner was validated first:
+encoder parity $2.4$--$2.8\times10^{-5}$ max abs.\ diff., and one-step
+predictor MSE relative to copy-last $0.043$ / $0.168$ / $0.102$ with
+shuffled-action ratios strictly higher, i.e.\ genuine action conditioning.}
 \begin{tabular}{lll}
 \toprule
  & LeWM \,/\, PLDM & DINO-WM \\
 \midrule
-encoder & ViT-tiny, patch $14$, image $224$, trained from scratch & frozen \texttt{dinov2\_small} \\
-latent & single $192$-d \texttt{CLS} token & $196$ patch tokens, $77{,}224$-d flat \\
-token composition & --- & [pixel $384 \,\Vert\,$ proprio-emb $10$] $= 394$ \\
-predictor & adaLN, depth $6$, heads $16$, mlp $2048$, head-dim $64$ & causal, same depth/heads/mlp \\
-predictor width & $192$ & $404$ ($=394 + $ action-emb $10$) \\
-action encoder & linear $10 \to 192$ & linear $10 \to 10$ \\
-proprio & \textbf{not consumed} & linear $2 \to 10$, image resized $224\to196$ \\
+encoder & ViT-tiny, patch $14$, from scratch & frozen \texttt{dinov2\_small}, input $196$ \\
+latent & one $192$-d \texttt{CLS} token & $196$ tokens $\times\,394 = 77{,}224$-d \\
+token & --- & [pixel $384 \Vert$ proprio-emb $10$] \\
+predictor & adaLN, width $192$, depth $6$, heads $16$, mlp $2048$ & causal, width $404$, same depth/heads/mlp \\
+action / proprio enc. & $10\!\to\!192$ / \textbf{proprio unused} & $10\!\to\!10$ / $2\!\to\!10$ \\
 history & $3$ frames & $3$ frames ($588$ tokens per forward) \\
-objective & $\mathcal L_{\text{pred}} + \lambda\mathcal L_{\text{SIGReg}}$ \;/\;
-            sim $+$ std $+$ cov $+$ temporal $+$ IDM & --- \\
+objective & $\mathcal L_{\text{pred}}\!+\!\lambda\mathcal L_{\text{SIGReg}}$ \,/\, sim$+$std$+$cov$+$temporal$+$IDM & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Conversion of the released checkpoints into our runner was validated
-before any planning: encoder outputs match the reference implementation to
-$2.4$--$2.8\times10^{-5}$ max absolute difference, and one-step predictor
-MSE relative to a copy-last baseline is $0.043$ (LeWM), $0.168$ (PLDM),
-$0.102$ (DINO-WM), with shuffled-action ratios strictly above the
-copy-last ratios in all three cases, confirming genuine action
-conditioning rather than a degenerate predictor.
-
-\subsection{Evaluation protocol}
-\label{app:protocol}
-
-Tasks are constructed by replaying offline trajectories, which fixes the
-task distribution to the one the world models were pretrained on and makes
-the goal distance an explicit control variable:
-
-\begin{enumerate}\itemsep2pt
-  \item Draw a row $t$ from the dataset (the seed drives the draw).
-  \item Reset the environment to the recorded agent position at row $t$.
-  \item Set the goal to the recorded agent position at row $t + \Delta$;
-        the goal \emph{image} handed to the planner is that row's frame.
-  \item Roll out the receding-horizon controller until success ($16$ px)
-        or until the budget expires.
-\end{enumerate}
-
 \begin{table}[h]
 \centering\small
+\caption{Evaluation protocol. Tasks replay offline trajectories: draw row
+$t$, reset the environment to the recorded agent position at $t$, set the
+goal to the position at $t+\Delta$ (goal image $=$ that frame), roll out
+until success or budget exhaustion. This pins the task distribution to the
+pretraining distribution and makes goal distance an explicit variable.}
 \begin{tabular}{ll}
 \toprule
-goal distance & $\Delta = 25$ primitive steps ($h25$, the published
-                setting) and $\Delta = 50$ ($h50$, our extension) \\
-budget & $2\Delta$ primitive steps ($50$ / $100$): twice the length of the
-         demonstrated solution \\
-planning cycles & $2$ at $h25$, $4$ at $h50$ ($25$ primitive steps executed
-                  per replan) \\
+goal distance $\Delta$ & $25$ primitive steps ($h25$, published setting); $50$ ($h50$, our extension) \\
+budget & $2\Delta$ steps ($50$ / $100$) $=$ twice the demonstrated solution length \\
+planning cycles & $2$ ($h25$) / $4$ ($h50$); $25$ primitive steps executed per replan \\
+controller & horizon $N{=}5$ blocks, replan interval $5$ blocks, $10$ environments per solver call \\
 episodes per cell & $50$ \\
-task seeds & $42, 43, 44$ (drive the task draw) \\
-initialisation seeds & $0, 1, 2$ for every learned component
-                       (DINO-WM planner: $0$ only) \\
-metric & success rate; a reported cell is the mean over $3$ (untrained) or
-         $9$ (learned) runs \\
-controller & horizon $N = 5$ action blocks, replan interval $5$ blocks
-             $=25$ primitive steps, $10$ environments per solver call \\
+seeds & task draw $42,43,44$; initialisation $0,1,2$ (DINO-WM planner: $0$) \\
+reported cell & mean over $3$ runs (untrained arms) or $9$ (learned arms) \\
+calibration & published $h25$ $87$/$97$/$100$, reproduced at $89.3$/$96.7$/$100.0$;
+              no-move $8.0$, random $28.0$ \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-Two references calibrate the numbers. Published $h25$ success for these
-checkpoints is $87$ (LeWM), $97$ (PLDM), $100$ (DINO-WM), which our
-protocol reproduces at $89.3$, $96.7$, $100.0$. Under the identical
-protocol, a policy that never moves scores $8.0$ and a uniform-random
-policy $28.0$, which is the floor the reactive-policy row of
-Table~\ref{tab:tworoom} should be read against.
-
-\subsection{Planners}
 
 \begin{table}[h]
 \centering\small
+\caption{Planners. Queries per decision as in Table~\ref{tab:tworoom}.}
 \begin{tabular}{lll}
 \toprule
-planner & setting & value \\
+CEM & candidates / iterations / elites / variance & $300$ / $30$ ($10$ published) / $30$ / $1.0$ \\
+MPPI & candidates / iterations / elites / temperature & $300$ / $30$ / $30$ / $0.5$ \\
+Adam & candidates / gradient steps / optimiser & $100$ / $30$ / AdamW lr $0.1$, no action noise \\
 \midrule
-CEM  & candidates / iterations / elites / var & $300$ / $30$ ($10$ at the
-       published budget) / $30$ / $1.0$ \\
-MPPI & candidates / iterations / elites / temperature & $300$ / $30$ /
-       $30$ / $0.5$ \\
-Adam & candidates / gradient steps / optimiser & $100$ / $30$ /
-       AdamW, lr $0.1$, no action noise \\
-\midrule
-RLP  & refinement steps $K$ & $8$ (reported), truncated to $4$ and $2$ at deployment \\
-     & action clip $a_{\max}$ / max residual & $2.2$ / $12$ \\
-     & width / layers / heads / feed-forward / $z$-projection & $256$ / $2$ / $4$ / $2\times$width / $64$ \\
-     & goal parameterisation & displacement, $\mathrm{proj}(\hat z_g - \hat z_t)$ \\
-     & deployment & no restarts, no sampling, no robust averaging \\
+RLP & refinement steps $K$ & $8$ reported; truncated to $4,2$ at deployment \\
+    & $a_{\max}$ / max residual / horizon & $2.2$ / $12$ / $5$ blocks \\
+    & width / layers / heads / ff / $z$-proj & $256$ / $2$ / $4$ / $2\times$width / $64$ \\
+    & goal parameterisation / deployment & displacement $\mathrm{proj}(\hat z_g\!-\!\hat z_t)$ / no restarts, no sampling \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-Three caveats belong with this table. \textbf{(i)} No plan-time MPPI
-configuration ships with the reference implementation; ours mirrors the CEM
-config and takes the class-default temperature, and temperature---the
-parameter MPPI is most sensitive to---was never swept, so those rows are a
-lower bound and are not used to support any claim. \textbf{(ii)} Adam is
-the only planner that retains a backward graph over all candidates. On
-DINO-WM's $588$-token predictor this costs ${\approx}0.27$ GB per retained
-candidate on top of a ${\approx}25$ GB base, so $200$ candidates peak at
-$78.5$ GB and do not fit an $80$ GB card; DINO-WM's Adam arm therefore ran
-one environment per solver call instead of ten. That is environment
-chunking and does not change the algorithm, but it does change the random
-realisation, so those two cells are statistically equivalent to---not a
-bit-identical protocol with---the others. \textbf{(iii)} The implemented
-refiner conditions on slightly more than the interface stated in
-Section~\ref{sec:tworoom}: each plan token carries
-$[\mathbf a_k^{(t)},\, \nabla_{\!\mathbf a_k^{(t)}} V,\,
-\mathrm{proj}(\hat z_t),\, \mathrm{proj}(\hat z_g - \hat z_t)]$ plus a
-positional and a per-iteration embedding, i.e.\ it also sees the current
-and goal latents, not only the scalar value and its gradient.
-
-\subsection{Critic (the value metric)}
 
 The critic is a metric residual network, i.e.\ a learned quasimetric
 \begin{equation*}
   d_\psi(\hat z_i \to \hat z_j)
-  = \lVert u(\hat z_i) - u(\hat z_j) \rVert_2
-  \;+\; \max_k \mathrm{ReLU}\bigl( v(\hat z_j)_k - v(\hat z_i)_k \bigr),
+  = \lVert u(\hat z_i) - u(\hat z_j)\rVert_2
+  + \max_k \mathrm{ReLU}\bigl(v(\hat z_j)_k - v(\hat z_i)_k\bigr),
 \end{equation*}
-where $u$ and $v$ are the symmetric and asymmetric halves of a single
-$128$-d embedding produced by an MLP $d_z \to 256 \to 256 \to 128$ with
-SiLU activations. It is non-negative and obeys the triangle inequality by
-construction, so long distances compose out of short transitions.
+with $u,v$ the symmetric and asymmetric halves of one $128$-d embedding:
+non-negative and triangle-inequality-obeying by construction, so long
+distances compose out of short transitions.
 
 \begin{table}[h]
 \centering\small
-\begin{tabular}{ll}
+\caption{Learned components. All three are fit on cached latents. The
+reactive policy follows PWM \citep{georgiev2024pwm} for discount, actor
+learning rate and gradient clipping, and replaces its reward model and
+critic ensemble with the quasimetric and an EMA teacher; the world model
+stays frozen, whereas PWM fine-tunes it. It received no hyperparameter
+search.}
+\begin{tabular}{llll}
 \toprule
-symmetric fraction & $0.5$ ($64$ symmetric $\Vert$ $64$ asymmetric); fixed, never varied \\
-target & $n$-step, $n = 50$ primitive steps: Monte-Carlo if the goal is
-         reached within $n$, else bootstrap \\
-discount & $1.0$ (the target is true steps-to-go) \\
-loss & expectile Huber, expectile $0.1$, $\beta = 1.0$ \\
-hindsight goals & $0.3$ cross-episode (for stitching), otherwise
-                  in-episode at a bucket-balanced offset ($10$ buckets) \\
-steps / batch & $6{,}000$ / $1{,}024$ \\
-optimiser & AdamW, lr $10^{-3}$, weight decay $10^{-4}$; target network
-            Polyak $\tau = 0.005$ \\
-seeds / wall-clock & $0,1,2$; ${\approx}90$ s per seed ($192$-d),
-                     ${\approx}22$ min ($77{,}224$-d) \\
+ & critic (value metric) & RLP planner & reactive policy \\
+\midrule
+architecture & MLP $d_z\!\to\!256\!\to\!256\!\to\!128$, SiLU
+ & \multicolumn{1}{l}{(above)}
+ & MLP width $512\times3$, $z$-proj $256$ \\
+symmetric fraction & $0.5$ ($64\Vert64$), never varied & --- & --- \\
+objective & $n$-step TD, expectile-Huber
+ & value of the refined plan
+ & $-\sum_{t\le H}\gamma^t d_{\bar\psi}(\hat z_t,\hat z_g)$ \\
+$n$ / discount / expectile & $50$ / $1.0$ / $0.1$, $\beta{=}1$
+ & $50$ / --- / $0.1\!\to\!0.03$
+ & $50$ / $0.99$ / $0.1\!\to\!0.03$ \\
+critic handling & target net, Polyak $\tau{=}0.005$
+ & warm-start $+$ co-train, lr $10^{-3}\!\to\!10^{-4}$
+ & idem, $+$ EMA teacher $\tau{=}0.005$ \\
+actor lr & --- & $3\!\times\!10^{-4}\!\to\!3\!\times\!10^{-5}$
+ & $5\!\times\!10^{-4}\!\to\!5\!\times\!10^{-5}$, clip $100$ \\
+hindsight sampler & cross-episode $0.3$, balanced ($10$ buckets)
+ & idem, offsets $\le\!12$ blocks & idem \\
+steps / batch & $6{,}000$ / $1{,}024$
+ & $8{,}000$ / $128$ (DINO $8$ at $K{=}8$, $16$ at $K{=}4$)
+ & $8{,}000$ / $128$ (DINO $16$) \\
+optimiser & AdamW, lr $10^{-3}$, wd $10^{-4}$ & AdamW & AdamW \\
+seeds & $0,1,2$ & $0,1,2$ (DINO $0$) & $0,1,2$ (DINO $0$) \\
+wall-clock / seed & $90$ s \,/\, $22$ min & $58$ min \,/\, $4$ h & $12$ min \,/\, $1.3$ h \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A low expectile is deliberate: for a cost-to-go, optimism should point
-toward the minimum over actions. One approximation is worth stating
-explicitly---the critic is fit on triples drawn entirely from encoder
-latents, but at plan time it scores \emph{predictor} outputs against an
-encoder goal. It is trained encoder-to-encoder and deployed
-predictor-to-encoder, which is benign only insofar as the predictor's
-output stays in encoder space.
+\paragraph{Caches.}
+Critic training uses a stride-$1$ latent cache so $n$-step targets see every
+transition; planner rollout contexts use stride $5$ (one latent per action
+block). Single-token caches are $696$ MB. DINO-WM at full width over all
+frames would be $284$ GB, so its cache is capped at $200{,}000$ rows
+($58$ GB) at full width---a contiguous prefix, $\approx$ episodes
+$0$--$2{,}170$, so its learned rows are fit on about a fifth of the corpus.
+A $1024$-d random projection works for the critic (its wrapper dispatches on
+width) but not for the planner, which bakes latent width into its input
+projections. Hardware: $4\times$H100 80 GB.
 
-\subsection{Planner training}
+\paragraph{Deviations and caveats.}
+\begin{itemize}\itemsep1pt \parskip0pt \topsep2pt
+  \item \textbf{Critic not held fixed.} Section~\ref{sec:theoretical-results}
+    treats the critic as fixed during planner training; the reported runs
+    warm-start it from the TD solution and co-train it. The optimality
+    statement is conditional on the critic and unaffected; the numbers
+    correspond to the co-trained variant.
+  \item \textbf{Refiner input is wider than the stated interface.} Each plan
+    token carries $[\mathbf a_k^{(t)}, \nabla_{\!\mathbf a_k^{(t)}}V,
+    \mathrm{proj}(\hat z_t), \mathrm{proj}(\hat z_g\!-\!\hat z_t)]$ plus
+    positional and per-iteration embeddings---also the current and goal
+    latents, not only the scalar value and its gradient.
+  \item \textbf{Critic train/deploy mismatch.} Fit on triples drawn from
+    encoder latents, deployed scoring \emph{predictor} outputs against an
+    encoder goal; benign only insofar as predictions stay in encoder space.
+  \item \textbf{MPPI untuned.} No plan-time MPPI config ships with the
+    reference implementation; ours mirrors CEM with the class-default
+    temperature, never swept. Those rows are a lower bound and support no
+    claim.
+  \item \textbf{DINO-WM Adam ran one environment per solver call} (others
+    ten): $\approx\!0.27$ GB per retained candidate over a $\approx\!25$ GB
+    base puts $200$ candidates at $78.5$ GB. Environment chunking does not
+    change the algorithm but does change the random realisation.
+  \item \textbf{No held-out split.} Every learned component is fit on
+    latents from the episodes the evaluation draws tasks from
+    (Section~\ref{sec:tworoom}, Limitations).
+  \item \textbf{$a_{\max}$ selection not used.} A sweep
+    ($a_{\max}\!\in\!\{2.2,2.8,3.5\}$, $K\!\in\!\{8,12\}$) picked $2.8$ for
+    PLDM on task seed $42$ alone; all reported cells use the canonical $2.2$.
+\end{itemize}
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{ll}
-\toprule
-critic initialisation & warm-started from the TD checkpoint \emph{of the same seed} \\
-critic during planner training & co-trained, expectile annealed
-                                $0.1 \to 0.03$, lr $10^{-3} \to 10^{-4}$ \\
-planner lr & $3\times10^{-4} \to 3\times10^{-5}$ \\
-steps / batch & $8{,}000$ / $128$ (LeWM, PLDM); $8$ at $K{=}8$ and $16$ at
-                $K{=}4$ for DINO-WM (memory) \\
-$n$-step / $K$ / $a_{\max}$ / max residual & $50$ / $8$ / $2.2$ / $12$ \\
-seeds / wall-clock & $0,1,2$ (DINO-WM: $0$); ${\approx}58$ min per seed
-                     ($192$-d), ${\approx}4$ h ($77{,}224$-d) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Note the deviation from Section~\ref{sec:theoretical-results}, which for
-clarity treats the critic as fixed while the planner trains: in the runs
-reported here the critic is warm-started from the TD solution and then
-co-trained with the planner, with the expectile annealed downward. The
-optimality statement is unaffected---it is conditional on the critic---but
-the empirical numbers correspond to the co-trained variant. A separate
-action-clip sweep ($a_{\max} \in \{2.2, 2.8, 3.5\}$, $K \in \{8,12\}$)
-selected $a_{\max} = 2.8$ for PLDM on task seed $42$ alone; every number in
-Table~\ref{tab:tworoom} uses the unswept canonical $a_{\max} = 2.2$, so no
-reported cell benefits from that selection.
-
-\subsection{Reactive-policy baseline}
-
-The single-pass baseline is
-$\pi(\hat z, \hat z_g) = \tanh\bigl(\mathrm{MLP}[\mathrm{proj}(\hat z)
-\,\Vert\, \mathrm{proj}(\hat z_g - \hat z)]\bigr)\cdot a_{\max}$ --- the
-planner's goal parameterisation and action box, with the refinement
-recursion removed. It is trained by first-order extraction through the
-frozen world model, in the manner of PWM \citep{georgiev2024pwm} but fully
-offline, and scored by the same quasimetric critic rather than a learned
-reward model and critic ensemble.
-
-\begin{table}[h]
-\centering\small
-\begin{tabular}{ll}
-\toprule
-objective & $J = -\sum_{t=1}^{H} \gamma^t\, d_{\bar\psi}(\hat z_t, \hat z_g)$,
-            loss $\mathbb E[-J/H]$, latents imagined through the frozen model \\
-horizon / discount / action clip & $5$ / $0.99$ / $2.2$ \\
-actor & width $512$, $3$ layers, $z$-projection $256$; AdamW
-        $5\times10^{-4} \to 5\times10^{-5}$, gradient norm $100$ \\
-critic / teacher & same MRN, warm-started and co-trained; Polyak EMA
-                   teacher, $\tau = 0.005$ \\
-sampler & $n = 50$, cross-episode goal probability $0.3$, offsets capped at
-          $12$ blocks, bucket-balanced \\
-steps / batch / seeds & $8{,}000$ / $128$ (DINO-WM: $16$) / $0,1,2$
-                        (DINO-WM: $0$) \\
-deployment & one forward pass per replan; the plan tail is either imagined
-             or held, and the two agree to $\le 5.6$ points \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The discount, actor learning rate and gradient clipping follow PWM; what is
-replaced is the reward model and three-critic ensemble (by the quasimetric
-and its EMA teacher) and the online interaction (by the offline cache).
-The world model stays frozen, whereas PWM fine-tunes it. This baseline is
-therefore evidence about single-pass extraction \emph{on this stack}, not a
-reproduction of PWM in its own setting; it received no hyperparameter
-search.
-
-\subsection{Latent caches and compute}
-
-Learned components are fit on cached latents rather than raw pixels. Two
-strides are used: every frame for critic training, so that $n$-step targets
-see every transition, and every fifth frame---one latent per action
-block---for planner rollout contexts. The single-token caches are $696$ MB
-each. DINO-WM at full width over all frames would be $284$ GB, so its cache
-is capped at $200{,}000$ rows ($58$ GB) at full latent width. The cap takes
-a contiguous prefix, i.e.\ roughly episodes $0$--$2{,}170$, so the DINO-WM
-learned rows are fit on about a fifth of the corpus. A $1024$-d random
-projection is $80\times$ smaller and works for the critic, whose wrapper
-dispatches on width, but not for the planner, which bakes the latent width
-into its input projections and would then shape-mismatch the full-width
-latents supplied at deployment.
-
-All experiments ran on $4\times$H100 80 GB. A CEM evaluation cell costs
-${\approx}34$ min on DINO-WM and a few minutes on the single-token models;
-the Adam cells on DINO-WM cost ${\approx}2.5$ h each.
-
-\subsection{Reproduction notes}
-
-Three implementation details changed measured outcomes materially and are
-recorded so that a reimplementation can check for them.
-
-First, \textbf{double normalisation of proprioception}. Our runner
-$z$-scores every cached observation key, and DINO-WM's encoder then applies
-its own proprioception statistics, fit from the same data. Applying both
-maps every agent position to ${\approx}-3\sigma$: positions $2$ px apart
-arrive identical to three decimals, destroying the goal's position signal.
-Passing proprioception through unnormalised on that model alone moves it
-from $36.0$ to $100.0$ at $h25$ --- from far below its published value to
-matching it exactly --- and also makes the run ${\approx}1.6\times$ faster,
-because the planner converges instead of thrashing. Only DINO-WM consumes
-proprioception, so the other two are unaffected.
-
-Second, \textbf{CPU thread caps are load-bearing}. The renderer is
-CPU-bound; leaving BLAS thread counts uncapped slowed evaluation by roughly
-$40\times$. We cap them at $12$--$16$.
-
-Third, \textbf{the encoder checkpoint layout is library-version
-dependent}. The released single-token encoders use a pre-$5$.x Hugging Face
-ViT parameter layout; converting them under the wrong major version has
-\texttt{load\_state\_dict} reject all $192$ encoder tensors. Our converter
-detects the installed version. Reference environment: torch
-\texttt{2.4.1+cu124}, transformers \texttt{4.57.6}, Python \texttt{3.11.10}.
+\paragraph{Reproduction.}
+Three details changed measured outcomes materially. \textbf{(i)}~Our runner
+$z$-scores cached observation keys and DINO-WM's encoder applies its own
+proprioception statistics, fit from the same data; applying both maps every
+agent position to ${\approx}{-}3\sigma$ (positions $2$ px apart become
+identical to three decimals). Passing proprioception through unnormalised on
+that model alone moves $h25$ from $36.0$ to $100.0$. Only DINO-WM consumes
+proprioception. \textbf{(ii)}~The renderer is CPU-bound; uncapped BLAS
+threads cost ${\approx}40\times$ wall-clock, so they are capped at
+$12$--$16$. \textbf{(iii)}~The released single-token encoders use a
+pre-$5$.x Hugging Face ViT layout; converting under the wrong major version
+has \texttt{load\_state\_dict} reject all $192$ encoder tensors. Reference
+environment: torch \texttt{2.4.1+cu124}, transformers \texttt{4.57.6},
+Python \texttt{3.11.10}.
