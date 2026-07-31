@@ -1,223 +1,119 @@
 % =====================================================================
-% TwoRoom results -- drop-in replacement for the \subsection{Value metric}
-% stub in \section{Results}.
-%
-% Numbers: tworoom_matrix_20260727/RESULTS_tworoom_matrix.md (campaign
-% matrix 9.2, paper-budget rerun 9.3, RLP budget truncation 10.2,
-% reactive policy 10.5). All cells n = 50 episodes.
-%
-% New bib keys used: liu2022metric (MRN), andrychowicz2017her (HER),
-% zhou2024dinowm (DINO-WM). Swap for whatever keys references.bib uses.
+% TwoRoom results -- compact drop-in for the \subsection{Value metric}
+% stub. Numbers: RESULTS_tworoom_matrix.md (9.2 matrix, 9.3 paper-budget
+% rerun, 10.2 RLP truncation, 10.5 reactive policy). n = 50 per cell.
+% Bib keys used: liu2022metric, andrychowicz2017her, zhou2024dinowm.
 % =====================================================================
-
-\section{Results}
-
-We evaluate in two stages. Section~\ref{sec:tworoom} isolates the
-\emph{critic}: on a navigation task where every planner is strong enough that
-the optimizer is not the bottleneck, we show that the objective conventionally
-used with latent world models---distance in latent space---is inherently
-flawed, that a learned value metric repairs it, and that RLP matches the best
-sampling planner while querying the world model two to three orders of
-magnitude less. Section~\ref{sec:highdim} then scales to Reacher and OGBench,
-where the action space is large enough that the \emph{planner} becomes the
-bottleneck.
 
 \subsection{The value metric, not the latent distance}
 \label{sec:tworoom}
 
 \paragraph{Setup.}
-TwoRoom is a $2$-D navigation task: a circular agent must reach a target in the
-opposite room through one of up to three doorways in a dividing wall, from
-$224 \times 224$ RGB observations, with success declared within $16$ px and at
-most $100$ primitive steps. Actions are $2$-D velocities, grouped into blocks
-of $5$ by the frameskip; all planners use $N = 5$ action blocks
-($25$ primitive steps) and execute the entire optimized sequence before
-replanning. We use three pretrained latent world models that differ in how much
-geometry their latent carries: two that encode an observation into a single
-$192$-d \texttt{CLS} token (LeWM, PLDM) and DINO-WM
-\citep{zhou2024dinowm}, which keeps $196$ patch tokens ($77{,}224$-d flat).
-The offline dataset is $10{,}000$ demonstration episodes ($920{,}809$ frames).
-Evaluation replays dataset rows: the start is row $t$ and the goal is row
-$t + \Delta$, so $\Delta$ directly controls how far the goal is. We report
-$\Delta = 25$ ($h25$, one planning horizon away) and $\Delta = 50$ ($h50$, two),
-$50$ tasks per cell, averaged over $3$ task seeds and---for every learned
-component---$3$ independent initializations.
-
-\paragraph{Two costs.}
-The \emph{latent distance} baseline scores a plan by
-$\lVert \hat z_N - \hat z_g \rVert_2^2$, the objective the released checkpoints
-are planned with. The \emph{value metric} is our critic
-$V(\hat z, \hat z_g) = d_\psi(\hat z \to \hat z_g)$, realized as a metric
-residual network \citep{liu2022metric}: a quasimetric whose symmetric and
-asymmetric parts are the two halves of one $128$-d embedding, so it is
-non-negative and satisfies the triangle inequality and therefore composes long
-distances out of short transitions. It is trained on cached latents by $n$-step
-temporal-difference learning with hindsight goal relabeling
-\citep{andrychowicz2017her} ($n = 50$, undiscounted, expectile $0.1$), and is
-frozen when it scores plans for the sampling planners. RLP is the residual
-planner of Section~\ref{sec:dyna} with $K = 8$ refinement steps, whose critic is
-warm-started from that same checkpoint and co-trained with the planner.
-
-All three world models reproduce their published TwoRoom success rates under
-this protocol at $h25$ (ours vs.\ reported): PLDM $96.7$ vs.\ $97$, LeWM $89.3$
-vs.\ $87$, DINO-WM $100.0$ vs.\ $100$, which fixes the reference frame for
-everything that follows.
-
-\paragraph{The latent distance is not a planning objective.}
-Table~\ref{tab:tworoom-matrix} crosses the two costs with three optimizers.
-Read at $h25$ alone---the horizon at which these benchmarks are published---the
-two costs look interchangeable and every base looks solved: $89$--$100$
-everywhere. Doubling the goal distance separates them completely. Under the
-latent distance, CEM falls by $34.6$ points on LeWM and $19.4$ on PLDM, while
-under the value metric no arm degrades at all.
+TwoRoom is a $2$-D navigation task from $224\times224$ RGB: reach a target in
+the opposite room through one of up to three doorways, success within $16$ px.
+All planners optimize $N = 5$ action blocks ($25$ primitive steps) and execute
+the whole sequence before replanning. We use three pretrained world models
+that differ in how much geometry their latent carries---two encoding an
+observation into a single $192$-d \texttt{CLS} token (LeWM, PLDM) and DINO-WM
+\citep{zhou2024dinowm}, which keeps $196$ patch tokens ($77{,}224$-d)---and
+plan under two costs. The \emph{latent distance}
+$\lVert \hat z_N - \hat z_g\rVert_2^2$ is the objective the released
+checkpoints ship with. The \emph{value metric} is our critic
+$V(\hat z,\hat z_g) = d_\psi(\hat z \!\to\! \hat z_g)$, a metric residual
+network \citep{liu2022metric} whose symmetric and asymmetric parts are the two
+halves of one $128$-d embedding, so it is a quasimetric and composes long
+distances out of short transitions; it is trained on cached latents by $n$-step
+TD with hindsight relabeling \citep{andrychowicz2017her} ($n = 50$,
+undiscounted, expectile $0.1$). Evaluation replays offline trajectories
+($10{,}000$ episodes): start $=$ row $t$, goal $=$ row $t+\Delta$, so $\Delta$
+sets the goal distance. We report $\Delta = 25$ ($h25$, one horizon) and
+$\Delta = 50$ ($h50$, two), $50$ tasks per cell, $3$ task seeds $\times$ $3$
+initializations for every learned component. All three models reproduce their
+published $h25$ rates (ours vs.\ reported: PLDM $96.7/97$, LeWM $89.3/87$,
+DINO-WM $100.0/100$).
 
 \begin{table}[t]
 \centering
-\caption{TwoRoom success rate (\%), cost $\times$ optimizer $\times$ world
-model, at goal distances of one ($h25$) and two ($h50$) planning horizons.
-Latent-distance cells average $3$ task seeds; value-metric and RLP cells
-average $3$ task seeds $\times$ $3$ initialization seeds (DINO-WM RLP: one
-initialization). CEM and MPPI use $300$ candidates $\times$ $30$ iterations
-and Adam $100$ candidates $\times$ $30$ steps, so all rows are matched at $30$
-optimizer iterations. At the $10$ iterations used by the source benchmark the
-CEM rows read $86.7/54.0$, $97.3/76.7$, $100.0/99.3$ (latent distance) and
-$100.0/100.0$, $98.2/99.1$, $100.0/100.0$ (value metric): no cell moves by more
-than $2.6$, and no conclusion here depends on the extra budget.
-MPPI is at library defaults---its temperature was never tuned---so its rows are
-a lower bound. Dashes: not run (DINO-WM cells cost ${\sim}34$ min each).}
-\label{tab:tworoom-matrix}
-\begin{tabular}{llcccccc}
-\toprule
-& & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} & \multicolumn{2}{c}{DINO-WM} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
-cost & optimizer & $h25$ & $h50$ & $h25$ & $h50$ & $h25$ & $h50$ \\
-\midrule
-latent distance
- & CEM  & 89.3 & 54.7 & 96.7 & 77.3 & \textbf{100.0} & 98.0 \\
- & Adam & 92.0 & 67.3 & 92.0 & 72.0 & 96.7 & 95.3 \\
- & MPPI & 65.3 & 47.3 & 71.3 & 55.3 & 95.3 & 96.7 \\
-\midrule
-value metric
- & CEM  & \textbf{100.0} & 99.8 & \textbf{98.7} & 99.6 & 99.8 & \textbf{100.0} \\
- & Adam & 96.4 & 96.0 & 96.0 & 95.3 & --- & --- \\
- & MPPI & 87.1 & 87.1 & 83.1 & 83.8 & --- & --- \\
-\midrule
-value metric & \textbf{RLP} ($K{=}8$) & \textbf{100.0} & \textbf{100.0} & 97.1 & 98.9 & 99.3 & 99.3 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The failure is not a tuning artifact but a property of the objective. Squared
-latent distance measures how similar two encodings look, which coincides with
-reachability only in a neighbourhood; as the goal recedes, the objective's
-minimizer stops being the plan that gets there. A quasimetric trained on
-temporal distance orders states by steps-to-go by construction, and it is that
-ordering---not a better optimizer---that survives the longer horizon.
-
-\paragraph{How much the critic is worth depends on the latent.}
-Table~\ref{tab:tworoom-degradation} orders the three world models by latent
-capacity. The degradation of the latent distance, and correspondingly the value
-of learning a critic, is monotone in it: a single $192$-d token loses $34.6$
-points and gains $45.1$ from the critic, whereas $196$ patch tokens lose $2.0$
-and gain $2.0$.
-
-\begin{table}[t]
-\centering
-\caption{The learned critic compensates for a weak latent; it is not
-universally better. Left: degradation of the latent distance under CEM when the
-goal distance doubles. Right: value-metric success at $h50$ and the resulting
-gain. Ordered by latent capacity.}
-\label{tab:tworoom-degradation}
-\begin{tabular}{llccc}
-\toprule
-world model & latent & latent dist.\ $h25 \!\to\! h50$ & value metric $h50$ & gain \\
-\midrule
-LeWM    & 1 token, $192$-d          & $89.3 \to 54.7$ \; ($-34.6$) & 99.8  & $\mathbf{+45.1}$ \\
-PLDM    & 1 token, $192$-d          & $96.7 \to 77.3$ \; ($-19.4$) & 99.6  & $\mathbf{+22.3}$ \\
-DINO-WM & $196$ tokens, $77{,}224$-d & $100.0 \to 98.0$ \; ($-2.0$) & 100.0 & $+2.0$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-This also explains why the effect is invisible in published single-horizon
-tables, and it makes a concrete prediction for Section~\ref{sec:highdim}: the
-critic buys the most exactly where the representation is thinnest. Note the
-symmetric reading---on a latent rich enough to make the native distance
-informative, even an untuned sampler succeeds ($95.3$--$96.7$ for MPPI on
-DINO-WM, against $65.3 \to 47.3$ for the same sampler on LeWM), so the critic
-is not what makes planning work in general; it is what makes it work on
-representations that do not already encode the geometry.
-
-\paragraph{Refinement is what buys the search budget back.}
-Table~\ref{tab:tworoom-budget} holds the cost fixed at the value metric and
-varies only how much the world model is queried per decision, measured in
-rollout-equivalents ($300$ candidates $\times$ $10$ iterations $= 3{,}000$ for
-CEM at the benchmark budget; ${\sim}2$ per RLP refinement step, one forward
-unroll and one backward pass). RLP matches CEM to within noise at
-${\sim}190\times$ fewer queries, and its budget knob degrades gracefully: $K$
-can be halved to $4$ for free on both single-token models, and halved again to
-$2$ at a cost of $3.8$ points on PLDM and none on LeWM. CEM's own knob, by
-contrast, does nothing between $10$ and $30$ iterations---the extra $6{,}000$
-rollouts are wasted.
-
-\begin{table}[t]
-\centering
-\caption{Success rate versus world-model queries per decision, value metric
-throughout. RLP $K{=}4$ and $K{=}2$ for LeWM and PLDM are obtained by
-truncating the \emph{same} $K{=}8$ planner at deployment (the refiner is
-weight-tied, so the iteration count is a runtime argument, not a retraining);
-the DINO-WM $K{=}4$ entry is a separately trained planner. The last row is a
-reactive policy $\pi(\hat z, \hat z_g)$ trained by the same first-order
-objective through the same frozen world model against the same critic, but
-emitting a plan in one pass instead of refining ($0$ queries at deployment;
-replanning every action block instead of every $5$ changes it by at most
-$+5.6$).}
-\label{tab:tworoom-budget}
+\caption{TwoRoom success rate (\%) and world-model queries per decision, at
+goal distances of one ($h25$) and two ($h50$) planning horizons. Latent-distance
+rows average $3$ task seeds, learned rows $3$ task seeds $\times$ $3$
+initializations (DINO-WM RLP: one). Queries count rollout-equivalents:
+candidates $\times$ iterations for the samplers, ${\sim}2$ per RLP step
+(forward unroll $+$ backward pass). RLP $K{=}4,2$ truncate the \emph{same}
+$K{=}8$ planner at deployment---the refiner is weight-tied, so depth is a
+runtime argument---except DINO-WM $K{=}4$, which is separately trained.
+The reactive policy is trained by the same first-order objective through the
+same frozen model against the same critic, emitting a plan in one pass instead
+of refining; replanning every block rather than every $5$ changes it by at most
+$+5.6$. At the benchmark's $10$ CEM iterations ($3{,}000$ queries) the CEM rows
+read $86.7/54.0$, $97.3/76.7$, $100.0/99.3$ and $100.0/100.0$, $98.2/99.1$,
+$100.0/100.0$: no cell moves by more than $2.6$. MPPI is at library defaults,
+never tuned---a lower bound. Dashes: not run.}
+\label{tab:tworoom}
 \begin{tabular}{lrcccccc}
 \toprule
 & queries & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} & \multicolumn{2}{c}{DINO-WM} \\
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
-planner & / decision & $h25$ & $h50$ & $h25$ & $h50$ & $h25$ & $h50$ \\
+planner & / dec. & $h25$ & $h50$ & $h25$ & $h50$ & $h25$ & $h50$ \\
 \midrule
-CEM, $30$ iterations   & $9{,}000$ & 100.0 & 99.8 & \textbf{98.7} & 99.6 & 99.8 & \textbf{100.0} \\
-CEM, $10$ iterations   & $3{,}000$ & 100.0 & \textbf{100.0} & 98.2 & 99.1 & \textbf{100.0} & \textbf{100.0} \\
+\multicolumn{8}{l}{\emph{latent distance}} \\
+\quad CEM  & $9{,}000$ & 89.3 & 54.7 & 96.7 & 77.3 & \textbf{100.0} & 98.0 \\
+\quad Adam & $3{,}000$ & 92.0 & 67.3 & 92.0 & 72.0 & 96.7 & 95.3 \\
+\quad MPPI & $9{,}000$ & 65.3 & 47.3 & 71.3 & 55.3 & 95.3 & 96.7 \\
 \midrule
-\textbf{RLP}, $K{=}8$  & ${\sim}16$ & \textbf{100.0} & \textbf{100.0} & 97.1 & 98.9 & 99.3 & 99.3 \\
-\textbf{RLP}, $K{=}4$  & ${\sim}8$  & \textbf{100.0} & \textbf{100.0} & 96.7 & \textbf{99.6} & 98.7 & \textbf{100.0} \\
-\textbf{RLP}, $K{=}2$  & ${\sim}4$  & 99.1 & \textbf{100.0} & 93.3 & 97.8 & --- & --- \\
-\midrule
-reactive policy $\pi$  & $0$ & 38.0 & 22.9 & 31.8 & 14.9 & 36.0 & 20.7 \\
+\multicolumn{8}{l}{\emph{value metric}} \\
+\quad CEM  & $9{,}000$ & \textbf{100.0} & 99.8 & \textbf{98.7} & 99.6 & 99.8 & \textbf{100.0} \\
+\quad Adam & $3{,}000$ & 96.4 & 96.0 & 96.0 & 95.3 & --- & --- \\
+\quad MPPI & $9{,}000$ & 87.1 & 87.1 & 83.1 & 83.8 & --- & --- \\
+\quad \textbf{RLP} $K{=}8$ & ${\sim}16$ & \textbf{100.0} & \textbf{100.0} & 97.1 & 98.9 & 99.3 & 99.3 \\
+\quad \textbf{RLP} $K{=}4$ & ${\sim}8$  & \textbf{100.0} & \textbf{100.0} & 96.7 & \textbf{99.6} & 98.7 & \textbf{100.0} \\
+\quad \textbf{RLP} $K{=}2$ & ${\sim}4$  & 99.1 & \textbf{100.0} & 93.3 & 97.8 & --- & --- \\
+\quad reactive policy      & $0$        & 38.0 & 22.9 & 31.8 & 14.9 & 36.0 & 20.7 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{A reactive policy is not enough.}
-The last row of Table~\ref{tab:tworoom-budget} is the empirical counterpart of
-Section~\ref{sec:theoretical-results}: a policy trained to emit a plan in a
-single pass, by backpropagating the same imagined return through the same
-frozen world model against the same critic, and differing from RLP only in that
-it does not iterate. It collapses to $31$--$38$ at $h25$ and $15$--$23$ at
-$h50$, below every arm in Table~\ref{tab:tworoom-matrix} including the untuned
-sampler. Two refinement steps over the identical value landscape recover
-$93$--$100$ at a comparable deployment cost. The gap is not explained by how
-often the controller re-observes the world---replanning every action block
-rather than every five moves it by at most $5.6$ points---so on this task the
-refinement recursion~\eqref{eq:plan-rollout}--\eqref{eq:plan-refine}, and not
-the learned value alone, is what makes amortized planning work.
+\paragraph{The latent distance is not a planning objective.}
+Read at $h25$ alone---the horizon these benchmarks publish---the two costs in
+Table~\ref{tab:tworoom} look interchangeable and every model looks solved
+($89$--$100$). Doubling the goal distance separates them: under the latent
+distance CEM loses $34.6$ points on LeWM and $19.4$ on PLDM, while under the
+value metric nothing degrades. This is a property of the objective, not of
+tuning. Squared latent distance measures how similar two encodings look, which
+tracks reachability only locally; as the goal recedes its minimizer stops being
+the plan that arrives. A quasimetric fit to temporal distance orders states by
+steps-to-go by construction. How much that is worth scales inversely with the
+latent: the $192$-d single-token models lose $34.6$ and $19.4$ points and gain
+$45.1$ and $22.3$ from the critic, whereas DINO-WM's $196$ tokens lose $2.0$ and
+gain $2.0$. The converse also holds---on a latent rich enough to make the native
+distance informative even the untuned sampler succeeds ($95.3/96.7$ on DINO-WM
+against $65.3/47.3$ on LeWM)---so the critic is not what makes planning work in
+general, but what makes it work on representations that do not already encode
+the geometry.
+
+\paragraph{Refinement, not the critic alone, buys the search budget back.}
+Holding the cost fixed at the value metric and varying only the query budget,
+RLP matches CEM to within noise at ${\sim}190\times$ fewer queries, and degrades
+gracefully: $K$ halves to $4$ for free on both single-token models and to $2$ at
+a cost of $3.8$ points on PLDM and none on LeWM. CEM's own knob does nothing
+between $10$ and $30$ iterations---$6{,}000$ wasted rollouts. The last row
+isolates the recursion itself: a policy differing from RLP only in that it emits
+its plan in one pass collapses to $31$--$38$ at $h25$ and $15$--$23$ at $h50$,
+below every arm including the untuned sampler, while two refinement steps over
+the identical value landscape recover $93$--$100$ at comparable cost. Since
+replanning five times as often moves it by at most $5.6$ points, it is the
+refinement recursion~\eqref{eq:plan-rollout}--\eqref{eq:plan-refine}, not the
+learned value alone, that makes amortized planning work.
 
 \paragraph{Limitations.}
-Three caveats bound how far these numbers should be read. First, the critic and
-the planner are trained on latents cached from the same $10{,}000$ episodes the
-evaluation draws its tasks from; different seeds select different tasks, but
-every evaluated state lies in the training pool, so all value-metric and RLP
-numbers are in-distribution fits rather than generalization estimates
-(memorization is implausible---${\sim}150$ evaluated tasks against ${\sim}2$M
-valid start--goal pairs and a small MLP head---and the measured effects are an
-order of magnitude larger than the optimism attributable to selection at this
-sample size, but the held-out card has not been run). The latent-distance rows
-involve no learned component beyond the frozen world model and are unaffected.
-Second, several arms sit at $99$--$100$, where a $50$-episode cell can no longer
-discriminate ($\mathrm{SE} \approx 2.8$ points): differences of two points
-inside that band should not be read as ordering. Third, TwoRoom is deliberately
-easy for the optimizer---this section is designed to isolate the critic, and
-the planner's own contribution is measured in Section~\ref{sec:highdim}.
+Critic and planner are trained on latents cached from the same episodes the
+evaluation draws tasks from, so all learned rows are in-distribution fits rather
+than generalization estimates; memorization is implausible (${\sim}150$ tasks
+against ${\sim}2$M valid start--goal pairs) and the effects are an order of
+magnitude above the optimism attributable to selection at this sample size, but
+the held-out card is not run. The latent-distance rows contain no learned
+component and are unaffected. Several arms sit at $99$--$100$, where a
+$50$-episode cell cannot discriminate ($\mathrm{SE} \approx 2.8$), so two-point
+differences inside that band are not an ordering. TwoRoom is deliberately easy
+for the optimizer, which is what isolates the critic here; the planner's own
+contribution is measured in Section~\ref{sec:highdim}.
