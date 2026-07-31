@@ -45,7 +45,11 @@ sc(){ grep -h "^${1}," "$SUM" 2>/dev/null | tail -1 | cut -d, -f2; }
 cd "$CODE"
 
 log "=== POST SEED REPLICATION, $TAG, seeds 3-19 (pid $$) ==="
-for f in "$QF1" "$QF5" "$QTD" "$AH5" "$PLDM/weights.pt"; do [ -e "$f" ] || die "missing $f"; done
+# the fine-tuned WM is packaged as weights_epoch_1.pt (SaveCkptCallback names
+# by epoch); the frozen bases use weights.pt. Accept either.
+for f in "$QF1" "$QF5" "$QTD" "$AH5"; do [ -e "$f" ] || die "missing $f"; done
+ls "$PLDM"/*.pt >/dev/null 2>&1 || die "no .pt in $PLDM"
+[ "$(ls "$PLDM"/*.pt | wc -l)" = 1 ] || die "$PLDM must hold exactly one .pt (loader contract)"
 
 # --------------------------- P1 trains on GPUs 1-7 (GPU 0 = the Dyna fine-tune)
 log "P1: training seeds 3-19 on all 8 GPUs (box is idle)"
