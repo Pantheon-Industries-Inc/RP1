@@ -63,9 +63,20 @@ log "  actors: $(ls /workspace/actors/ | grep -cE 'lip4_pldm_mw.*_s0\.pt$')/12"
 
 # ================= P0 PARALLEL-SAFETY GATE (do not skip) =================
 log "P0: parallel-safety validation -- 3 known cells re-run concurrently"
-declare -A KNOWN=( [42]=64.0 [43]=66.0 [44]=68.0 )
+# Reference values MUST come from THIS pod's own serial run, not from the old
+# pod's card. First attempt hard-coded the old pod's 64/66/68 and tripped on
+# draw 42, which reads 66.0 here (serially AND in parallel) -- a genuine
+# one-task pod-to-pod difference on that draw, not a parallelism artifact.
+declare -A KNOWN=()
+for d in 42 43 44; do
+  v=$(sc "ref_cem_e${d}")
+  [ -n "$v" ] && [ "$v" != FAIL ] || die "no serial ref_cem_e${d} to validate against -- run the serial grid's P3 first"
+  KNOWN[$d]=$v
+done
+log "  validating against this pod's serial values: ${KNOWN[42]}/${KNOWN[43]}/${KNOWN[44]}"
 g=0
 for d in 42 43 44; do
+  flock "$SUM.lock" -c "sed -i \"/^val_cem_e${d},/d\" '$SUM'"
   ev "$g" "val_cem_e${d}" solver=cem & g=$((g+1))
 done; wait
 bad=0
