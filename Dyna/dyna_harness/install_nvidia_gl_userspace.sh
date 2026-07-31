@@ -31,6 +31,13 @@ if [ ! -s "$RUN" ]; then
     "https://us.download.nvidia.com/XFree86/Linux-x86_64/${V}/NVIDIA-Linux-x86_64-${V}.run" \
     > "$L/nvgl_dl.log" 2>&1 || die "download failed for $V"
 fi
+# The installer probes for modprobe even under --no-kernel-module and aborts
+# without it; bare CUDA images often ship no kmod. Cost one failed run.
+command -v modprobe >/dev/null 2>&1 || {
+  log "P1b: installing kmod (installer requires modprobe even with --no-kernel-module)"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq kmod >> "$L/nvgl_dl.log" 2>&1 \
+    || die "could not install kmod"
+}
 chmod +x "$RUN"
 log "P1: installer ready ($(du -h "$RUN" | cut -f1))"
 
