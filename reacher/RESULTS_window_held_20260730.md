@@ -111,3 +111,71 @@ remainder — `train_window.py`, `make_l2window.py`, the oracle readout,
 drivers — were authored in earlier app sessions and live on both pods'
 `/workspace/`; they get committed under `reacher/results_pod/` together with
 the CSVs as soon as a pod answers.
+
+---
+
+# Addendum 2026-07-31 — LIP optimisation on the rebuilt H200 pod
+
+All lejepa, h25, held-at-end, window3 critic, 1-frame conditioning, plain deploy
+(no restarts), 6 eval seeds per cell, 3 training seeds per config.
+Raw CSVs, screen table and winning actors: `reacher/results_pod_20260731/`.
+
+## Final comparison
+
+| arm | @0.05 | @0.10 | planning cost |
+|---|---|---|---|
+| **LIP · window, 1000 steps, lr 1e-3, amax 1.8, mw 0.1** | **48.9** | 87.0 | ~16 rollouts |
+| LIP · window, 1000 steps, lr 1e-3, amax 1.8, mw 0.3 | 48.0 | **89.7** | ~16 |
+| LIP · window, 1000 steps, lr 3e-4, geom-early, amax 1.8 | 46.6 | 87.1 | ~16 |
+| LIP · window, 1000 steps, lr 1e-4 (pre-grid recipe) | 45.8 | — | ~16 |
+| **Latent+CEM · window (the paper's own method)** | **44.7** | **84.3** | 3,000 |
+| LIP · window, canonical 8000 steps | 33.9 | 81.3 | ~16 |
+| TD+CEM · window | 17.7 | 45.3 | 3,000 |
+| *(upper bound) LIP + per-actor checkpoint selection* | *50.3* | *92.7* | ~16 |
+
+**Single fixed recipe, no per-seed selection: 48.9 vs 44.7 (+4.2) at ~190x less
+planning compute.** The ordering is the same at 0.10 rad, so it is not an
+artifact of the knife-edge 0.05 threshold.
+
+## Why the recipe is 1000 steps
+
+corr(E_final, HELD) = **+0.583** across 20 final actors: a LOWER imagined cost
+predicts WORSE real performance. Mechanism -- the WM's 25-step open-loop error
+(~0.11 rad) exceeds the 0.05 rad tolerance, so past a point the actor optimises
+fiction. Seed 0 is simply the seed that optimises hardest; its held-vs-step curve
+is 41 -> 23 -> 18 -> 17 -> 12 -> 9 -> 10 -> 10.
+
+Averaged over 9 actors the selection-seed mean by snapshot was 1000->49.2 vs
+43-45 at every later step, so 1000 is simultaneously best for every seed -- a
+genuine single hyperparameter, not a per-seed compromise. It also collapses the
+seed spread (39-55 at 1000 steps vs 6.7-47.7 at 8000).
+
+**E_final cannot replace the env evaluation as a stopping rule.** At each actor's
+peak, E_final ranges 1.083-3.182 (spread 2.1, as wide as its whole training
+range), and the within-run corr(E_final, HELD) is only +0.213. So there is no
+threshold X for "stop when E_final <= X".
+
+## Hyperparameters AT 1000 steps (36-cell grid, screened on seeds 50/51,
+## carded on 42-47 -- disjoint)
+
+The optimum MOVES with the budget: at 8000 steps lr 1e-4 won and 1e-3 was worst
+(26.3); at 1000 steps **lr 1e-3 wins** and takes both top screen slots (56.7).
+With 8x less optimisation a larger step is needed, and the low LR that protected
+against over-optimisation is now just under-training. **amax 1.8 takes every top
+slot** having been indistinguishable from 2.2/2.6 at the longer budget.
+
+Lambda schedule (user's `L = v_K + sum_k lambda_k v_k`): implemented as uniform /
+geom-early (lambda_k = lambda*beta^k) / geom-late (beta=0.5). Directionally as
+predicted -- geom-early > uniform > geom-late on average, geom-late last in grid
+C -- but only ~3 points at matched settings, i.e. inside noise. **When to stop
+matters far more than how the path is weighted.**
+
+## Caveats
+
+- 48.9 vs 44.7 is +4.2 with a per-cell noise band of roughly +-6, so this is
+  "LIP at least matches, probably beats" rather than a decisive margin.
+- Early stopping needs ~16 env evaluations per actor to select, so LIP's
+  TRAINING is no longer cheap even though its PLANNING still is. The fixed
+  1000-step recipe avoids that, at the cost of ~1.4 points.
+- The CEM baselines got no equivalent tuning budget; a fair comparison would
+  give CEM a similar selection allowance.
