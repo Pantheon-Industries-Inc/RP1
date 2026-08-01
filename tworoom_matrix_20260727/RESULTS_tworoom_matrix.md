@@ -161,10 +161,21 @@ Backpropagates through the world-model rollout. Memory scales with
 (100 candidates ≈ 50 GB; 200 candidates OOMs an 80 GB card at 78.5 GB).
 
 ### 5.4 LIPv4 (learned amortized planner) — `solver/lip.yaml`, `--arch v4`
-`PlannerNetV3`: a transformer refiner over the H plan blocks. Token *t* =
-[A_t, ∇_{A_t}V, proj(z_t), proj(z_g − z_t), E, pos_t] + iteration embedding;
-each token emits its own update ΔA_t and gate. Residual + clip contract
-A_{k+1} = clip(A_k + gate·ΔA).
+`PlannerNet` (kind `lip4`) — a plain MLP learned-update rule:
+
+    input  [A (50) ‖ ∇_A V (50) ‖ E (1)] = 101-d      (no latent enters the actor)
+    net    101 → 512 → 512 → 50, ReLU
+    update A_{k+1} = clip(A_k + ΔA)                   (pure residual, no gate)
+
+Verified from the deployed weights — `net.0.weight` is (512, 101) on every actor,
+including the 77,224-d DINO ones. `use_zg=False`, `use_z0=False`, `use_gate=False`.
+Goal information reaches the actor only through E and ∇_A V.
+
+⚠ **Correction to earlier revisions**, which described this arm as `PlannerNetV3` with
+transformer tokens and width/layers/heads/zproj settings. Those flags are saved into every
+checkpoint by `train_lip_ac.py` irrespective of `--arch`, but `LIPSolver` ignores them for
+`kind='lip4'`. `PlannerNetV3` is `--arch traj` (kind `lip3`) and produced **no** reported
+TwoRoom number.
 
 | setting | value |
 |---|---|
@@ -246,9 +257,12 @@ lies in encoder space; on bases where it does not, the learned value degrades sh
 `scripts/plan/train_pwm_ac.py`; deploy solver `stable_worldmodel/solver/pwm.py`
 (`solver=pwm`, config `config/solver/pwm.yaml`); driver `code/tworoom_pwm.sh`.
 
-Actor `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax` — the same
-goal-displacement parameterisation and action box as PlannerNetV3, so refiner and
-reactive policy see the goal identically.
+Actor `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax`, sharing the action box
+(amax 2.2), critic, caches and horizon with LIPv4. It does **not** share the input
+interface: the LIPv4 refiner reads [A, ∇_A V, E] and no latents (§5.4), while a
+single-pass policy has no value or gradient to read and must consume the latents. The
+comparison is therefore value-guided refinement vs direct amortisation, not an ablation
+of K alone. (An earlier revision claimed the two "see the goal identically" — retracted.)
 
 | setting | value |
 |---|---|
@@ -286,9 +300,11 @@ warm-start + seed.
   cache is **capped at 200,000 rows** (`--max-rows`) = **58 GB**, at full latent width.
   The cap takes a contiguous prefix ⇒ ~episodes 0–2,170 only.
   (A `--compress rp1024` route also exists and works for TD, but *not* for LIPv4:
-  `PlannerNetV3` bakes `z_dim` into `zp`/`gp`, so a 1024-d actor cannot consume the
-  77,224-d latents the solver feeds at deploy. The critic survives compression because
-  `CompressedMetric` dispatches on the last dim.)
+  LIPv4 training unrolls the frozen world model from cached latents, and the predictor
+  only accepts full-width latents. TD needs no rollout — just cached triples — and the
+  critic additionally survives compression because `CompressedMetric` dispatches on the
+  last dim. **Correction:** earlier revisions blamed the actor's `Linear(z_dim, zproj)`;
+  the actor's input is 101-d regardless of latent width, so the obstacle is the rollout.)
 
 ---
 

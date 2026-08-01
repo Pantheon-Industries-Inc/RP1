@@ -54,10 +54,13 @@ __all__ = ['PWMActor', 'PWMSolver']
 class PWMActor(nn.Module):
     """``pi(z, z_g) -> action block``. Must match ``train_pwm_ac.PWMActor``.
 
-    Goal enters as a displacement ``proj(z_g - z)``, the same parameterisation
-    PlannerNetV3 uses with ``goal_mode='diff'``, so the reactive policy and the
-    refiner see the goal identically. ``tanh * amax`` reproduces the action box
-    the LIPv4 actors clip to.
+    Goal enters as a displacement ``proj(z_g - z)``. Note this is a *different*
+    input interface from the LIPv4 refiner we compare against: that one is
+    ``PlannerNet`` with ``use_zg=use_z0=False``, so it consumes only
+    ``[A, grad_A V, E]`` and no latents at all -- the goal reaches it through
+    the critic. A single-pass policy has no value or gradient to read, so it
+    must consume the latents directly. ``tanh * amax`` does reproduce the
+    action box the LIPv4 actors clip to.
     """
 
     def __init__(self, z_dim: int, a_dim: int, width: int = 512, layers: int = 3,

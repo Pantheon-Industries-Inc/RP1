@@ -97,13 +97,17 @@ RLP matches CEM to within noise at ${\sim}190\times$ fewer queries, and degrades
 gracefully: $K$ halves to $4$ for free on both single-token models and to $2$ at
 a cost of $3.8$ points on PLDM and none on LeWM. CEM's own knob does nothing
 between $10$ and $30$ iterations---$6{,}000$ wasted rollouts. The last row
-isolates the recursion itself: a policy differing from RLP only in that it emits
-its plan in one pass collapses to $31$--$38$ at $h25$ and $15$--$23$ at $h50$,
-below every arm including the untuned sampler, while two refinement steps over
-the identical value landscape recover $93$--$100$ at comparable cost. Since
-replanning five times as often moves it by at most $5.6$ points, it is the
-refinement recursion~\eqref{eq:plan-rollout}--\eqref{eq:plan-refine}, not the
-learned value alone, that makes amortized planning work.
+replaces the recursion with direct amortisation: a policy trained by the same
+first-order objective through the same frozen model against the same critic,
+emitting its plan in a single pass, collapses to $31$--$38$ at $h25$ and
+$15$--$23$ at $h50$---below every arm including the untuned sampler---while two
+refinement steps over the identical value landscape recover $93$--$100$ at
+comparable cost. Since replanning five times as often moves it by at most $5.6$
+points, the deficit is not a matter of how often the controller re-observes the
+world. The two are not an ablation of $K$ alone, since a single-pass policy has
+no value or gradient to consume and must read the latents directly
+(Appendix~\ref{app:tworoom}); what the comparison isolates is iterative
+value-guided refinement against direct amortisation of the same objective.
 
 \paragraph{Limitations.}
 Critic and planner are trained on latents cached from the same episodes the

@@ -171,9 +171,22 @@ other two bases. Cost: ≈2.5 h/cell versus ≈34 min for CEM.
 
 ### 4.4 LIPv4 — `config/solver/lip.yaml`, `train_lip_ac.py --arch v4`
 
-`PlannerNetV3`: transformer refiner over the H plan blocks. Token *t* =
-[A_t, ∇_{A_t}V, proj(z_t), proj(z_g − z_t), E, pos_t] + iteration embedding; each token
-emits its own ΔA_t and gate, applied as A_{k+1} = clip(A_k + σ(gate)·ΔA_t).
+`PlannerNet` (kind `lip4`) — a plain MLP learned-update rule, **not** the
+`PlannerNetV3` transformer. Verified from the deployed weights: `net.0.weight` is
+(512, 101) for every actor including DINO's, i.e. input = [A (50) ‖ ∇_A V (50) ‖ E (1)]
+and **no latent enters the actor at all** (`use_zg=False`, `use_z0=False`; goal
+information arrives only through E and ∇_A V). Output 50 = H×a_dim with no gate tensor
+(`use_gate=False`), so the update is the pure residual A_{k+1} = clip(A_k + ΔA).
+
+    MLP 101 → 512 → 512 → 50, ReLU
+
+⚠ **Correction.** Earlier revisions of this file described LIPv4 as `PlannerNetV3` with
+transformer tokens [A_t, ∇V, proj(z_t), proj(z_g − z_t), E, pos_t], width 256 / layers 2 /
+heads 4 / zproj 64 and `goal_mode`/`head_mode`/`iter_mode`/`cond_mode` settings. Those
+fields *are* present in the checkpoints — `train_lip_ac.py` saves every flag regardless of
+`--arch` — but `LIPSolver` ignores them for `kind='lip4'`, which takes the `PlannerNet`
+branch. `PlannerNetV3` is `--arch traj` (kind `lip3`) and was never used for any reported
+TwoRoom number.
 
 | parameter | value |
 |---|---|
@@ -182,13 +195,9 @@ emits its own ΔA_t and gate, applied as A_{k+1} = clip(A_k + σ(gate)·ΔA_t).
 | `--amax` (action clip) | **2.2** (canonical); 2.8 selected in a PLDM sweep |
 | `--max-delta` | 12 |
 | `--horizon` | 5 |
-| width / layers / heads | 256 / 2 / 4 |
-| feed-forward | 2 × width |
-| `zproj` | 64 |
-| `goal_mode` | `diff` |
-| `head_mode` | `gate` |
-| `iter_mode` | `emb` |
-| `cond_mode` | `token` |
+| actor input dim | **101** = 50 (plan) + 50 (∇_A V) + 1 (E) — independent of latent width |
+| hidden | 512 (× 2 layers, ReLU) |
+| gate / raw latents | none (`use_gate=False`, `use_zg=False`, `use_z0=False`) |
 | **deploy** | `restarts 1`, `robust_m 0`, `n_steps 0` — **pure learned planner, no sampling** |
 | **rollout-equivalents / plan step** | **~16** at K=8 (~2 per refinement pass: forward unroll + gradient) |
 
@@ -206,8 +215,11 @@ above regenerates them from the archived K=8 actors).
 
 ### 4.5 PWM-style reactive policy — `train_pwm_ac.py`, `config/solver/pwm.yaml` (2026-07-29)
 
-Reactive mapping `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax` — PlannerNetV3's
-goal-displacement parameterisation, **zero refinement**. First-order policy extraction
+Reactive mapping `π(z, z_g) = tanh(MLP([zp(z) ‖ gp(z_g − z)])) · amax`, **zero
+refinement**. Note it consumes the *latents*, which the LIPv4 refiner does not (§4.4):
+having no E or ∇_A V to read, a single-pass policy has to. So the pair differs in input
+interface as well as in iteration count — the contrast is value-guided refinement vs
+direct amortisation, not an ablation of K alone. First-order policy extraction
 à la PWM (arXiv 2407.02466), fully offline, with the campaign's MRN quasimetric as
 value (no reward model, no critic ensemble — deliberate substitution).
 
@@ -322,12 +334,17 @@ Selected on seed 42 alone, to be reported on seeds 43/44 only. No arm reaches 10
 | dinowm | **58 GB** | capped at **200,000 rows** (`--max-rows`); full width × all frames would be 920,809 × 77,224 × 4 B = **284 GB**. The cap takes a contiguous prefix ⇒ ≈ episodes 0–2,170 |
 | dinowm (alt) | 3.6 GB | `--compress rp1024` random projection — works for TD, **not** for LIPv4 (see below) |
 
-**Why the row cap rather than compression for LIPv4:** `PlannerNetV3` bakes `z_dim` into
-`zp`/`gp` as `Linear(z_dim, zproj)`, so an actor trained on a 1024-d compressed cache
-shape-mismatches the 77,224-d latents `LIPSolver` feeds at deploy. The *critic* survives
-compression because `CompressedMetric` dispatches on the last dim (1024 passes through,
-77,224 is projected), but the actor cannot. Capping rows keeps full width so actor,
-critic and deploy all agree, with no solver change.
+**Why the row cap rather than compression for LIPv4:** LIPv4 *training* rolls the frozen
+world model forward from cached latents (`rollout_traj`), and the predictor only accepts
+full-width latents — a 1024-d projected cache cannot be unrolled. TD training needs no
+rollout, only cached (z_t, z_tn, z_g) triples, which is why compression works there; the
+critic additionally survives it because `CompressedMetric` dispatches on the last dim.
+Capping rows keeps full width and needs no solver change.
+
+⚠ **Correction.** Earlier revisions blamed `PlannerNetV3`'s `Linear(z_dim, zproj)`. That
+is wrong twice over: the reported actors are `PlannerNet`, and its input is 101-d
+regardless of latent width (§4.4) — verified identical `net.0.weight` (512, 101) on the
+77,224-d DINO actors. The obstacle is the world-model rollout, not the actor.
 
 ---
 
