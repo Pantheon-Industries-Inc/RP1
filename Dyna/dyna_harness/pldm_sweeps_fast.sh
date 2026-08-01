@@ -65,6 +65,34 @@ spawn(){ # tag logfile extra-args...
   log "  -> $tag on gpu $gpu (slot $slot)"
 }
 
+# ---------------- eval helper: success is the OBJECTIVE, E_final is not.
+# The opt-capacity card proved this: iters32 had near-lowest E_final (9.04)
+# and the WORST success (70.0 vs base ~73-75). So the factorial is scored on
+# SUCCESS, with E_final kept only as a secondary diagnostic.
+EXPERT=/workspace/datasets/ogb_cube_single/ogb_cube_single.lance
+SUM=$R/summary_pldmgrid_egl.csv; EPHI=8000; EVAL_RANGE="${EPHI}:10000"
+touch "$SUM" "$SUM.lock"
+sc(){ grep -h "^${1}," "$SUM" 2>/dev/null | tail -1 | cut -d, -f2; }
+evspawn(){ # tag draw
+  local tag=$1 d=$2 nm="fxev_${1}_e${2}"
+  local c; c=$(sc "$nm"); [ -n "$c" ] && [ "$c" != FAIL ] && return 0
+  local slot; slot=$(acquire); local gpu=$(( slot % NGPU ))
+  (
+    CUDA_VISIBLE_DEVICES=$gpu MUJOCO_EGL_DEVICE_ID=$gpu timeout 7200 \
+      python3 "$P/eval_wm.py" --config-name cube seed=$d \
+      eval.dataset_name="$EXPERT" ++bf16=true eval.img_size=224 \
+      eval.goal_offset_steps=25 eval.eval_budget=50 "+eval.ep_range=$EVAL_RANGE" \
+      policy="$PLDM" solver=lip \
+      "solver.actor_path=/workspace/actors/lip4_pldm_${tag}_s0.pt" \
+      output.filename="${nm}.txt" > "$L/eval_${nm}.log" 2>&1
+    sr=""
+    grep -q "ep_range ${EPHI}:10000" "$L/eval_${nm}.log" && \
+      sr=$(grep -oE "success_rate[^0-9]*[0-9.]+" "$L/eval_${nm}.log" | tail -1 | grep -oE "[0-9.]+$")
+    flock "$SUM.lock" -c "echo '${nm},${sr:-FAIL}' >> '$SUM'"
+    release "$slot"
+  ) &
+}
+
 # ============================ OFAT ============================
 ARMS=(
   "base|" "expand01|--expand-weight 0.1" "expand10|--expand-weight 1.0"
@@ -133,9 +161,16 @@ v = {k: e for k, e in v.items() if e is not None}
 base = v.get("base")
 if base is None: sys.exit(0)
 fam = lambda t: re.sub(r"[0-9]+$", "", t)
+# EXCLUDE knobs that change the GOAL DISTRIBUTION E_final is measured on.
+# p-cross controls cross-episode goal sampling and max-delta the goal range,
+# so changing them changes the TASK, not the optimiser: pcross0 scored 4.11
+# (-60%) purely because same-episode goals are easier, and pcross6/maxd20 rose
+# for the mirror-image reason. Crossing them into the factorial would poison
+# half the cells with an easier problem rather than a better actor.
+DIST = {"pcross", "maxd"}
 seen, out = set(), []
 for t, e in sorted(v.items(), key=lambda kv: -abs(kv[1]-base)):
-    if t == "base" or t not in FLAG or fam(t) in seen: continue
+    if t == "base" or t not in FLAG or fam(t) in seen or fam(t) in DIST: continue
     seen.add(fam(t)); out.append(f"{t}|{FLAG[t]}")
     if len(out) >= 4: break
 print("\n".join(out))
@@ -162,11 +197,31 @@ else
     spawn "$tag" "$L/${tag}_s0.log" $extra
   done
   wait
-  log "FACTORIAL: all cells done"
+  log "FACTORIAL: all cells trained"
+  log "FACTORIAL: evaluating ALL $NC cells x 3 draws (success is the objective)"
+  for ((c=0; c<NC; c++)); do
+    tag=""
+    for ((i=0; i<NF; i++)); do
+      (( (c >> i) & 1 )) && tag="${tag}${FACTORS[$i]%%|*}."
+    done
+    [ -z "$tag" ] && tag="none."
+    tag="fx_${tag%.}"
+    for d in 42 43 44; do evspawn "$tag" "$d"; done
+  done
+  wait
+  log "FACTORIAL: evals done"
   FS=$(printf '%s ' "${FACTORS[@]}")
-  FACT_STR="$FS" python3 - "$L" 2>&1 | tee -a "$FX" <<'PY'
+  FACT_STR="$FS" SUMF="$SUM" python3 - "$L" 2>&1 | tee -a "$FX" <<'PY'
 import os, sys, re, itertools
 L = sys.argv[1]
+rows = {}
+for ln in open(os.environ["SUMF"]):
+    if "," not in ln: continue
+    k, v = ln.strip().split(",")[:2]
+    if v not in ("", "FAIL"): rows[k] = float(v)
+def succ(tag):
+    vs = [rows.get(f"fxev_{tag}_e{d}") for d in (42,43,44)]
+    return None if any(v is None for v in vs) else sum(vs)/3
 facs = [f.split("|")[0] for f in os.environ["FACT_STR"].split()]
 NF = len(facs)
 def lastE(tag):
@@ -178,28 +233,41 @@ for c in range(1 << NF):
     on = [facs[i] for i in range(NF) if (c >> i) & 1]
     e = lastE(".".join(on) if on else "none")
     if e is not None: cells[frozenset(on)] = e
-print(f"=== PLDM 2^{NF} FACTORIAL on E_final (common static teacher) ===")
-print(f"  cells: {len(cells)}/{1<<NF}")
-for k in sorted(cells, key=lambda s: cells[s]):
-    print(f"    {'+'.join(sorted(k)) or '(none)':38s} {cells[k]:7.2f}")
-print("  --- main effects (ON minus OFF) ---")
-for f in facs:
-    on  = [v for k, v in cells.items() if f in k]
-    off = [v for k, v in cells.items() if f not in k]
-    if on and off:
-        print(f"    {f:12s} {sum(on)/len(on)-sum(off)/len(off):+7.2f}  (n={len(on)}/{len(off)})")
-print("  --- pairwise interactions (deviation from additive) ---")
-for a, b in itertools.combinations(facs, 2):
-    q = {}
-    for ka, kb in itertools.product([0,1],[0,1]):
-        vs = [v for k, v in cells.items()
-              if (a in k)==bool(ka) and (b in k)==bool(kb)]
-        if vs: q[(ka,kb)] = sum(vs)/len(vs)
-    if len(q) == 4:
-        it = q[(1,1)]-q[(1,0)]-q[(0,1)]+q[(0,0)]
-        print(f"    {a:12s} x {b:12s} {it:+7.2f}" + ("  <<< non-additive" if abs(it)>0.5 else ""))
-print("  main effects average 8 cells each, so they are far steadier than OFAT's")
-print("  single-cell deltas. Best cells still need seeded success evals.")
+# success per cell (the objective); E_final kept as a secondary diagnostic
+scells = {}
+for c in range(1 << NF):
+    on = [facs[i] for i in range(NF) if (c >> i) & 1]
+    s = succ("fx_" + (".".join(on) if on else "none"))
+    if s is not None: scells[frozenset(on)] = s
+print(f"=== PLDM 2^{NF} FACTORIAL (frozen PLDM, held-out, EGL, seed 0) ===")
+print(f"  cells: E_final {len(cells)}/{1<<NF}, success {len(scells)}/{1<<NF}")
+print(f"  reference: 20-seed LIP 72.8 | TD+CEM 73.3 | latent+CEM 66.7")
+print(f"  {'cell':38s} {'success':>8s} {'E_final':>8s}")
+for k in sorted(scells, key=lambda s: -scells[s]):
+    print(f"    {'+'.join(sorted(k)) or '(none)':38s} {scells[k]:8.1f} {cells.get(k, float('nan')):8.2f}")
+def effects(d, label, unit):
+    print(f"  --- main effects on {label} (ON minus OFF) ---")
+    for f in facs:
+        on  = [v for k, v in d.items() if f in k]
+        off = [v for k, v in d.items() if f not in k]
+        if on and off:
+            print(f"    {f:12s} {sum(on)/len(on)-sum(off)/len(off):+7.2f} {unit}  (n={len(on)}/{len(off)})")
+    print(f"  --- pairwise interactions on {label} ---")
+    for a, b in itertools.combinations(facs, 2):
+        q = {}
+        for ka, kb in itertools.product([0,1],[0,1]):
+            vs = [v for k, v in d.items() if (a in k)==bool(ka) and (b in k)==bool(kb)]
+            if vs: q[(ka,kb)] = sum(vs)/len(vs)
+        if len(q) == 4:
+            it = q[(1,1)]-q[(1,0)]-q[(0,1)]+q[(0,0)]
+            big = abs(it) > (2.0 if unit == "pts" else 0.5)
+            print(f"    {a:12s} x {b:12s} {it:+7.2f} {unit}" + ("  <<< non-additive" if big else ""))
+if scells: effects(scells, "SUCCESS", "pts")
+if cells:  effects(cells,  "E_final (diagnostic only)", "   ")
+print("  Effects average 8 cells each -- far steadier than OFAT single-cell deltas.")
+print("  SUCCESS is the objective: the opt-capacity card showed iters32 with the")
+print("  lowest E_final and the WORST success, so an E_final ranking cannot pick")
+print("  a winner. Single seed still, so the top cell needs seeds before belief.")
 print("PLDM_FACTORIAL_DONE")
 PY
 fi
