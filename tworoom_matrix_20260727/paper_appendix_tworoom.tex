@@ -70,8 +70,9 @@ controller & horizon $N{=}5$ blocks, replan interval $5$ blocks, $10$ environmen
 episodes per cell & $50$ \\
 seeds & task draw $42,43,44$; initialisation $0,1,2$ (DINO-WM planner: $0$) \\
 reported cell & mean over $3$ runs (untrained arms) or $9$ (learned arms) \\
-calibration & published $h25$ $87$/$97$/$100$, reproduced at $89.3$/$96.7$/$100.0$;
-              no-move $8.0$, random $28.0$ \\
+calibration & published $h25$ $87$/$97$/$100$, reproduced at
+              $86.7$/$97.3$/$100.0$ at the same budget ($89.3$/$96.7$/$100.0$ at
+              $30$ iterations); no-move $8.0$, random $28.0$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -144,6 +145,28 @@ wall-clock / seed & $90$ s \,/\, $22$ min & $58$ min \,/\, $4$ h & $12$ min \,/\
 \end{tabular}
 \end{table}
 
+\begin{table}[h]
+\centering\small
+\caption{RLP budget sweep, value metric throughout, $n{=}9$ per cell. $K{=}4$
+and $K{=}2$ re-run the \emph{same} $K{=}8$ planner with the iteration count
+reduced at deployment: the refiner is weight-tied, so depth is a runtime
+argument and no retraining is involved. Halving to $K{=}4$ is free on both
+models; halving again costs $3.8$ points on PLDM, whose latent is the weaker of
+the two, and nothing on LeWM. For comparison, CEM between $10$ and $30$
+iterations ($3{,}000 \to 9{,}000$ queries) moves no cell by more than $2.6$.}
+\begin{tabular}{lrcccc}
+\toprule
+& queries & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+ & / dec. & $h25$ & $h50$ & $h25$ & $h50$ \\
+\midrule
+RLP $K{=}8$ & ${\sim}16$ & 100.0 & 100.0 & 97.1 & 98.9 \\
+RLP $K{=}4$ & ${\sim}8$  & 100.0 & 100.0 & 96.7 & 99.6 \\
+RLP $K{=}2$ & ${\sim}4$  & 99.1  & 100.0 & 93.3 & 97.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Caches.}
 Critic training uses a stride-$1$ latent cache so $n$-step targets see every
 transition; planner rollout contexts use stride $5$ (one latent per action
@@ -183,6 +206,12 @@ Hardware: $4\times$H100 80 GB.
     ten): $\approx\!0.27$ GB per retained candidate over a $\approx\!25$ GB
     base puts $200$ candidates at $78.5$ GB. Environment chunking does not
     change the algorithm but does change the random realisation.
+  \item \textbf{Two DINO-WM cells not run.} Value metric $\times$ \{Adam,
+    MPPI\} on DINO-WM (marked n/r) were never executed: at
+    $\approx\!2.5$ h and $\approx\!34$ min per evaluation respectively, times
+    $9$ draws $\times$ $2$ horizons, they cost ${\approx}14$ GPU-hours to fill and
+    support no claim---MPPI is untuned and Adam ranks below CEM on both other
+    models. They are absent, not withheld.
   \item \textbf{No held-out split.} Every learned component is fit on
     latents from the episodes the evaluation draws tasks from
     (Section~\ref{sec:tworoom}, Limitations).

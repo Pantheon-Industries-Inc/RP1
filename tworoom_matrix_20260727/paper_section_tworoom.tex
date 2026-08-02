@@ -28,27 +28,27 @@ undiscounted, expectile $0.1$). Evaluation replays offline trajectories
 ($10{,}000$ episodes): start $=$ row $t$, goal $=$ row $t+\Delta$, so $\Delta$
 sets the goal distance. We report $\Delta = 25$ ($h25$, one horizon) and
 $\Delta = 50$ ($h50$, two), $50$ tasks per cell, $3$ task seeds $\times$ $3$
-initializations for every learned component. All three models reproduce their
-published $h25$ rates (ours vs.\ reported: PLDM $96.7/97$, LeWM $89.3/87$,
-DINO-WM $100.0/100$).
+initializations for every learned component. At the benchmark's own planning
+budget all three models reproduce their published $h25$ rates to within
+$0.3$ points (ours vs.\ reported: LeWM $86.7/87$, PLDM $97.3/97$, DINO-WM
+$100.0/100$).
 
 \begin{table}[t]
 \centering
 \caption{TwoRoom success rate (\%) and world-model queries per decision, at
 goal distances of one ($h25$) and two ($h50$) planning horizons. Latent-distance
 rows average $3$ task seeds, learned rows $3$ task seeds $\times$ $3$
-initializations (DINO-WM RLP: one). Queries count rollout-equivalents:
-candidates $\times$ iterations for the samplers, ${\sim}2$ per RLP step
-(forward unroll $+$ backward pass). RLP $K{=}4,2$ truncate the \emph{same}
-$K{=}8$ planner at deployment---the refiner is weight-tied, so depth is a
-runtime argument---except DINO-WM $K{=}4$, which is separately trained.
-The reactive policy is trained by the same first-order objective through the
-same frozen model against the same critic, emitting a plan in one pass instead
-of refining; replanning every block rather than every $5$ changes it by at most
-$+5.6$. At the benchmark's $10$ CEM iterations ($3{,}000$ queries) the CEM rows
-read $86.7/54.0$, $97.3/76.7$, $100.0/99.3$ and $100.0/100.0$, $98.2/99.1$,
-$100.0/100.0$: no cell moves by more than $2.6$. MPPI is at library defaults,
-never tuned---a lower bound. Dashes: not run.}
+initialisations (DINO-WM RLP: one). Queries count rollout-equivalents:
+candidates $\times$ iterations for the samplers, ${\sim}2$ per RLP refinement
+step. CEM runs at the benchmark's $10$ iterations; at $30$ its rows read
+$89.3/54.7$, $96.7/77.3$, $100.0/98.0$ (latent) and $100.0/99.8$, $98.7/99.6$,
+$99.8/100.0$ (value metric), i.e.\ no cell moves by more than $2.6$ for
+$3\times$ the search. RLP is $K{=}4$: for LeWM and PLDM a deployment-time
+truncation of the $K{=}8$ planner, for DINO-WM a separately trained one; the
+budget sweep is in Appendix~\ref{app:tworoom}. The reactive policy emits its
+plan in one pass; replanning every action block rather than every $5$ changes it
+by at most $+5.6$. MPPI is at library defaults, never tuned---a lower bound.
+n/r: not run.}
 \label{tab:tworoom}
 \begin{tabular}{lrcccccc}
 \toprule
@@ -57,18 +57,16 @@ never tuned---a lower bound. Dashes: not run.}
 planner & / dec. & $h25$ & $h50$ & $h25$ & $h50$ & $h25$ & $h50$ \\
 \midrule
 \multicolumn{8}{l}{\emph{latent distance}} \\
-\quad CEM  & $9{,}000$ & 89.3 & 54.7 & 96.7 & 77.3 & \textbf{100.0} & 98.0 \\
+\quad CEM  & $3{,}000$ & 86.7 & 54.0 & 97.3 & 76.7 & \textbf{100.0} & 99.3 \\
 \quad Adam & $3{,}000$ & 92.0 & 67.3 & 92.0 & 72.0 & 96.7 & 95.3 \\
 \quad MPPI & $9{,}000$ & 65.3 & 47.3 & 71.3 & 55.3 & 95.3 & 96.7 \\
 \midrule
 \multicolumn{8}{l}{\emph{value metric}} \\
-\quad CEM  & $9{,}000$ & \textbf{100.0} & 99.8 & \textbf{98.7} & 99.6 & 99.8 & \textbf{100.0} \\
-\quad Adam & $3{,}000$ & 96.4 & 96.0 & 96.0 & 95.3 & --- & --- \\
-\quad MPPI & $9{,}000$ & 87.1 & 87.1 & 83.1 & 83.8 & --- & --- \\
-\quad \textbf{RLP} $K{=}8$ & ${\sim}16$ & \textbf{100.0} & \textbf{100.0} & 97.1 & 98.9 & 99.3 & 99.3 \\
-\quad \textbf{RLP} $K{=}4$ & ${\sim}8$  & \textbf{100.0} & \textbf{100.0} & 96.7 & \textbf{99.6} & 98.7 & \textbf{100.0} \\
-\quad \textbf{RLP} $K{=}2$ & ${\sim}4$  & 99.1 & \textbf{100.0} & 93.3 & 97.8 & --- & --- \\
-\quad reactive policy      & $0$        & 38.0 & 22.9 & 31.8 & 14.9 & 36.0 & 20.7 \\
+\quad CEM  & $3{,}000$ & \textbf{100.0} & \textbf{100.0} & \textbf{98.2} & 99.1 & \textbf{100.0} & \textbf{100.0} \\
+\quad Adam & $3{,}000$ & 96.4 & 96.0 & 96.0 & 95.3 & n/r & n/r \\
+\quad MPPI & $9{,}000$ & 87.1 & 87.1 & 83.1 & 83.8 & n/r & n/r \\
+\quad \textbf{RLP (ours)} & ${\sim}8$ & \textbf{100.0} & \textbf{100.0} & 96.7 & \textbf{99.6} & 98.7 & \textbf{100.0} \\
+\quad Reactive policy & $0$ & 38.0 & 22.9 & 31.8 & 14.9 & 36.0 & 20.7 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -77,15 +75,15 @@ planner & / dec. & $h25$ & $h50$ & $h25$ & $h50$ & $h25$ & $h50$ \\
 Read at $h25$ alone---the horizon these benchmarks publish---the two costs in
 Table~\ref{tab:tworoom} look interchangeable and every model looks solved
 ($89$--$100$). Doubling the goal distance separates them: under the latent
-distance CEM loses $34.6$ points on LeWM and $19.4$ on PLDM, while under the
+distance CEM loses $32.7$ points on LeWM and $20.6$ on PLDM, while under the
 value metric nothing degrades. This is a property of the objective, not of
 tuning. Squared latent distance measures how similar two encodings look, which
 tracks reachability only locally; as the goal recedes its minimizer stops being
 the plan that arrives. A quasimetric fit to temporal distance orders states by
 steps-to-go by construction. How much that is worth scales inversely with the
-latent: the $192$-d single-token models lose $34.6$ and $19.4$ points and gain
-$45.1$ and $22.3$ from the critic, whereas DINO-WM's $196$ tokens lose $2.0$ and
-gain $2.0$. The converse also holds---on a latent rich enough to make the native
+latent: the $192$-d single-token models lose $32.7$ and $20.6$ points and gain
+$46.0$ and $22.4$ from the critic, whereas DINO-WM's $196$ tokens lose $0.7$ and
+gain $0.7$. The converse also holds---on a latent rich enough to make the native
 distance informative even the untuned sampler succeeds ($95.3/96.7$ on DINO-WM
 against $65.3/47.3$ on LeWM)---so the critic is not what makes planning work in
 general, but what makes it work on representations that do not already encode
@@ -93,9 +91,10 @@ the geometry.
 
 \paragraph{Refinement, not the critic alone, buys the search budget back.}
 Holding the cost fixed at the value metric and varying only the query budget,
-RLP matches CEM to within noise at ${\sim}190\times$ fewer queries, and degrades
-gracefully: $K$ halves to $4$ for free on both single-token models and to $2$ at
-a cost of $3.8$ points on PLDM and none on LeWM. CEM's own knob does nothing
+RLP matches CEM to within noise at ${\sim}375\times$ fewer queries, and its
+budget knob degrades gracefully: the $K{=}8$ planner truncates to $K{=}4$ for
+free on both single-token models and to $K{=}2$ at a cost of $3.8$ points on
+PLDM and none on LeWM (Appendix~\ref{app:tworoom}). CEM's own knob does nothing
 between $10$ and $30$ iterations---$6{,}000$ wasted rollouts. The last row
 replaces the recursion with direct amortisation: a policy trained by the same
 first-order objective through the same frozen model against the same critic,
