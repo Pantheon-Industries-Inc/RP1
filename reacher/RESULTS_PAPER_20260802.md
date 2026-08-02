@@ -301,12 +301,28 @@ and the co-trained critic barely moved it — consistent with §3: that critic i
 the same TD fit with more steps on the same cached data, having never seen
 actor-visited states.
 
-The interpretation is that a learned quasimetric needs **more refinement** than
-a smooth L2 cost to be exploited: the same 300 samples, three times the
-iterations. It does **not** enter the main table, because n_steps 30 is
-300 × 30 = **9000 rollouts** against every other row's 3000. A matched
-Latent+CEM at n_steps 30 is required before the comparison is fair; that run is
-pending at the time of writing.
+n_steps 30 is 300 × 30 = **9000 rollouts** against every other row's 3000, so
+the bar was given the same budget for a matched comparison:
+
+| @0.1 | rollouts/step | LeWM | PLDM |
+|---|---|---|---|
+| **LIP** | **~16** | **98.2** | **94.2** |
+| Latent + CEM | 3000 | 84.3 | 78.3 |
+| **Latent + CEM** | **9000** | **87.3** | **84.0** |
+| Value + CEM | 3000 | 51.3 | 51.3 |
+| **Value + CEM** | **9000** | **63.3** | **57.3** |
+
+**Tripling the baseline's budget does not close the gap.** At 9000 rollouts —
+**562× LIP's ~16** — Latent+CEM reaches 87.3 / 84.0 and LIP still leads by
+**+10.9 / +10.2**. This answers the natural objection to a compute-efficiency
+claim ("then give the sampler more compute"): the margin is not an artifact of
+under-resourcing the baseline.
+
+On the refinement question itself the two bases disagree, so it should not be
+over-generalised. LeWM behaves as the "learned quasimetric needs more
+iterations" story predicts (+12.0 for the learned value against +3.0 for the
+bar); PLDM does not (+6.0 against +5.7 — more refinement simply helps
+everything). The ordering Latent+CEM ≫ Value+CEM is unchanged at both budgets.
 
 ### 6.8 Dyna (world-model fine-tuning) — negative
 
