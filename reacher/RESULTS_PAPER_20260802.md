@@ -284,7 +284,12 @@ mode rather than an arbitrary tuning choice.
 dense objective — 8× LIP's budget and a different objective. It is not a valid
 baseline and is not the table row.)*
 
-### 6.7 Value+CEM is refinement-limited, not value-limited
+### 6.7 Refinement budget — appendix only, the table stays at 3000
+
+**All reported numbers use CEM/Adam at 300 samples × 10 iterations = 3000
+rollouts.** That is the paper's configuration and the canonical budget for every
+row in §5. The 9000-rollout figures below exist solely as a robustness check and
+do not enter any table.
 
 The Value+CEM row (51.3 / 51.3) was suspected of understating the learned value.
 Three candidate causes were tested; only one mattered.
@@ -301,22 +306,21 @@ and the co-trained critic barely moved it — consistent with §3: that critic i
 the same TD fit with more steps on the same cached data, having never seen
 actor-visited states.
 
-n_steps 30 is 300 × 30 = **9000 rollouts** against every other row's 3000, so
-the bar was given the same budget for a matched comparison:
+n_steps 30 is 300 × 30 = **9000 rollouts**, 3× the canonical budget, so the bar
+was given the same treatment for a matched robustness check (appendix figures,
+not table rows):
 
-| @0.1 | rollouts/step | LeWM | PLDM |
-|---|---|---|---|
-| **LIP** | **~16** | **98.2** | **94.2** |
-| Latent + CEM | 3000 | 84.3 | 78.3 |
-| **Latent + CEM** | **9000** | **87.3** | **84.0** |
-| Value + CEM | 3000 | 51.3 | 51.3 |
-| **Value + CEM** | **9000** | **63.3** | **57.3** |
+| @0.1, 9000 rollouts | LeWM | PLDM |
+|---|---|---|
+| Latent + CEM | 87.3 *(3000: 84.3)* | 84.0 *(3000: 78.3)* |
+| Value + CEM | 63.3 *(3000: 51.3)* | 57.3 *(3000: 51.3)* |
 
 **Tripling the baseline's budget does not close the gap.** At 9000 rollouts —
-**562× LIP's ~16** — Latent+CEM reaches 87.3 / 84.0 and LIP still leads by
-**+10.9 / +10.2**. This answers the natural objection to a compute-efficiency
-claim ("then give the sampler more compute"): the margin is not an artifact of
-under-resourcing the baseline.
+562× LIP's ~16 — Latent+CEM reaches 87.3 / 84.0 while LIP (still ~16 rollouts)
+leads by **+10.9 / +10.2**. This answers the natural objection to a
+compute-efficiency claim ("then give the sampler more compute"): the margin is
+not an artifact of under-resourcing the baseline. It is a robustness note; the
+reported comparison remains at 3000 for every arm.
 
 On the refinement question itself the two bases disagree, so it should not be
 over-generalised. LeWM behaves as the "learned quasimetric needs more
