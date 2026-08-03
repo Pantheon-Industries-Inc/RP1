@@ -1,0 +1,24 @@
+[23:00:05] === dyna video capture start ===
+[23:00:13] pre_s2_e44: EP_RANGE NOT APPLIED
+[23:00:22] post_s2_e44: EP_RANGE NOT APPLIED
+[23:00:33] pre_s1_e42: EP_RANGE NOT APPLIED
+[23:00:41] post_s1_e42: EP_RANGE NOT APPLIED
+[23:00:41] DYNAVID_CAPTURE_DONE
+[23:02:00] === dyna video capture start ===
+[23:02:12] pre_s2_e44: EP_RANGE NOT APPLIED
+[23:02:21] post_s2_e44: EP_RANGE NOT APPLIED
+[23:02:28] pre_s1_e42: EP_RANGE NOT APPLIED
+[23:02:34] post_s1_e42: EP_RANGE NOT APPLIED
+[23:02:34] DYNAVID_CAPTURE_DONE
+[23:06:38] === dyna video capture start ===
+[23:08:25] pre_s2_e44 = FAIL  (107s, 0 mp4s)
+[23:09:59] post_s2_e44 = FAIL  (94s, 0 mp4s)
+[23:11:19] pre_s1_e42 = FAIL  (80s, 0 mp4s)
+[23:11:20] post_s1_e42: EP_RANGE NOT APPLIED
+[23:11:20] DYNAVID_CAPTURE_DONE
+[23:12:08] === dyna video capture start ===
+[23:14:39] pre_s2_e44 = 80.0  (151s, 50 mp4s)
+[23:16:51] post_s2_e44 = 92.0  (132s, 50 mp4s)
+[23:19:41] pre_s1_e42 = 90.0  (170s, 50 mp4s)
+[23:22:24] post_s1_e42 = 98.0  (163s, 50 mp4s)
+[23:22:24] DYNAVID_CAPTURE_DONE

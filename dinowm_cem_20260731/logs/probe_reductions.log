@@ -1,0 +1,16 @@
+2026-07-31 03:53:56.803 | INFO     | stable_worldmodel.wm.utils:_resolve_folder:138 - Loading checkpoint from folder /workspace/ckpts/dinowm_noprop_cube...
+/workspace/code/stable-worldmodel/stable_worldmodel/wm/utils.py:81: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(checkpoint_path, map_location='cpu')
+03:54:04 | INFO  | atomic_chec~| [atomic_save] installed crash-safe checkpoint plugin (write to sibling .tmp + fsync + atomic rename)
+[probe] 8000 train frames (eps <8000), 4000 test frames (eps >=8000)
+[probe] encoding tokens...
+[probe] tokens train (8000, 196, 384) test (4000, 196, 384)
+[probe] channel PCA cumulative explained variance: k=8:0.644 k=16:0.757 k=32:0.843 k=64:0.909 k=128:0.958
+
+representation                          cube xyz R2              effector xyz R2
+full (75264)              0.971  0.995  0.960 | mean  0.976    0.994  0.999  0.996 | mean  0.996
+proj k=8 (1568)           0.942  0.986  0.843 | mean  0.923    0.982  0.998  0.978 | mean  0.986
+proj k=16 (3136)          0.950  0.989  0.904 | mean  0.948    0.987  0.998  0.987 | mean  0.991
+proj k=32 (6272)          0.954  0.991  0.926 | mean  0.957    0.989  0.999  0.991 | mean  0.993
+grid4x4 (6144)            0.945  0.990  0.934 | mean  0.956    0.988  0.998  0.990 | mean  0.992
+meanpool (384)            0.899  0.957  0.890 | mean  0.915    0.964  0.987  0.969 | mean  0.973

@@ -1,0 +1,4 @@
+2026-07-31 03:25:01.551 | INFO     | __main__:main:90 - loaded cache: 1608000 latents dim=384 on cuda
+[td] lr=0.001 wd=0.0001 polyak_tau=0.005 expectile=0.03
+2026-07-31 03:27:03.743 | SUCCESS  | stable_worldmodel.trm.learners.td:fit:170 - TD trained (n=50 γ=1.0 head=quasimetric), final loss=0.9660
+2026-07-31 03:27:03.783 | SUCCESS  | __main__:main:148 - saved td metric -> /workspace/metrics/dino_td_canon.pt

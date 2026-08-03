@@ -1,0 +1,30 @@
+[03:36:55] === TD sweep: expectile x lr, 12 cells, canonical head/n-step/steps ===
+[03:44:19]   trained: 12/12
+[03:44:19] === offline screen on held-out episodes >= 8000 ===
+[03:44:29]   e0.01_lr3e-4 spearman=0.3877 pair_acc=0.6422 monotone=0.5976
+[03:44:38]   e0.01_lr1e-3 spearman=0.3886 pair_acc=0.6408 monotone=0.6111
+[03:44:50]   e0.01_lr3e-3 spearman=0.3573 pair_acc=0.6278 monotone=0.5634
+[03:45:00]   e0.03_lr3e-4 spearman=0.4057 pair_acc=0.6481 monotone=0.6035
+[03:45:15]   e0.03_lr1e-3 spearman=0.4126 pair_acc=0.6534 monotone=0.6381
+[03:45:28]   e0.03_lr3e-3 spearman=0.3903 pair_acc=0.6422 monotone=0.5561
+[03:45:42]   e0.1_lr3e-4 spearman=0.4342 pair_acc=0.6644 monotone=0.5934
+[03:45:55]   e0.1_lr1e-3 spearman=0.4372 pair_acc=0.6659 monotone=0.5745
+[03:46:04]   e0.1_lr3e-3 spearman=0.4231 pair_acc=0.6590 monotone=0.5545
+[03:46:16]   e0.5_lr3e-4 spearman=0.3748 pair_acc=0.6327 monotone=0.5394
+[03:46:31]   e0.5_lr1e-3 spearman=0.3740 pair_acc=0.6330 monotone=0.5398
+[03:46:40]   e0.5_lr3e-3 spearman=0.3809 pair_acc=0.6354 monotone=0.5364
+[03:46:40] 
+[03:46:40] === screen ranked by pair_acc (planner-relevant ordering) ===
+e0.1_lr1e-3,0.4372,0.6659,0.5745
+e0.1_lr3e-4,0.4342,0.6644,0.5934
+e0.1_lr3e-3,0.4231,0.6590,0.5545
+e0.03_lr1e-3,0.4126,0.6534,0.6381
+e0.03_lr3e-4,0.4057,0.6481,0.6035
+e0.03_lr3e-3,0.3903,0.6422,0.5561
+e0.01_lr3e-4,0.3877,0.6422,0.5976
+e0.01_lr1e-3,0.3886,0.6408,0.6111
+e0.5_lr3e-3,0.3809,0.6354,0.5364
+e0.5_lr1e-3,0.3740,0.6330,0.5398
+e0.5_lr3e-4,0.3748,0.6327,0.5394
+e0.01_lr3e-3,0.3573,0.6278,0.5634
+[03:46:40] DINO_TD_SWEEP_DONE
