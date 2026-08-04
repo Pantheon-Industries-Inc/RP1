@@ -1,0 +1,116 @@
+% Cube h25, PRE and POST-Dyna at expand-weight 3.0. Complete 2026-08-04.
+% 108 POST cells, 0 FAIL. Easy = raw; Hard = floor-normalised:
+%     hard = 100 * (score - floor) / (100 - floor),  per task seed, then averaged.
+% Plain subtraction is only valid WITHIN one horizon; h25 and h100 floors differ
+% (54.67 vs 44.67), so subtracted values are not comparable across them.
+%
+% Preamble needs:
+%   \usepackage{booktabs}
+%   \newcommand{\tsd}[1]{{\scriptsize$\pm$#1}}
+\begin{table}[t]
+\centering
+\caption{Cube success rate at $\Delta = 25$ (one planning horizon), before and
+after one round of world-model fine-tuning \eqref{eq:dyna-fixpoint}.
+\textbf{Easy} is the raw success rate (\%) as the benchmark defines it.
+\textbf{Hard} is the fraction of \emph{attainable} headroom captured,
+$100\,(\text{score}-\text{floor})/(100-\text{floor})$, where the floor is a
+zero-action policy on this identical eval: $54.7$ (per task seed
+$58.0/52.0/54.0$), leaving $45.3$ points of headroom. Success is recorded the
+moment the cube falls inside OGBench's $0.04$\,m threshold (the eval runs with
+\texttt{terminate\_at\_goal}, and \texttt{episode\_successes} is the
+early-termination flag), so with a $25$-step goal offset a zero-action policy
+succeeds on every task whose start already lies inside that threshold. More than
+half of every raw score is therefore obtainable without moving.
+Each cell is normalised against its own task seed's floor before averaging, so
+Hard standard deviations are rescaled and exceed the Easy ones. All rows are $3$
+planner seeds $\times$ $3$ task seeds (seed s.d.\ in parentheses); latent-distance
+rows have no planner seed and average $3$ task seeds. Post-Dyna columns share the
+fine-tuned model with every row in that column, including the parameter-free
+latent-distance baseline. Queries count world-model rollouts per decision: $300$
+candidates $\times\,10$ iterations for CEM, and for RLP $8$ refinements $\times$
+(one gradient unroll $+$ one no-gradient unroll) $+\,1$ selection unroll $=17$
+forward rollouts and $8$ backward passes ($\approx\!33$ forward-equivalents). A
+decision spans $25$ primitive steps, so each search planner makes two per
+episode; the reactive policy replans every action block --- its natural setting,
+and the one in which it issues \emph{no} world-model queries --- and so makes ten.}
+\label{tab:cube-h25}
+\begin{tabular}{lrcccc}
+\toprule
+& queries & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+planner & / dec. & pre-Dyna & post-Dyna & pre-Dyna & post-Dyna \\
+\midrule
+\multicolumn{6}{l}{\emph{Easy: raw success rate, floor included}} \\
+\quad do-nothing floor        & $0$       & 54.7 & 54.7 & 54.7 & 54.7 \\
+\quad latent distance $+$ CEM & $3{,}000$ & 78.7 & 80.7 & 69.3 & 74.7 \\
+\quad value metric $+$ CEM    & $3{,}000$ & 85.1 \tsd{1.7} & 89.3 \tsd{0.7} & 80.7 \tsd{2.0} & \textbf{88.4} \tsd{0.8} \\
+\quad Reactive Policy         & $0$       & 74.9 \tsd{16.4} & 57.1 \tsd{2.5} & 39.3 \tsd{7.0} & 42.4 \tsd{6.8} \\
+\quad \textbf{RLP (ours)}     & $17$      & \textbf{90.0} \tsd{0.7} & \textbf{93.1} \tsd{1.0} & \textbf{84.0} \tsd{2.0} & 86.7 \tsd{1.2} \\
+\midrule
+\multicolumn{6}{l}{\emph{Hard: fraction of attainable headroom (\%)}} \\
+\quad latent distance $+$ CEM & $3{,}000$ & 53.1 & 57.3 & 32.5 & 43.6 \\
+\quad value metric $+$ CEM    & $3{,}000$ & 67.1 \tsd{3.6} & 76.6 \tsd{1.5} & 57.4 \tsd{4.5} & \textbf{74.7} \tsd{1.8} \\
+\quad Reactive Policy         & $0$       & 44.2 \tsd{36.0} & 5.2 \tsd{5.7} & $<0^{\dagger}$ & $<0^{\dagger}$ \\
+\quad \textbf{RLP (ours)}     & $17$      & \textbf{78.1} \tsd{1.6} & \textbf{84.8} \tsd{2.3} & \textbf{64.9} \tsd{4.4} & 70.7 \tsd{2.5} \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\footnotesize $^{\dagger}$The reactive policy scores below the do-nothing floor
+on PLDM ($-15.3$ points pre-Dyna, $-12.2$ post). The headroom normalisation is
+undefined there: its denominator $100-\text{floor}$ measures upside only, so
+applied to a sub-floor deficit it both inflates the magnitude and fails to
+converge across task seeds. Treat the policy as harmful rather than weak on this
+base.}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% THE RESULT THAT CHANGES THE FRAMING
+%
+% Dyna helps the SEARCH planners more than it helps RLP, and on PLDM it overturns
+% the ordering. RLP minus value-metric+CEM-3k, paired by planner seed:
+%
+%          PRE                        POST
+%   LeWM   +4.89  t=5.50  3/3 pos     +3.78  t=3.90  3/3 pos
+%   PLDM   +3.33  t=2.89  3/3 pos     -1.78  t=-1.84  0/3 pos   <-- RLP LOSES
+%
+% Per-planner Dyna deltas (paired, LeWM / PLDM):
+%   RLP                 +3.11 / +2.67
+%   value metric + CEM  +4.22 / +7.78
+%   value metric + Adam +5.78 / +12.00
+%   latent + CEM        +2.00 / +5.33
+%
+% So the fine-tune improves the MODEL, and a search planner converts model
+% quality into score more directly than an amortised refiner whose actor was
+% distilled against the old dynamics. Every RLP-vs-search margin shrinks
+% post-Dyna; none grows. Do not claim Dyna widens RLP's advantage -- it narrows
+% it. The PLDM flip is not significant at 3 seeds (t=-1.84, df=2 needs 4.30) but
+% it is a clean sign reversal (3/3 -> 0/3). SIX SEEDS WOULD RESOLVE IT and that is
+% the highest-value remaining run.
+%
+% Dyna itself replicates: LeWM RLP 90.00 -> 93.11 (+3.11, t=3.21, 3/3), against
+% +3.33 at the old expand-1.0 point.
+%
+% OTHER NOTES
+%
+% 1. The reactive policy COLLAPSES on LeWM post-Dyna: 74.9 -> 57.1 (-17.78), i.e.
+%    44.2% -> 5.2% of headroom, essentially the do-nothing floor. This is not
+%    staleness -- PWM is retrained against the fine-tuned WM. Its seed spread also
+%    inverts (pre sd 16.4 with seeds 56.0/85.3/83.3; post sd 2.5, uniformly bad),
+%    so the fine-tune destroyed the two good pre seeds. PWM's own amax was never
+%    tuned; that is the first suspect. Flag it, do not hide it.
+%
+% 2. CEM at 3,000 queries BEATS CEM at 9,000 on the learned metric by +3.7
+%    (paired, n=12 pre, t=4.10, 11/12 positive), so the value-metric row is quoted
+%    at 3,000. At 9,000 it reads 82.4 -> 87.3 (LeWM) and 74.9 -> 84.4 (PLDM).
+%    Quoting the baseline at 9,000 flatters RLP by ~3 points.
+%
+% 3. RLP's query count is 17, not ~16: two unrolls per refinement iteration plus a
+%    selection unroll. Earlier drafts counted 8 x (forward + backward) only.
+%
+% 4. Prefer deltas or headroom fractions over ratios. Absolute differences are
+%    identical in Easy and Hard; only ratios move.
+%
+% 5. The LeWM encoder was pretrained on all 10,000 episodes while the eval draws
+%    8000:10000. Planner and critic see only 0:8000, but the representation has
+%    seen the eval frames -- upper bounds w.r.t. world-model pretraining.
