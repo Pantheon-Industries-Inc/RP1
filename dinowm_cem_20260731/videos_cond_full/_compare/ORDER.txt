@@ -1,0 +1,4 @@
+left to right:
+1. fx96_ctrl
+2. cond_raw24k
+3. cond_wh24_6k
