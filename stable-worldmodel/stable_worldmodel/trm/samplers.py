@@ -192,11 +192,18 @@ class NStepGoalSampler(_BaseSampler):
                 g_idx[b] = rows[t + delta]
                 if delta <= ne:                      # goal reached within the n-step window
                     reached[b], dist[b] = 1.0, float(delta)
-        return {
+        out = {
             "z_t": self.z[t_idx], "z_tn": self.z[tn_idx], "z_g": self.z[g_idx],
             "n_eff": torch.from_numpy(n_eff), "reached": torch.from_numpy(reached),
             "dist": torch.from_numpy(dist),
         }
+        # Row indices, so a learner can look up ground-truth state (qpos) and
+        # build a reward from it. The distance learners never needed this: a
+        # quasimetric target is pure step counting.
+        out["t_idx"] = torch.from_numpy(t_idx)
+        out["tn_idx"] = torch.from_numpy(tn_idx)
+        out["g_idx"] = torch.from_numpy(g_idx)
+        return out
 
 
 class GeometricFutureSampler(_BaseSampler):

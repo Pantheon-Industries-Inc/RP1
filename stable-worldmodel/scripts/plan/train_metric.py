@@ -30,6 +30,7 @@ from stable_worldmodel.trm.io import CompressedMetric, compress_arch, projection
 from stable_worldmodel.trm.learners.contrastive import ContrastiveConfig
 from stable_worldmodel.trm.learners.regression import RegressionConfig
 from stable_worldmodel.trm.learners.td import TDConfig
+from stable_worldmodel.trm.learners.dwell import DwellConfig
 
 
 def pick_device(name: str = "auto") -> str:
@@ -45,7 +46,7 @@ def pick_device(name: str = "auto") -> str:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--cache", required=True)
-    p.add_argument("--learner", required=True, choices=["regression", "td", "contrastive"])
+    p.add_argument("--learner", required=True, choices=["regression", "td", "contrastive", "dwell"])
     p.add_argument("--out", required=True)
     p.add_argument("--steps", type=int, default=5000)
     p.add_argument("--batch-size", type=int, default=1024)
@@ -61,6 +62,8 @@ def main():
     p.add_argument("--head", choices=["mlp", "quasimetric"], default="quasimetric")
     p.add_argument("--symmetric", action="store_true", help="mlp head: symmetrize d(x,y)")
     p.add_argument("--n-step", type=int, default=5)
+    p.add_argument("--tol", type=float, default=0.05,
+                   help="dwell: per-joint tolerance for r=1{in ball}; match the eval criterion")
     p.add_argument("--p-cross", type=float, default=0.3)
     p.add_argument("--embed-dim", type=int, default=128)
     p.add_argument("--no-balanced", action="store_true")
@@ -109,6 +112,17 @@ def main():
         module = learners.td.fit(cache, cfg, device)
         arch = {"head": args.head, "hidden_dim": args.hidden_dim, "depth": args.depth,
                 "embed_dim": args.embed_dim, "softplus": True, "symmetric": args.symmetric}
+    elif args.learner == "dwell":
+        # discounted dwell: value = time SPENT on target, not time TO target
+        cfg = DwellConfig(
+            hidden_dim=args.hidden_dim, depth=args.depth, n_step=args.n_step,
+            gamma=args.gamma, tol=args.tol, p_cross=args.p_cross,
+            balanced=(not args.no_balanced), max_delta=args.max_delta,
+            batch_size=args.batch_size, steps=args.steps, seed=args.seed,
+        )
+        module = learners.dwell.fit(cache, cfg, device)
+        arch = {"kind": "dwell", "hidden_dim": args.hidden_dim,
+                "depth": args.depth, "gamma": args.gamma, "tol": args.tol}
     else:  # contrastive
         cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim, rep_dim=args.rep_dim, depth=args.depth,

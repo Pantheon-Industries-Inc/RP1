@@ -135,6 +135,26 @@ class ReacherDMControlWrapper(DMControlWrapper):
         info['finger_pos'] = self.env.physics.named.data.geom_xpos[
             'finger', :2
         ].copy()
+        # Per-step residency in the tolerance ball, so success can require the
+        # arm to STAY on target rather than merely pass through it. The task
+        # used to end the episode at first contact, which made "holding"
+        # unmeasurable by construction: the arm swings through, the episode
+        # stops, and it scores.
+        if self._task_name == 'qpos_match':
+            tgt = getattr(self.env.task, 'target_qpos', None)
+            if tgt is None:
+                info['qpos_in_ball'] = np.array(False)
+                info['qpos_maxdiff'] = np.array(np.inf)
+            else:
+                diff = np.abs(self.env.physics.data.qpos - tgt)
+                info['qpos_in_ball'] = np.array(
+                    bool(np.all(diff < self.env.task.qpos_threshold))
+                )
+                # Worst joint over the WHOLE arm -- the DINO-WM variant needs
+                # every joint aligned, not just the end effector. Publishing the
+                # scalar lets one run be scored at several tolerances, since
+                # neither paper states which one they used.
+                info['qpos_maxdiff'] = np.array(float(diff.max()))
         return info
 
     def compile_model(self, seed=None, environment_kwargs=None):

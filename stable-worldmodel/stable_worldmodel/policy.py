@@ -31,6 +31,12 @@ class PlanConfig:
     history_len: int = 1
     action_block: int = 1
     warm_start: bool = True
+    # Episode step budget, used ONLY to tell a deadline-aware solver how many
+    # plan chunks remain. The policy is the only object that tracks the step
+    # count, and the solver is the only one that knows the plan layout, so the
+    # number has to be handed across. None => no alignment info is supplied and
+    # every solver behaves exactly as before.
+    eval_budget: int | None = None
 
     @property
     def plan_len(self) -> int:
@@ -335,6 +341,10 @@ class WorldModelPolicy(BasePolicy):
         self.transform = transform or {}
         self._action_buffer: list[deque[torch.Tensor]] | None = None
         self._next_init: torch.Tensor | None = None
+        # real defaults are set in set_env; these keep attribute access safe
+        self._hist_len = 1
+        self._hist_stats = [0, 0]
+        self._hist_announced = False
 
     @property
     def flatten_receding_horizon(self) -> int:
@@ -355,6 +365,27 @@ class WorldModelPolicy(BasePolicy):
         self._action_buffer = [
             deque(maxlen=self.flatten_receding_horizon) for _ in range(n_envs)
         ]
+        # Real conditioning history for the world model. `plan_config` has a
+        # `history_len` field but nothing ever populated it, so at eval the WM
+        # saw ONE frame padded into 3 identical copies with zero action history
+        # -- while it was trained on 3 real frameskip-5 frames plus real
+        # actions. Frames are captured every `action_block` primitive steps so
+        # the spacing matches training, not every replan (which is
+        # `receding_horizon * action_block` steps apart).
+        hist_len = max(int(getattr(self.cfg, 'history_len', 1) or 1), 1)
+        self._hist_len = hist_len
+        self._frame_hist = [deque(maxlen=hist_len) for _ in range(n_envs)]
+        self._proprio_hist = [deque(maxlen=hist_len) for _ in range(n_envs)]
+        # executed primitive actions, enough to rebuild the last hist_len-1 blocks
+        self._prim_hist = [
+            deque(maxlen=max(hist_len - 1, 1) * self.cfg.action_block)
+            for _ in range(n_envs)
+        ]
+        self._step_ct = np.zeros(n_envs, dtype=np.int64)
+        # [replans seen, replans with a GENUINELY full history]. Printed at the
+        # end of a run: if the second number is ~0 the experiment silently did
+        # nothing and any "no effect" conclusion would be worthless.
+        self._hist_stats = [0, 0]
 
         assert isinstance(self.solver, Solver), (
             'Solver must implement the Solver protocol'
@@ -380,8 +411,26 @@ class WorldModelPolicy(BasePolicy):
             for i in range(n_envs):
                 if needs_flush[i]:
                     self._action_buffer[i].clear()
+                    self._frame_hist[i].clear()
+                    self._proprio_hist[i].clear()
+                    self._prim_hist[i].clear()
+                    self._step_ct[i] = 0
                     if self._next_init is not None:
                         self._next_init[i] = 0
+
+        # Capture at frameskip spacing so the stacked history matches what the
+        # WM was trained on. The current frame is appended before planning, so
+        # it is always the most recent entry.
+        if self._hist_len > 1:
+            px_now = info_dict.get('pixels')
+            pro_now = info_dict.get('proprio')
+            for i in range(n_envs):
+                if self._step_ct[i] % self.cfg.action_block != 0:
+                    continue
+                if torch.is_tensor(px_now):
+                    self._frame_hist[i].append(px_now[i, -1])
+                if torch.is_tensor(pro_now):
+                    self._proprio_hist[i].append(pro_now[i, -1])
 
         terminated = info_dict.get('terminated')
         dead = (
@@ -409,11 +458,88 @@ class WorldModelPolicy(BasePolicy):
                 else:
                     sliced[k] = v
 
+            # Stack the real history for the envs that are replanning. Padding
+            # is PER ENV, by repeating that env's oldest available frame -- the
+            # same thing the legacy path did, so a short buffer is never worse,
+            # only less informative. Doing this globally (emit nothing unless
+            # every env is full) would let a single terminating env disable the
+            # feature for the whole rest of the run and fake a null result.
+            # Solvers that do not know these keys ignore them, so CEM/MPPI/Adam
+            # are byte-identical to before.
+            if self._hist_len > 1:
+                n_full = 0
+
+                def _stack(buf: deque, want: int) -> torch.Tensor:
+                    items = list(buf)
+                    if not items:
+                        return None
+                    while len(items) < want:
+                        items.insert(0, items[0])
+                    return torch.stack(items)
+
+                frames = [_stack(self._frame_hist[i], self._hist_len) for i in replan_idx]
+                if all(f is not None for f in frames):
+                    sliced['pixels_hist'] = torch.stack(frames)
+                    n_full = sum(
+                        len(self._frame_hist[i]) == self._hist_len for i in replan_idx
+                    )
+                pro = [_stack(self._proprio_hist[i], self._hist_len) for i in replan_idx]
+                if all(p is not None for p in pro):
+                    sliced['proprio_hist'] = torch.stack(pro)
+
+                block = self.cfg.action_block
+                n_blocks = self._hist_len - 1
+                acts = []
+                for i in replan_idx:
+                    items = list(self._prim_hist[i])
+                    want = n_blocks * block
+                    if len(items) < want:  # start of episode: no actions yet
+                        pad = torch.zeros_like(items[0]) if items else None
+                        if pad is None:
+                            acts.append(None)
+                            continue
+                        items = [pad] * (want - len(items)) + items
+                    acts.append(torch.stack(items[-want:]).reshape(n_blocks, -1))
+                if all(a is not None for a in acts):
+                    sliced['action_hist'] = torch.stack(acts)
+
+                self._hist_stats[0] += len(replan_idx)
+                self._hist_stats[1] += n_full
+                if n_full and not self._hist_announced:
+                    self._hist_announced = True
+                    print(
+                        f'[history] real {self._hist_len}-frame conditioning '
+                        f'engaged: pixels_hist '
+                        f'{tuple(sliced["pixels_hist"].shape)}, action_hist '
+                        f'{tuple(sliced["action_hist"].shape) if "action_hist" in sliced else None}'
+                    )
+                if self._hist_stats[0] and self._hist_stats[0] % 200 == 0:
+                    frac = self._hist_stats[1] / self._hist_stats[0]
+                    print(
+                        f'[history] {self._hist_stats[1]}/{self._hist_stats[0]} '
+                        f'replans had a full history ({frac:.0%})'
+                    )
+
             sliced_init = (
                 self._next_init[idx_tensor]
                 if self._next_init is not None
                 else None
             )
+
+            # Hand the deadline to a solver that asks for it. Guarded on the
+            # method existing so CEM/Adam/PWM are untouched, and on eval_budget
+            # being set so the default path is byte-identical to before.
+            if self.cfg.eval_budget is not None and hasattr(
+                self.solver, 'set_align_remaining'
+            ):
+                block = self.cfg.action_block
+                self.solver.set_align_remaining([
+                    max(
+                        1,
+                        -(-(self.cfg.eval_budget - self._step_ct[i]) // block),
+                    )
+                    for i in replan_idx
+                ])
 
             outputs = self.solver(sliced, init_action=sliced_init)
 
@@ -450,6 +576,9 @@ class WorldModelPolicy(BasePolicy):
         for i in range(n_envs):
             if not dead[i]:
                 action[i] = self._action_buffer[i].popleft()
+                if self._hist_len > 1:
+                    self._prim_hist[i].append(action[i].clone())
+                self._step_ct[i] += 1
 
         action = action.reshape(*self.env.action_space.shape)
         action = action.numpy()

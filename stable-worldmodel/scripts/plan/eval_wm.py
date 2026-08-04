@@ -188,12 +188,30 @@ def run(cfg: DictConfig):
                     self.base, self.metric, self.mode = base, metric, mode
                     self.metrics = torch.nn.ModuleList(metrics or [metric])
                     self.blend_w = 1.0
-                    # history-conditioned metric (input = [z, dz]): detect 2x input dim
-                    self.metric_in = next(
-                        m.in_features
-                        for m in metric.modules()
-                        if isinstance(m, torch.nn.Linear)
-                    )
+                    # Per-side input width, used below to detect a frame-stacked
+                    # (history-conditioned) metric: [z, dz] -> 2x, window -> mx.
+                    # This MUST come from the module's declared contract, never
+                    # from reflection on the first Linear: heads differ in how a
+                    # latent PAIR reaches that layer. QuasimetricHead encodes
+                    # each side separately, Linear(latent_dim, h); but
+                    # PairwiseMetricHead consumes
+                    # [z_i, z_j, z_i - z_j, |z_i - z_j|], Linear(4*latent_dim, h)
+                    # -- so in_features aliased exactly a 4-frame stack for every
+                    # mlp-head metric (dwell, td --head mlp) and the window
+                    # branch below then fed it 4 concatenated frames.
+                    # ``latent_dim`` is the per-side width for both heads;
+                    # CompressedMetric absorbs flat patch tokens itself, so its
+                    # planner-facing width is ``full_dim``.
+                    _win = getattr(metric, 'full_dim', None)
+                    if _win is None:
+                        _win = getattr(metric, 'latent_dim', None)
+                    if _win is None:  # last resort for heads declaring neither
+                        _win = next(
+                            m.in_features
+                            for m in metric.modules()
+                            if isinstance(m, torch.nn.Linear)
+                        )
+                    self.metric_in = int(_win)
 
                 def parameters(self, *a, **k):
                     return self.base.parameters(*a, **k)
@@ -229,17 +247,20 @@ def run(cfg: DictConfig):
                     if goal.ndim < pred.ndim:
                         goal = goal.unsqueeze(1)
                     goal = goal.expand_as(pred)
-                    # ensemble: pessimistic (max) distance across members.
-                    # forward(), NOT cost(): cost() is @torch.no_grad, which
-                    # detaches the score, so solver=adam (GradientSolver) trips
-                    # its `costs.requires_grad` assert and no TD+Adam cell can
-                    # run. CEM and MPPI both solve under @torch.inference_mode,
-                    # so forward() builds no graph there and the numbers are
-                    # unchanged; only the GD path gains the action gradient it
-                    # needs. This is the same call LIPSolver makes on its own
-                    # critic (lip_value(...)) for exactly this reason.
+                    # ensemble: pessimistic (max) COST across members.
+                    # cost(), not forward(): cost() is the only lower-is-better
+                    # entry point in the metric contract. For the two distance
+                    # heads the two are identical (cost = forward), but a value
+                    # learner is higher-is-better and its cost() flips the sign
+                    # (DwellValue: v_max - V) -- calling forward() there silently
+                    # MINIMISES the value, i.e. plans away from the goal, and the
+                    # `max` below would pick the least valuable member. The
+                    # @torch.no_grad that once forced forward() here (it detached
+                    # the score and tripped GradientSolver's requires_grad
+                    # assert, killing every TD+Adam cell) has been removed from
+                    # every cost(), so solver=adam still gets its gradient.
                     mcost = torch.stack(
-                        [m(pred.float(), goal.float()) for m in self.metrics]
+                        [m.cost(pred.float(), goal.float()) for m in self.metrics]
                     ).max(dim=0).values
                     if self.mode == 'replacement':
                         return mcost

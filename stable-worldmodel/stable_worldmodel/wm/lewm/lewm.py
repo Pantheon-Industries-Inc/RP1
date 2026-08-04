@@ -75,7 +75,7 @@ class LeWM(nn.Module):
         # encode initial state, or reuse cached embedding from a prior rollout.
         # detach: to avoid backprop in encoder
         if 'emb' not in info:
-            _init = {k: v[:, 0] for k, v in info.items() if torch.is_tensor(v)}
+            _init = {k: v[:, 0] for k, v in info.items() if torch.is_tensor(v) and not k.endswith('_hist')}
             _init = self.encode(_init)
             info['emb'] = (
                 _init['emb'].detach().unsqueeze(1).expand(B, S, -1, -1)
@@ -128,10 +128,48 @@ class LeWM(nn.Module):
 
         assert 'goal' in info_dict, 'goal not in info_dict'
 
+        # Real conditioning history, so EVERY planner (CEM / MPPI / Adam) sees
+        # the same 3 frames LIP does. Without this the sample-based planners get
+        # H = info['pixels'].size(2) = 1 -- EnvPool hands over a single frame --
+        # and grow the attention window with their OWN predictions, so they have
+        # no velocity information either. One frame cannot show which way a
+        # 2-joint arm is moving.
+        #
+        # `rollout` splits the action tensor as [H, T-H] and pairs action i with
+        # state i, so with H frames and P planned blocks the tensor must be
+        # T = H + P - 1 long: the first H-1 entries are the actions actually
+        # executed into the observed states, the last P are the plan. At H=1
+        # that is T = P, i.e. exactly the current behavior.
+        # Read, do NOT pop: get_cost is called once per solver iteration (~30
+        # for CEM) with the SAME dict, so popping made only the first call
+        # inject. The rest then rolled a 3-frame `pixels` against a 5-block
+        # action tensor -- a silently different rollout length, which cored.
+        px_hist = info_dict.get('pixels_hist')
+        act_hist = info_dict.get('action_hist')
+        if px_hist is not None and act_hist is not None:
+            n_hist = px_hist.shape[2]
+            if act_hist.shape[2] != n_hist - 1:
+                raise ValueError(
+                    f'action_hist has {act_hist.shape[2]} blocks but '
+                    f'{n_hist} history frames need {n_hist - 1}'
+                )
+            info_dict['pixels'] = px_hist
+            action_candidates = torch.cat(
+                [act_hist.to(action_candidates), action_candidates], dim=2
+            )
+            # print once per process: proves the rollout really ran at H>1
+            # rather than silently falling back to the single-frame path
+            if not getattr(self, '_hist_inject_logged', False):
+                self._hist_inject_logged = True
+                print(
+                    f'[hist-inject] H={n_hist} T={action_candidates.shape[2]} '
+                    f'(expect T = H + horizon - 1)'
+                )
+
         # encode goal state, or reuse cached embedding from a prior call
         if 'goal_emb' not in info_dict:
             goal = {
-                k: v[:, 0] for k, v in info_dict.items() if torch.is_tensor(v)
+                k: v[:, 0] for k, v in info_dict.items() if torch.is_tensor(v) and not k.endswith('_hist')
             }
             goal['pixels'] = goal['goal']
 

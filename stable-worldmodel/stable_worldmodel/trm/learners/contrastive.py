@@ -44,13 +44,20 @@ class ContrastiveCritic(nn.Module):
 
     def __init__(self, latent_dim: int, hidden_dim: int = 256, rep_dim: int = 64, depth: int = 2):
         super().__init__()
+        # declared per-side input width: callers must read the contract from here
+        # rather than reflecting on the first Linear (see eval_wm's metric hook)
+        self.latent_dim = int(latent_dim)
         self.phi = _mlp(latent_dim, hidden_dim, rep_dim, depth)  # state encoder
         self.psi = _mlp(latent_dim, hidden_dim, rep_dim, depth)  # goal encoder
 
     def forward(self, z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
         return (self.phi(z_a) * self.psi(z_b)).sum(dim=-1)
 
-    @torch.no_grad()
+    # No @torch.no_grad() here, matching PairwiseMetricHead / QuasimetricHead:
+    # cost() is the single lower-is-better entry point every planner calls, and
+    # GradientSolver (Adam) backprops through it. Decorating it detaches the
+    # score and trips the solver's `costs.requires_grad` assert. CEM/MPPI lose
+    # nothing: their solve() already runs under @torch.inference_mode.
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         return -self.forward(z_pred, z_goal)
 

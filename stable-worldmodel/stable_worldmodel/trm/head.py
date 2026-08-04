@@ -86,7 +86,11 @@ class PairwiseMetricHead(nn.Module):
             out = 0.5 * (out + self._raw(z_j, z_i))
         return out
 
-    @torch.no_grad()
+    # No @torch.no_grad() here: GradientSolver (Adam) backprops through the
+    # terminal cost, and decorating this silently kills every TD+Adam run —
+    # the latent-cost Adam path works, so the failure looks like a solver bug
+    # rather than a missing gradient. CEM/MPPI lose nothing: their solve() is
+    # already wrapped in inference_mode.
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         """Terminal cost (lower == more reachable). For regression this is the
         predicted temporal distance directly."""
@@ -124,7 +128,11 @@ class QuasimetricHead(nn.Module):
         d_asym = torch.relu(ej[..., s:] - ei[..., s:]).max(dim=-1).values
         return d_sym + d_asym
 
-    @torch.no_grad()
+    # No @torch.no_grad() here: GradientSolver (Adam) backprops through the
+    # terminal cost, and decorating this silently kills every TD+Adam run —
+    # the latent-cost Adam path works, so the failure looks like a solver bug
+    # rather than a missing gradient. CEM/MPPI lose nothing: their solve() is
+    # already wrapped in inference_mode.
     def cost(self, z_pred, z_goal):
         return self.forward(z_pred, z_goal)
 

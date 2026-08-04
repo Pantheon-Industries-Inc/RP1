@@ -10,5 +10,27 @@ actor_path: ???           # trained LIP checkpoint (train_lip.py / train_lip_din
 restarts: 1               # >1: noisy restarts + argmin-V selection
 restart_noise: 0.5
 robust_m: 0               # >0: average value of m perturbed copies when selecting
+align_deadline: false     # true: read E and grad V at the chunk the EPISODE ends
+                          # on, i.e. min(horizon, chunks_remaining)-1, instead of
+                          # always the plan's last chunk. Inert when the plan
+                          # already ends on the budget cap (receding_horizon ==
+                          # horizon), so every banked number is unaffected.
+                          # Requires +plan_config.eval_budget=<N> so the policy
+                          # can compute chunks_remaining.
+rollout_compat: true      # true: roll the WM exactly as CEM/MPPI/Adam do
+                          # (LeWM.rollout windowing, real frames, no zero
+                          # action history). false = legacy LIP convention
+                          # (3-frame padded z0 history + 2 zero action blocks),
+                          # which is what pre-2026-07-27 actors were trained on.
+plan_scale: 1.0           # deploy-time multiplier on the emitted plan. LIP
+                          # reaches a better terminal value than CEM but plans
+                          # at rms 0.32 vs CEM's 0.58 and the data's 1.00, so
+                          # it picks a limp member of a broad minimizer set.
+                          # 1.0 = identity = every previously measured number.
+plan_clip: null           # clip |a| after scaling (reacher physical box 1.7327)
+use_frame_history: false  # consume the real 3-frame + 2-action-block history
+                          # accumulated by WorldModelPolicy instead of padding
+                          # one observed frame into 3 copies with zero actions.
+                          # Requires plan_config.history_len > 1.
 device: "cuda"
 seed: ${seed}

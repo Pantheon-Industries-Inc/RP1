@@ -209,6 +209,18 @@ def save_metric(module: nn.Module, learner: str, latent_dim: int, arch: dict, pa
 
 
 def _build_inner(learner: str, latent_dim: int, arch: dict) -> nn.Module:
+    if learner == "dwell":
+        # discounted-dwell value: unconstrained scalar + a lower-is-better
+        # cost adapter, not a metric (a discounted return has no triangle
+        # inequality, so it must not be rebuilt as a quasimetric head)
+        from .learners.dwell import DwellValue
+
+        return DwellValue(
+            latent_dim,
+            hidden_dim=arch.get("hidden_dim", 256),
+            depth=arch.get("depth", 2),
+            gamma=arch.get("gamma", 0.98),
+        )
     if learner in ("regression", "td", "shuffled"):
         if arch.get("head") == "quasimetric":
             return QuasimetricHead(

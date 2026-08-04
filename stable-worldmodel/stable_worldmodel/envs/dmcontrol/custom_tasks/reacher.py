@@ -24,10 +24,18 @@ class ReacherQPosMatchTask(reacher.Reacher):
         self.target_qpos = None
         self.qpos_threshold = qpos_threshold
 
-    def get_termination(self, physics):
+    def is_matched(self, physics) -> bool:
+        """Whether every joint is currently inside the tolerance ball."""
         if self.target_qpos is None:
-            return None
+            return False
         diff = np.abs(physics.data.qpos - self.target_qpos)
-        if np.all(diff < self.qpos_threshold):
-            return 0.0
+        return bool(np.all(diff < self.qpos_threshold))
+
+    def get_termination(self, physics):
+        # Deliberately never terminates early. Ending the episode at first
+        # contact makes "reached and held" indistinguishable from "swung
+        # through", and scores the latter as a success. The episode now runs the
+        # full evaluation budget and residency is reported per step via the
+        # env's info['qpos_in_ball'], so the harness can require the arm to
+        # still be on target at the end.
         return None

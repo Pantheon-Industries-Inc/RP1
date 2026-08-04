@@ -76,7 +76,7 @@ class PLDM(nn.Module):
         n_steps = T - H
 
         # copy and encode initial info dict
-        _init = {k: v[:, 0] for k, v in info.items() if torch.is_tensor(v)}
+        _init = {k: v[:, 0] for k, v in info.items() if torch.is_tensor(v) and not k.endswith('_hist')}
         _init = self.encode(_init)
         emb = info['emb'] = _init['emb'].unsqueeze(1).expand(B, S, -1, -1)
         _init = {k: detach_clone(v) for k, v in _init.items()}
@@ -132,9 +132,36 @@ class PLDM(nn.Module):
 
         assert 'goal' in info_dict, 'goal not in info_dict'
 
+        # Same real-history injection as LeWM.get_cost -- see the long comment
+        # there. PLDM.rollout uses the identical [H, T-H] split, so with H
+        # frames and P planned blocks the tensor is T = H + P - 1 long: H-1 real
+        # executed blocks then the plan. H=1 reproduces the old behavior.
+        # read, never pop -- see the note in LeWM.get_cost
+        px_hist = info_dict.get('pixels_hist')
+        act_hist = info_dict.get('action_hist')
+        if px_hist is not None and act_hist is not None:
+            n_hist = px_hist.shape[2]
+            if act_hist.shape[2] != n_hist - 1:
+                raise ValueError(
+                    f'action_hist has {act_hist.shape[2]} blocks but '
+                    f'{n_hist} history frames need {n_hist - 1}'
+                )
+            info_dict['pixels'] = px_hist
+            action_candidates = torch.cat(
+                [act_hist.to(action_candidates), action_candidates], dim=2
+            )
+            # print once per process: proves the rollout really ran at H>1
+            # rather than silently falling back to the single-frame path
+            if not getattr(self, '_hist_inject_logged', False):
+                self._hist_inject_logged = True
+                print(
+                    f'[hist-inject] H={n_hist} T={action_candidates.shape[2]} '
+                    f'(expect T = H + horizon - 1)'
+                )
+
         if 'goal_emb' not in info_dict:
             goal = {
-                k: v[:, 0] for k, v in info_dict.items() if torch.is_tensor(v)
+                k: v[:, 0] for k, v in info_dict.items() if torch.is_tensor(v) and not k.endswith('_hist')
             }
             goal['pixels'] = goal['goal']
 
