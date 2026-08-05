@@ -220,7 +220,7 @@ logs/
 
 outputs/
 multirun/
-checkpoints/
+.DS_Store
 dino_wm_ckpt/
 pusht_noise/
 results/

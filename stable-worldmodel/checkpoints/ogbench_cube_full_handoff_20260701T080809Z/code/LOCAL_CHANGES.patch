@@ -1,0 +1,120 @@
+diff --git a/stable-worldmodel/scripts/plan/eval_ff.py b/stable-worldmodel/scripts/plan/eval_ff.py
+index 7d90e90..7b851ee 100644
+--- a/stable-worldmodel/scripts/plan/eval_ff.py
++++ b/stable-worldmodel/scripts/plan/eval_ff.py
+@@ -3,7 +3,7 @@
+ import os
+ 
+ 
+-os.environ['MUJOCO_GL'] = 'egl'
++os.environ.setdefault('MUJOCO_GL', 'egl')
+ 
+ 
+ import time
+diff --git a/stable-worldmodel/scripts/plan/eval_wm.py b/stable-worldmodel/scripts/plan/eval_wm.py
+index e071a39..b83e06a 100644
+--- a/stable-worldmodel/scripts/plan/eval_wm.py
++++ b/stable-worldmodel/scripts/plan/eval_wm.py
+@@ -2,7 +2,7 @@
+ 
+ import os
+ 
+-os.environ['MUJOCO_GL'] = 'egl'
++os.environ.setdefault('MUJOCO_GL', 'egl')
+ 
+ import time
+ from pathlib import Path
+diff --git a/stable-worldmodel/stable_worldmodel/solver/gd.py b/stable-worldmodel/stable_worldmodel/solver/gd.py
+index 033a11a..6d2a8dc 100644
+--- a/stable-worldmodel/stable_worldmodel/solver/gd.py
++++ b/stable-worldmodel/stable_worldmodel/solver/gd.py
+@@ -116,17 +116,25 @@ class GradientSolver(torch.nn.Module):
+         """Initialize the action tensor for optimization."""
+         if actions is None:
+             actions = torch.zeros(
+-                (n_envs, 0, self.action_dim), dtype=self.dtype
++                (n_envs, 0, self.action_dim),
++                device=self.device,
++                dtype=self.dtype,
+             )
++        else:
++            actions = actions.to(device=self.device, dtype=self.dtype)
+ 
+         # fill remaining action
+         remaining = self.horizon - actions.shape[1]
+ 
+         if remaining > 0:
+             new_actions = torch.zeros(
+-                n_envs, remaining, self.action_dim, dtype=self.dtype
++                n_envs,
++                remaining,
++                self.action_dim,
++                device=self.device,
++                dtype=self.dtype,
+             )
+-            actions = torch.cat([actions, new_actions], dim=1).to(self.device)
++            actions = torch.cat([actions, new_actions], dim=1)
+ 
+         actions = actions.unsqueeze(1).repeat_interleave(
+             self.num_samples, dim=1
+diff --git a/stable-worldmodel/stable_worldmodel/world/world.py b/stable-worldmodel/stable_worldmodel/world/world.py
+index 2ba4f0e..26a6e24 100644
+--- a/stable-worldmodel/stable_worldmodel/world/world.py
++++ b/stable-worldmodel/stable_worldmodel/world/world.py
+@@ -44,6 +44,7 @@ from typing import Any
+ 
+ import gymnasium as gym
+ import numpy as np
++from PIL import Image
+ import torch
+ 
+ from stable_worldmodel.policy import Policy
+@@ -520,11 +521,26 @@ class World:
+                     self.envs.envs[i].unwrapped, callables, env_init
+                 )
+ 
++        if 'pixels' in init_state:
++            init_state['pixels'] = _resize_images_like_env(
++                init_state['pixels'], self.infos['pixels']
++            )
++        if 'goal' in goal_state:
++            goal_state['goal'] = _resize_images_like_env(
++                goal_state['goal'], self.infos['pixels']
++            )
++        dataset_videos = [
++            _resize_images_like_env(video, self.infos['pixels'])
++            for video in dataset_videos
++        ]
++
+         shape_prefix = self.infos['pixels'].shape[:2]
+         for src, dst_prefix in [(init_state, ''), (goal_state, '')]:
+             for k, v in src.items():
+                 key = dst_prefix + k if dst_prefix else k
+-                if key in self.infos or key in goal_state:
++                if key in self.infos or key in goal_state or f'goal_{key}' in goal_state:
++                    if k == 'pixels' or key == 'goal':
++                        v = _resize_images_like_env(v, self.infos['pixels'])
+                     self.infos[key] = np.broadcast_to(
+                         v[:, None, ...], shape_prefix + v.shape[1:]
+                     ).copy()
+@@ -598,6 +614,20 @@ def _extract_init_goal(dataset, episodes_idx, start_steps, goal_offset):
+     return init_state, goal_state, dataset_videos
+ 
+ 
++def _resize_images_like_env(images, env_pixels):
++    target_shape = env_pixels.shape[2:]
++    if images.shape[1:] == target_shape:
++        return images
++
++    target_h, target_w = target_shape[:2]
++    resample = getattr(Image, 'Resampling', Image).BILINEAR
++    resized = [
++        np.asarray(Image.fromarray(img).resize((target_w, target_h), resample))
++        for img in images
++    ]
++    return np.stack(resized).astype(images.dtype, copy=False)
++
++
+ def _apply_callables(env, callables, init_state):
+     for spec in callables:
+         method = spec['method']
