@@ -1,6 +1,0 @@
-[23:33:34] === h100 capture start (goal_offset 100, budget 200) ===
-[23:37:06] pre_s2_e44 = 82.0  (212s, 50 mp4s)
-[23:40:34] post_s2_e44 = 90.0  (208s, 50 mp4s)
-[23:44:23] pre_s1_e42 = 78.0  (229s, 50 mp4s)
-[23:48:00] post_s1_e42 = 88.0  (217s, 50 mp4s)
-[23:48:00] H100_CAPTURE_DONE

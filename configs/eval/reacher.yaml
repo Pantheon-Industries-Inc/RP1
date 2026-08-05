@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - _world_model
+  - /environment: reacher
+  - /data: reacher_eval
+  - /core/policy: random
+  - /core/solver: cem
+  - /core/value: latent
+  - _self_
+evaluation:
+  callables:
+    - method: set_state
+      args:
+        qpos: {value: qpos}
+        qvel: {value: qvel}
+    - method: set_target_qpos
+      args:
+        target_qpos: {value: goal_qpos}
+output:
+  filename: reacher_results.txt

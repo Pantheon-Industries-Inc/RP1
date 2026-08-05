@@ -1,0 +1,5 @@
+# @package environment
+env_name: swm/ReacherDMControl-v0
+record_path: null
+num_envs: ${evaluation.num_episodes}
+task: qpos_match

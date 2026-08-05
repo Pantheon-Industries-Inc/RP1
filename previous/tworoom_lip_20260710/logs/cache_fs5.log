@@ -1,4 +1,0 @@
-/workspace/code/stable-worldmodel/stable_worldmodel/envs/__init__.py:215: UserWarning: ale-py not found; ALE/* envs are unavailable. Install with: pip install 'stable-worldmodel[env]' or pip install ale-py.
-  from stable_worldmodel.envs import ale  # noqa: F401
-2026-07-11 02:23:24.289 | SUCCESS  | stable_worldmodel.trm.latent_cache:save:71 - Saved latent cache (12590 rows, dim=192) to /workspace/caches/tworoom_lewm_fs5.pt
-fs5 cache: 12590 latents, 950 episodes, len[min/med/max]=2/14/20

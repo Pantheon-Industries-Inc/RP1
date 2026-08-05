@@ -1,0 +1,12 @@
+# @package data
+path: ogbench/cube_single_expert.h5
+cache_dir: null
+num_steps: 4
+frameskip: 5
+image_size: 224
+train_split: 0.9
+merge_proprio_from: [qpos, qvel]
+proprio_clip: 10.0
+loader:
+  batch_size: 64
+  num_workers: 12

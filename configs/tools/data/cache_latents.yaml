@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.tools.data.cache_latents._run}
+wm: ???
+dataset: ???
+out: ???
+state_key: null
+batch_size: 256
+max_rows: null
+device: auto
+train_res: null

@@ -1,0 +1,11 @@
+# @package _global_
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.tools.data.collect_tworoom_mixed._run}
+expert: 300
+random: 300
+num_envs: 10
+max_steps: 100
+out: outputs/data/tworoom_mixed.lance
+seed: 7

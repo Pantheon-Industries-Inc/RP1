@@ -1,0 +1,67 @@
+[workspace]
+authors = ["Armin SOMMER, Oliver SOMMER"]
+channels = ["conda-forge"]
+name = "rlp"
+platforms = ["osx-arm64", "linux-64"]
+version = "0.1.0"
+
+[system-requirements]
+macos = "14.0"
+
+[tasks]
+eval = "python -m rlp.eval"
+train = "python -m rlp"
+tool = "python -m rlp.tools"
+
+[dependencies]
+python = "3.13.*"
+# OGBench requires labmaze; conda-forge provides a Python 3.13 native build,
+# while PyPI's labmaze sdist requires a separately installed Bazel.
+labmaze = "==1.0.6"
+fsspec = "<=2026.6.0"
+scikit-learn = ">=1.7"
+
+[pypi-options]
+# Linux receives the H100-compatible CUDA wheel. macOS uses conda-forge's CPU
+# build so PyTorch and the scientific stack share one OpenMP runtime.
+index-url = "https://download.pytorch.org/whl/cu126"
+extra-index-urls = ["https://pypi.org/simple/"]
+index-strategy = "first-index"
+
+[pypi-dependencies]
+rlp = { path = ".", editable = true, extras = ["campaign", "data"] }
+
+[target.linux-64.pypi-dependencies]
+torch = "==2.7.1"
+torchvision = "==0.22.1"
+
+[target.linux-64.dependencies]
+mujoco = "==3.10.0"
+
+[target.osx-arm64.dependencies]
+pytorch = "==2.7.1"
+torchvision = "==0.22.1"
+
+[feature.dev.tasks]
+typecheck = "mypy --show-error-codes src tests"
+lint = "ruff check src tests"
+format = "ruff format src tests"
+format-check = "ruff format --check src tests"
+test = "pytest"
+hooks = "pre-commit install"
+check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
+
+[feature.dev.dependencies]
+# test / lint / type-check
+pytest = ">=9"
+pytest-cov = ">=7.1"
+pytest-xdist = ">=3.8"
+pytest-timeout = ">=2.3"
+ruff = ">=0.15.16"
+mypy = ">=2.1"
+pre-commit = ">=4.6"
+pip = ">=25"
+
+[environments]
+default = { features = [], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }

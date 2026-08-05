@@ -1,0 +1,29 @@
+# @package _global_
+defaults:
+  - /core/solver: online_td_hard
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.online_td_hard._run}
+wm: ???
+dataset: ???
+env: swm/TwoRoom-v1
+init_metric: null
+seed_cache: ???
+save_rounds: "1,2,4,8"
+only_successful: false
+n_collect: 40
+n_step: 20
+gamma: 0.99
+expectile: 0.7
+tau: 0.005
+p_cross: 0.3
+batch_size: 1024
+rounds: 8
+td_steps_per_round: 1500
+min_geo: 90.0
+max_geo: 180.0
+collect_budget: 120
+device: auto
+seed: 1
+output:
+  checkpoint_prefix: value_round

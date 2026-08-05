@@ -1,0 +1,26 @@
+# @package _global_
+defaults:
+  - /core/solver: online_td
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.online_td._run}
+wm: ???
+dataset: ???
+init_metric: null
+offline_baseline: false
+offline_cache: null
+rounds: 6
+td_steps_per_round: 1500
+offline_steps: 4000
+batch_size: 512
+gamma: 0.98
+expectile: 0.7
+tau: 0.01
+goal_offset: 20
+eval_budget: 35
+n_eval: 40
+device: auto
+seed: 0
+output:
+  checkpoint: value
+  filename: online_td_results.txt

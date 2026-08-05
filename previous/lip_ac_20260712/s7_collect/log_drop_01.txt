@@ -1,8 +1,0 @@
-worker 1/10 mode=drop events_avail=985 target=105 excl_eps=149
-tried=20 banked=20 extras=0 rate=8.8s/clip
-tried=40 banked=40 extras=0 rate=8.7s/clip
-tried=60 banked=60 extras=0 rate=8.7s/clip
-tried=80 banked=80 extras=0 rate=8.7s/clip
-tried=100 banked=100 extras=0 rate=8.8s/clip
-DONE banked=105 extras_kept=0 tried=105
-WROTE /workspace/datasets/lewm_cube_negatives/shard_drop_01.h5 eps=105 steps=6825

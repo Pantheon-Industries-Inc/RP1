@@ -1,0 +1,158 @@
+"""Contract tests for RLP's adapters around the PyPI Stable World Model."""
+
+from __future__ import annotations
+
+import importlib.metadata
+from pathlib import Path
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+import pytest
+import stable_worldmodel
+import torch
+from hydra import compose, initialize_config_dir
+from omegaconf import OmegaConf
+from torch import nn
+
+from rlp.core.policy import NoMovePolicy
+from rlp.core.value import LatentGoalCost, MetricCost
+from rlp.core.value.protocols import TensorInfo
+from rlp.core.world_model import checkpoint as checkpoint_module
+from rlp.core.world_model import hwm as hwm_module
+from rlp.core.world_model.statewm import StateWM
+from rlp.environment import register_rlp_envs
+from rlp.environment.world import _resize_images_like_env
+
+
+def test_stable_worldmodel_comes_from_pinned_distribution() -> None:
+    package_path = Path(stable_worldmodel.__file__).resolve()
+    assert importlib.metadata.version("stable-worldmodel") == "0.1.1"
+    assert "thirdparty" not in package_path.parts
+
+
+def test_checkpoint_adapter_accepts_plain_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_save(model: nn.Module, *, run_name: str, config: object, **kwargs: Any) -> None:
+        captured.update(model=model, run_name=run_name, config=config, kwargs=kwargs)
+
+    monkeypatch.setattr(checkpoint_module, "_save_pretrained", fake_save)
+    model = nn.Linear(2, 2)
+    checkpoint_module.save_pretrained(
+        model,
+        run_name="test",
+        config={"_target_": "torch.nn.Identity"},
+        filename="weights.pt",
+    )
+    assert captured["model"] is model
+    assert OmegaConf.is_config(captured["config"])
+    assert captured["kwargs"] == {"filename": "weights.pt"}
+
+
+def test_checkpoint_loader_is_the_stable_worldmodel_implementation() -> None:
+    from stable_worldmodel.wm.utils import load_pretrained
+
+    assert checkpoint_module.load_pretrained is load_pretrained
+
+
+def test_hwm_loader_rejects_unvalidated_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def fake_load(*args: object, **kwargs: object) -> dict[str, str]:
+        del args, kwargs
+        return {"kind": "unexpected"}
+
+    monkeypatch.setattr(torch, "load", fake_load)
+    with pytest.raises(ValueError, match="not an HWM checkpoint"):
+        hwm_module.load_hwm(tmp_path / "invalid.pt")
+
+
+def test_state_world_model_derives_from_stable_worldmodel_lewm() -> None:
+    from stable_worldmodel.wm import LeWM
+
+    model = StateWM(state_dim=2, action_dim=2, latent_dim=8, hidden_dim=16)
+    assert isinstance(model, LeWM)
+
+    info = {
+        "state": torch.randn(2, 3, 2, 2),
+        "goal_state": torch.randn(2, 1, 1, 2),
+    }
+    costs = model.get_cost(info, torch.randn(2, 3, 5, 2))
+    assert costs.shape == (2, 3)
+    assert "pixels" not in info
+
+    class EuclideanMetric(nn.Module):
+        def cost(self, start: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+            return (start - goal).square().sum(dim=-1)
+
+    metric_info = {
+        "state": torch.randn(2, 3, 2, 2),
+        "goal_state": torch.randn(2, 1, 1, 2),
+    }
+    metric_costs = MetricCost(model, EuclideanMetric()).get_cost(
+        metric_info,
+        torch.randn(2, 3, 5, 2),
+    )
+    assert metric_costs.shape == (2, 3)
+
+
+def test_latent_goal_cost_broadcasts_candidates_and_caches_goal() -> None:
+    class Model(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.encode_calls = 0
+
+        def encode(self, goal: TensorInfo) -> dict[str, torch.Tensor]:
+            self.encode_calls += 1
+            return {"emb": goal["pixels"].float()}
+
+        def rollout(self, info: TensorInfo, actions: torch.Tensor) -> None:
+            batch, candidates = actions.shape[:2]
+            info["predicted_emb"] = torch.zeros(batch, candidates, 1, 3)
+
+    model = Model()
+    cost = LatentGoalCost(model)
+    info = {"goal": torch.ones(2, 1, 3)}
+    actions = torch.zeros(2, 4, 5, 2)
+    first = cost.get_cost(info, actions)
+    second = cost.get_cost(info, actions)
+    assert first.shape == (2, 4)
+    assert torch.equal(first, torch.full((2, 4), 3.0))
+    assert torch.equal(second, first)
+    assert model.encode_calls == 1
+
+
+def test_no_move_policy_and_rlp_environment_registration() -> None:
+    class ActionSpace:
+        def sample(self) -> np.ndarray:
+            return np.array([1.0, -2.0], dtype=np.float32)
+
+    class Env:
+        def __init__(self) -> None:
+            self.action_space = ActionSpace()
+
+    policy = NoMovePolicy()
+    policy.set_env(Env())
+    assert np.array_equal(policy.get_action({}), np.zeros(2, dtype=np.float32))
+
+    register_rlp_envs()
+    assert "rlp/PushT-v1" in gym.registry
+
+
+def test_dataset_images_are_resized_to_environment_shape() -> None:
+    images = np.zeros((2, 8, 8, 3), dtype=np.uint8)
+    env_pixels = np.zeros((2, 1, 16, 12, 3), dtype=np.uint8)
+    resized = _resize_images_like_env(images, env_pixels)
+    assert resized.shape == (2, 16, 12, 3)
+    assert resized.dtype == np.uint8
+
+
+def test_hydra_configs_compose() -> None:
+    config_root = Path("configs").resolve()
+    with initialize_config_dir(config_dir=str(config_root), version_base=None):
+        cfg = compose(config_name="eval/lewm", overrides=["core/solver=adam"])
+    assert cfg.environment.env_name == "swm/OGBCube-v0"
+    assert cfg.core.solver._target_ == "rlp.core.solver.GradientSolver"
+
+    with initialize_config_dir(config_dir=str(config_root), version_base=None):
+        cfg = compose(config_name="train/lewm", overrides=["data=pusht_lewm"])
+    assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

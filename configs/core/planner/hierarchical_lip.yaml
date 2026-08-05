@@ -1,0 +1,4 @@
+# @package core.planner
+horizon: 8
+iterations: 8
+action_limit: 3.0

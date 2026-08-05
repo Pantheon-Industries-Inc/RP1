@@ -1,8 +1,0 @@
-[00:50:17] === upstream DINO-WM noprop + CEM, held-out eps 8000-9999, fp32, img 196 ===
-[01:23:45] dinocem_e42 = 82.0  (2008s)
-[01:57:49] dinocem_e43 = 80.0  (2043s)
-[02:32:13] dinocem_e44 = 78.0  (2064s)
-[02:32:13] DINOWM_CEM_DONE
-dinocem_e42,82.0
-dinocem_e43,80.0
-dinocem_e44,78.0

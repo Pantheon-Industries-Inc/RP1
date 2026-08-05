@@ -1,0 +1,5 @@
+# @package core.value
+kind: metric
+checkpoints: ???
+mode: replacement
+blend_weight: 1.0

@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.pipeline._run}
+task: tworoom
+num_eval: 40
+cross_wall: false
+horizon: 20
+receding: 5
+num_samples: 300
+cem_steps: 8
+goal_offset: 25
+eval_budget: 60
+wm_steps: 4000
+metric_steps: 5000
+cache_directory: outputs/cache
+device: auto
+skip: ""

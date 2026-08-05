@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - _world_model
+  - /environment: tworoom
+  - /data: tworoom_pixels_eval
+  - /core/policy: random
+  - /core/solver: cem
+  - /core/value: latent
+  - _self_
+evaluation:
+  callables:
+    - method: _set_state
+      args:
+        state: {value: state}
+    - method: _set_goal_state
+      args:
+        goal_state: {value: goal_state}
+output:
+  filename: tworoom_pixels_results.txt
