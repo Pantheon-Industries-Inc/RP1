@@ -1,5 +1,5 @@
 # @package data
-path: ogbench/cube_single_expert.h5
+path: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/ogb_cube_single.lance
 cache_dir: null
 num_steps: 4
 frameskip: 5

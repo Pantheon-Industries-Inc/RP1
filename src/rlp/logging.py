@@ -7,6 +7,7 @@ import io
 import logging as stdlib_logging
 import sys
 import traceback
+import warnings
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -109,10 +110,27 @@ def configured_logging(log_path: str | Path, level: str = "INFO") -> Iterator[An
         sinks = (terminal_sink, file_sink)
         stdout = _StreamLogger("INFO", original_stdout, sinks)
         stderr = _StreamLogger("ERROR", terminal, sinks)
+        previous_showwarning = warnings.showwarning
+
+        def showwarning(
+            message: Warning | str,
+            category: type[Warning],
+            filename: str,
+            lineno: int,
+            file: TextIO | None = None,
+            line: str | None = None,
+        ) -> None:
+            del file
+            lines = warnings.formatwarning(message, category, filename, lineno, line).rstrip().splitlines()
+            for sink in sinks:
+                sink.write_lines("WARNING", lines)
+
+        warnings.showwarning = showwarning
         try:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                 yield logger
         finally:
+            warnings.showwarning = previous_showwarning
             stdout.flush()
             stderr.flush()
             root.handlers = previous_handlers

@@ -62,7 +62,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def main() -> object:
-    return run_hydra(dispatch, config_name="tools/data/cache_lance_shard")
+    return run_hydra(dispatch, config_name="tools/cache_lance_shard")
 
 
 if __name__ == "__main__":

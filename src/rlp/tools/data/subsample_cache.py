@@ -52,7 +52,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def main() -> object:
-    return run_hydra(dispatch, config_name="tools/data/subsample_cache")
+    return run_hydra(dispatch, config_name="tools/subsample_cache")
 
 
 if __name__ == "__main__":

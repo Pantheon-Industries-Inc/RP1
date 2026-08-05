@@ -75,6 +75,19 @@ def test_run_hydra_composes_the_selected_model(monkeypatch: pytest.MonkeyPatch, 
     assert (run_directory / "run.log").is_file()
 
 
+def test_run_hydra_composes_the_selected_tool(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["rlp-tool", "tool=cache_latents", "wm=model.pt", "dataset=data.lance"])
+    config = run_hydra(
+        lambda cfg: cfg,
+        config_name="tools/collect_tworoom_mixed",
+        selector=("tool", "tools"),
+    )
+    assert config.entrypoint._target_ == "rlp.tools.data.cache_latents._run"
+    assert config.wm == "model.pt"
+    assert config.dataset == "data.lance"
+
+
 def test_run_hydra_records_validation_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["rlp", "model=state"])
@@ -87,6 +100,36 @@ def test_run_hydra_records_validation_failures(monkeypatch: pytest.MonkeyPatch, 
     assert metadata.status == "failed"
     assert "Missing required configuration" in metadata.error
     assert "Run failed" in (run_directory / "run.log").read_text()
+
+
+def test_run_hydra_records_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["rlp", "model=lewm"])
+
+    def interrupt(config: object) -> None:
+        del config
+        raise KeyboardInterrupt
+
+    with pytest.raises(SystemExit) as interrupted:
+        run_hydra(interrupt, config_name="train/lewm", selector=("model", "train"))
+
+    assert interrupted.value.code == 130
+    run_directory = next((tmp_path / "logs").glob("*/*"))
+    metadata = OmegaConf.load(run_directory / "metadata.json")
+    assert metadata.status == "interrupted"
+    assert metadata.error == "KeyboardInterrupt"
+    assert "Run interrupted" in (run_directory / "run.log").read_text()
+
+
+def test_pipeline_data_and_caches_default_outside_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("RLP_DATA_HOME", str(tmp_path))
+    with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
+        config = compose(config_name="train/pipeline")
+    assert config.data_directory == str(tmp_path / "datasets")
+    assert config.cache_directory == str(tmp_path / "caches")
 
 
 def test_argparse_is_not_used_in_source() -> None:

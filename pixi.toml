@@ -20,6 +20,7 @@ python = "3.13.*"
 labmaze = "==1.0.6"
 fsspec = "<=2026.6.0"
 scikit-learn = ">=1.7"
+pip = ">=25"
 
 [pypi-options]
 # Linux receives the H100-compatible CUDA wheel. macOS uses conda-forge's CPU
@@ -60,7 +61,6 @@ pytest-timeout = ">=2.3"
 ruff = ">=0.15.16"
 mypy = ">=2.1"
 pre-commit = ">=4.6"
-pip = ">=25"
 
 [environments]
 default = { features = [], solve-group = "default" }

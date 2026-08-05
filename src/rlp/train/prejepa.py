@@ -2,7 +2,7 @@
 `ogbench_cube_single_dino` handoff run (weights_step_100000.pt, CEM 84.0).
 
 Identical to prejepa.py except:
-  1. `data.merge_proprio_from=[qpos,qvel]` — our eval h5 (cube_single_expert.h5)
+  1. `data.merge_proprio_from=[qpos,qvel]` — the registered OGB Cube Lance dataset
      stores qpos(21)/qvel(20) separately; the handoff h5 had them pre-merged
      as a 41-d `proprio` column. Merged here (float32, cached in RAM).
   2. SaveCkptCallback saves every `step_interval` steps (handoff cadence:

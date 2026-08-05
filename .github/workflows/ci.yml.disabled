@@ -16,7 +16,7 @@ jobs:
       - run: pixi run -e dev check
       - name: Build wheel and verify installed config discovery
         run: |
-          pixi run -e dev python -m pip wheel --no-deps --no-build-isolation --wheel-dir dist .
+          pixi run -e dev python -m pip wheel --no-deps --wheel-dir dist .
           pixi run -e dev python -m venv --system-site-packages /tmp/rlp-wheel-smoke
           /tmp/rlp-wheel-smoke/bin/pip install --no-deps dist/rlp-*.whl
           cd /tmp

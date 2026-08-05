@@ -75,7 +75,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def main() -> object:
-    return run_hydra(dispatch, config_name="tools/data/cache_latents")
+    return run_hydra(dispatch, config_name="tools/cache_latents")
 
 
 if __name__ == "__main__":

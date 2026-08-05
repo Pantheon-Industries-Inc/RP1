@@ -48,6 +48,7 @@ def _stage(parent: DictConfig, index: int, name: str, config_name: str, **values
 def _run(cfg: DictConfig) -> None:
     task = TASKS[cfg.task]
     skip = {name.strip() for name in cfg.skip.split(",") if name.strip()}
+    dataset = str(Path(cfg.data_directory) / task["dataset"])
     cache = str(Path(cfg.cache_directory) / f"{cfg.task}_state.pt")
     checkpoint_directory = Path(cfg.run.checkpoints)
     world_model = checkpoint_directory / task["wm"]
@@ -61,18 +62,18 @@ def _run(cfg: DictConfig) -> None:
     if "collect" not in skip:
         run_stage(
             "collect",
-            "tools/data/collect_tworoom_mixed",
+            "tools/collect_tworoom_mixed",
             expert=400,
             random=0,
             num_envs=10,
             max_steps=100,
-            out=task["dataset"],
+            out=dataset,
         )
     if "wm" not in skip:
         run_stage(
             "world-model",
             "train/state",
-            dataset=task["dataset"],
+            dataset=dataset,
             **{"output.model_name": task["wm"]},
             obs_key=task["obs_key"],
             steps=cfg.wm_steps,
@@ -81,9 +82,9 @@ def _run(cfg: DictConfig) -> None:
     if "cache" not in skip:
         run_stage(
             "cache-latents",
-            "tools/data/cache_latents",
+            "tools/cache_latents",
             wm=str(world_model),
-            dataset=task["dataset"],
+            dataset=dataset,
             out=cache,
             device=cfg.device,
         )
@@ -125,7 +126,7 @@ def _run(cfg: DictConfig) -> None:
             "eval/trm",
             env=task["env"],
             wm=str(world_model),
-            dataset=task["dataset"],
+            dataset=dataset,
             num_eval=cfg.num_eval,
             goal_offset=cfg.goal_offset,
             eval_budget=cfg.eval_budget,

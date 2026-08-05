@@ -50,10 +50,49 @@ def test_checkpoint_adapter_accepts_plain_mapping(monkeypatch: pytest.MonkeyPatc
     assert captured["kwargs"] == {"filename": "weights.pt"}
 
 
-def test_checkpoint_loader_is_the_stable_worldmodel_implementation() -> None:
-    from stable_worldmodel.wm.utils import load_pretrained
+@pytest.mark.parametrize("kind", ["file", "directory"])
+def test_checkpoint_loader_resolves_existing_relative_paths(
+    kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
 
-    assert checkpoint_module.load_pretrained is load_pretrained
+    def fake_load(name: str, cache_dir: str | None = None, extra_args: object = None) -> nn.Module:
+        captured.update(name=name, cache_dir=cache_dir, extra_args=extra_args)
+        return nn.Identity()
+
+    checkpoint = tmp_path / "checkpoint"
+    if kind == "directory":
+        checkpoint.mkdir()
+    else:
+        checkpoint.write_bytes(b"checkpoint")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(checkpoint_module, "_load_pretrained", fake_load)
+
+    model = checkpoint_module.load_pretrained(Path("checkpoint"), cache_dir="cache", extra_args={"value": 1})
+
+    assert isinstance(model, nn.Identity)
+    assert captured == {
+        "name": str(checkpoint.resolve()),
+        "cache_dir": "cache",
+        "extra_args": {"value": 1},
+    }
+
+
+def test_checkpoint_loader_preserves_remote_or_missing_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+
+    def fake_load(name: str, cache_dir: str | None = None, extra_args: object = None) -> nn.Module:
+        del cache_dir, extra_args
+        captured.append(name)
+        return nn.Identity()
+
+    monkeypatch.setattr(checkpoint_module, "_load_pretrained", fake_load)
+    checkpoint_module.load_pretrained("owner/model")
+    checkpoint_module.load_pretrained("missing-checkpoint.pt")
+
+    assert captured == ["owner/model", "missing-checkpoint.pt"]
 
 
 def test_hwm_loader_rejects_unvalidated_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

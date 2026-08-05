@@ -131,7 +131,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def main() -> object:
-    return run_hydra(dispatch, config_name="tools/data/build_reacher_h5")
+    return run_hydra(dispatch, config_name="tools/build_reacher_h5")
 
 
 if __name__ == "__main__":

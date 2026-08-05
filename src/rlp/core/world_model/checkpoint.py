@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 from omegaconf import OmegaConf
@@ -10,7 +10,22 @@ from stable_worldmodel.wm.utils import load_pretrained as _load_pretrained
 from stable_worldmodel.wm.utils import save_pretrained as _save_pretrained
 from torch import nn
 
-load_pretrained = cast(Callable[..., nn.Module], _load_pretrained)
+
+def load_pretrained(
+    name: str | Path,
+    cache_dir: str | None = None,
+    extra_args: Any | None = None,
+) -> nn.Module:
+    """Load a local checkpoint before falling back to Stable-WM resolution.
+
+    Stable-WM 0.1.1 resolves every relative name below its global checkpoint
+    cache.  Repository configs intentionally use checkout-relative paths, so
+    turn an existing local path into an absolute path before delegating.  A
+    missing path is left untouched because it may be a Hugging Face repo ID.
+    """
+    path = Path(name).expanduser()
+    resolved_name = str(path.resolve()) if path.exists() else str(name)
+    return cast(nn.Module, _load_pretrained(resolved_name, cache_dir=cache_dir, extra_args=extra_args))
 
 
 def save_pretrained(model: nn.Module, run_name: str, config: Any | None = None, **kwargs: Any) -> None:

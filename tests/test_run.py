@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import warnings
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -83,6 +84,17 @@ def test_handler_failure_does_not_reenter_loguru(tmp_path: Path, monkeypatch: py
     diagnostic = terminal.getvalue()
     assert "Logging error in Loguru Handler" in diagnostic
     assert "RecursionError" not in diagnostic
+
+
+def test_python_warnings_are_logged_as_warnings(tmp_path: Path) -> None:
+    log_path = tmp_path / "run.log"
+    with configured_logging(log_path):
+        warnings.warn("optional dependency unavailable", UserWarning, stacklevel=1)
+
+    matching = [line for line in log_path.read_text().splitlines() if "optional dependency unavailable" in line]
+    assert matching
+    assert all("[WARNING]" in line for line in matching)
+    assert all("[ERROR]" not in line for line in matching)
 
 
 def test_loguru_handler_can_use_redirected_stdout_as_its_sink(tmp_path: Path) -> None:

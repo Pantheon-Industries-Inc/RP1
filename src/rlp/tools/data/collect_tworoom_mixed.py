@@ -51,7 +51,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def main() -> object:
-    return run_hydra(dispatch, config_name="tools/data/collect_tworoom_mixed")
+    return run_hydra(dispatch, config_name="tools/collect_tworoom_mixed")
 
 
 if __name__ == "__main__":

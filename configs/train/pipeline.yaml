@@ -14,6 +14,7 @@ goal_offset: 25
 eval_budget: 60
 wm_steps: 4000
 metric_steps: 5000
-cache_directory: outputs/cache
+data_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets
+cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
 device: auto
 skip: ""

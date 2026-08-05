@@ -11,5 +11,14 @@ Public surface:
 """
 
 from .latent_cache import LatentCache, encode_dataset
+from .registry import DATASETS, DatasetSpec, data_home, dataset_path, get_dataset_spec
 
-__all__ = ["LatentCache", "encode_dataset"]
+__all__ = [
+    "DATASETS",
+    "DatasetSpec",
+    "LatentCache",
+    "data_home",
+    "dataset_path",
+    "encode_dataset",
+    "get_dataset_spec",
+]
