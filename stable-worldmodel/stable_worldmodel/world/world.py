@@ -559,6 +559,65 @@ class World:
 
         goal_snapshot = {k: self.infos[k].copy() for k in goal_state}
 
+        # SWM_RECORD_PATH: optionally record per-step columns to a lance
+        # dataset -- on-policy collection through the eval path
+        # (goal-conditioned, unlike collect()). Mirrors collect()'s buffering,
+        # squeeze and action-rotation conventions.
+        #
+        # The default column set is the union across envs and columns absent
+        # from world.infos are skipped: MuJoCo envs supply qpos/qvel, TwoRoom
+        # supplies state/proprio. proprio matters -- the DINO-WM proprio
+        # variant cannot be fine-tuned on data that lacks it, and the skip is
+        # silent, so override with SWM_RECORD_COLS if you need to be strict.
+        import os as _os
+        _rec_path = _os.environ.get('SWM_RECORD_PATH')
+        _rec_bufs = None
+        # Per-step outcome label, recorded alongside the observation columns so
+        # a recorded lance can be divided by outcome afterwards -- e.g. to set
+        # the failure fraction of a Dyna fine-tune mix independently of its
+        # expert:on-policy ratio.
+        #
+        # It must NOT be taken from results['episode_successes'] below: on tasks
+        # without residency reporting that is derived from world.terminateds,
+        # which never fires under world.terminate_at_goal=False -- which is
+        # exactly the setting on-policy collection needs, because terminating
+        # at the goal ends successful episodes early and the _MIN_LEN filter
+        # then drops them. Recording it would silently label every collected
+        # episode a failure. The env's own per-step flag is independent of
+        # termination (OGBench cube: post_step -> _compute_successes, the 0.04 m
+        # check), so take that instead.
+        #
+        # SWM_RECORD_OUTCOME: 'auto' (default) records the label when the env
+        # publishes one and logs outcome=UNLABELLED when it does not; '1' makes
+        # it mandatory and raises early rather than after hours of collection --
+        # set it in any run whose downstream step divides data by outcome; '0'
+        # never records it. Default is permissive because not every env here
+        # publishes a success flag, and this path is shared across campaigns.
+        _rec_out = 'success'
+        if _rec_path:
+            _rec_cols = tuple(
+                q.strip()
+                for q in _os.environ.get(
+                    'SWM_RECORD_COLS',
+                    'pixels,action,qpos,qvel,state,proprio',
+                ).split(',')
+                if q.strip()
+            )
+            _rec_mode = _os.environ.get('SWM_RECORD_OUTCOME', 'auto')
+            if _rec_mode == '0' or (
+                _rec_mode != '1' and _rec_out not in self.infos
+            ):
+                _rec_out = None
+            elif _rec_out not in self.infos:
+                raise KeyError(
+                    f'SWM_RECORD_OUTCOME=1 but {_rec_out!r} is not published in '
+                    f'infos (have: {sorted(self.infos)}). Recording without an '
+                    'outcome label yields a dataset that cannot be divided into '
+                    'successes and failures.'
+                )
+            _rec_bufs = [defaultdict(list) for _ in range(n)]
+            _rec_done = np.zeros(n, dtype=bool)
+
         results = {
             'success_rate': 0.0,
             'episode_successes': np.zeros(n, dtype=bool),
@@ -568,7 +627,58 @@ class World:
 
         def on_step(world):
             world.infos.update(deepcopy(goal_snapshot))
-            results['episode_successes'] |= world.terminateds
+            if _rec_bufs is not None:
+                for _col in _rec_cols:
+                    if _col not in world.infos:
+                        continue
+                    _d = world.infos[_col]
+                    if not isinstance(_d, (np.ndarray, torch.Tensor)):
+                        continue
+                    if _d.ndim > 1 and _d.shape[1] == 1:
+                        _d = (_d.squeeze(1) if isinstance(_d, torch.Tensor)
+                              else np.squeeze(_d, axis=1))
+                    for _i in range(n):
+                        if _rec_done[_i]:
+                            continue
+                        _v = _d[_i]
+                        _v = (_v.detach().cpu().numpy()
+                              if isinstance(_v, torch.Tensor) else _v.copy())
+                        _rec_bufs[_i][_col].append(_v)
+                if _rec_out is not None:
+                    # Env flag, not world.terminateds -- see the note above. May
+                    # carry the frame-stack dim; the most recent frame is the
+                    # live one (same convention as the video capture below).
+                    _o = np.asarray(world.infos[_rec_out])
+                    if _o.ndim > 1:
+                        _o = _o[:, -1]
+                    _o = _o.reshape(-1).astype(np.uint8)
+                    for _i in range(n):
+                        if not _rec_done[_i]:
+                            _rec_bufs[_i][_rec_out].append(_o[_i])
+                _rec_done[:] = _rec_done | world.terminateds | world.truncateds
+            # Success requires the arm to be ON TARGET AT THE END, not merely to
+            # have passed through the ball. `info['qpos_in_ball']` is published
+            # per step by the env; overwriting (not `|=`) means the last step
+            # decides, so an arm that reaches and then drifts out fails -- which
+            # is the intended semantics. `_ever` is kept only as a diagnostic so
+            # the cost of the old latched convention stays visible.
+            _ball = world.infos.get('qpos_in_ball')
+            if _ball is not None:
+                _ball = np.asarray(_ball).reshape(-1).astype(bool)
+                results['episode_successes'] = _ball.copy()
+                results['_ever'] = results.get(
+                    '_ever', np.zeros_like(_ball)
+                ) | _ball
+                _md = world.infos.get('qpos_maxdiff')
+                if _md is not None:
+                    # overwritten each step, so this holds the FINAL worst-joint
+                    # error and can be thresholded afterwards
+                    results['_maxdiff'] = np.asarray(_md).reshape(-1).astype(
+                        float
+                    ).copy()
+            else:
+                # tasks without residency reporting keep the latched behaviour
+                results['episode_successes'] |= world.terminateds
             if frames is not None:
                 for i in range(world.num_envs):
                     f = world.infos['pixels'][i]
@@ -577,9 +687,72 @@ class World:
 
         self._run(max_steps=eval_budget, mode=mode, on_step=on_step)
 
+        if _rec_bufs is not None:
+            from stable_worldmodel.data.format import get_format as _get_format
+
+            _MIN_LEN = 25  # drop episodes shorter than one plan horizon
+            _stats = {'kept': 0, 'dropped': 0, 'kept_succ': 0, 'drop_succ': 0}
+
+            def _rec_iter():
+                for _i in range(n):
+                    _ep = {k: list(v) for k, v in _rec_bufs[_i].items()}
+                    # Latched, matching how episode_successes is scored for
+                    # these tasks: succeeded if the goal was ever reached.
+                    _ok = bool(_rec_out and any(_ep.get(_rec_out, ())))
+                    if not _ep or len(_ep.get('action', ())) < _MIN_LEN:
+                        _stats['dropped'] += 1
+                        _stats['drop_succ'] += _ok
+                        continue
+                    _ep['action'].append(_ep['action'].pop(0))
+                    _stats['kept'] += 1
+                    _stats['kept_succ'] += _ok
+                    yield _ep
+
+            _got = sorted({k for _b in _rec_bufs for k in _b})
+            _missing = [c for c in _rec_cols if c not in _got]
+            with _get_format('lance').open_writer(_rec_path) as _w:
+                _w.write_episodes(_rec_iter())
+            # kept_success / drop_success make the survivorship bias visible in
+            # the log: under terminate_at_goal=True the successes are exactly
+            # the episodes that end early, so they are what _MIN_LEN discards,
+            # leaving a failure-dominated recording. That went unnoticed once
+            # already and cost a run.
+            print('[record] kept=%(kept)d dropped=%(dropped)d' % _stats
+                  + (' kept_success=%(kept_succ)d '
+                     'drop_success=%(drop_succ)d' % _stats
+                     if _rec_out else ' outcome=UNLABELLED')
+                  + ' cols=' + ','.join(_got)
+                  + (' MISSING=' + ','.join(_missing) if _missing else '')
+                  + ' -> ' + _rec_path, flush=True)
+
         results['success_rate'] = (
             float(results['episode_successes'].sum()) / n * 100.0
         )
+        if '_ever' in results:
+            _ever = float(results.pop('_ever').sum()) / n * 100.0
+            _held = results['success_rate']
+            print(
+                f'[success-convention] HELD-at-end {_held:.1f} (reported) | '
+                f'ever-in-ball {_ever:.1f} | passing-through inflates '
+                f'{_ever - _held:+.1f}',
+                flush=True,
+            )
+        if '_maxdiff' in results:
+            # Neither LeWM nor DINO-WM states a joint tolerance, and our 0.05
+            # rad appears to be dm_control's _BIG_TARGET=.05 -- which is a geom
+            # radius in METRES for a finger-position test, not an angular
+            # tolerance. Score the same run at several so the choice is visible
+            # instead of inherited. All joints must be inside (worst-joint).
+            _md = results.pop('_maxdiff')
+            _parts = ' | '.join(
+                f'{t:g}rad {float((_md < t).sum()) / n * 100.0:.1f}'
+                for t in (0.015, 0.025, 0.05, 0.10, 0.20)
+            )
+            print(
+                f'[threshold-sweep] full-arm held-at-end: {_parts} '
+                f'| median worst-joint {float(np.median(_md)):.4f} rad',
+                flush=True,
+            )
         if frames:
             save_panel_videos(
                 Path(video),

@@ -1,0 +1,92 @@
+output_model_name: ogbench_cube_single_dino
+subdir: ogbench_cube_single_dino_20260701T080809Z
+seed: 42
+dataset_name: /workspace/datasets/ogbench_swm/visual_cube_single_play_v0.h5
+cache_dir: null
+n_steps: ${eval:'${wm.num_preds} + ${wm.history_size}'}
+frameskip: 5
+batch_size: 64
+num_workers: 12
+train_split: 0.9
+backbone:
+  name: dinov2_small
+  type: dinov2_small
+  is_video_encoder: false
+  interpolate_pos_encoding: true
+image_size: 224
+patch_size: 14
+wm:
+  history_size: 3
+  num_preds: 1
+  encoding:
+    proprio: 10
+    action: 10
+predictor:
+  size: small
+  depth: 6
+  heads: 16
+  mlp_dim: 2048
+  dim_head: 64
+  dropout: 0.1
+  emb_dropout: 0.0
+model:
+  _target_: stable_worldmodel.wm.PreJEPA
+  history_size: ${wm.history_size}
+  num_pred: ${wm.num_preds}
+  interpolate_pos_encoding: ${backbone.interpolate_pos_encoding}
+  encoder:
+    _target_: stable_worldmodel.wm.prejepa.module.create_backbone
+    name: ${backbone.name}
+  predictor:
+    _target_: stable_worldmodel.wm.prejepa.CausalPredictor
+    num_patches: 256
+    num_frames: ${wm.history_size}
+    dim: 404
+    depth: ${predictor.depth}
+    heads: ${predictor.heads}
+    mlp_dim: ${predictor.mlp_dim}
+    dim_head: ${predictor.dim_head}
+    dropout: ${predictor.dropout}
+    emb_dropout: ${predictor.emb_dropout}
+  extra_encoders:
+    _target_: torch.nn.ModuleDict
+    modules:
+      proprio:
+        _target_: stable_worldmodel.wm.prejepa.module.Embedder
+        in_chans: 41
+        emb_dim: 10
+      action:
+        _target_: stable_worldmodel.wm.prejepa.module.Embedder
+        in_chans: 25
+        emb_dim: 10
+optimizer:
+  type: AdamW
+  lr: 0.0005
+  weight_decay: 0.0
+trainer:
+  max_epochs: 10
+  strategy: auto
+  devices: 1
+  accelerator: gpu
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  max_steps: 100000
+checkpoint:
+  epoch_interval: 0
+  every_n_train_steps: 10000
+dump_object: true
+n_gpus: 1
+cpus_per_task: 8
+wandb:
+  enabled: true
+  config:
+    entity: yash21-dagade-duke-university
+    project: pantheon-swm
+    name: ogbench_cube_single_dino_20260701T080809Z
+    id: ogbench_cube_single_dino_20260701T080809Z
+    resume: allow
+    log_model: false
+    group: ogbench_cube_3gpu_20260701T080809Z
+extra_dims:
+  proprio: 41
+  action: 25

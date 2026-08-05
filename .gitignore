@@ -17,9 +17,13 @@ stable-worldmodel/.venv/
 *.tar.gz
 *.tar.zst
 *.zip
+# ...except the checkpoint store: pushed in full via LFS (2026-08-04), so the
+# authors' pretrained .tar.zst bases ride along. tworoom_lip4.zip stays out
+# (duplicate of the adjacent tracked dir).
+!stable-worldmodel/checkpoints/**/*.tar.zst
 
 # --- individual files over GitHub's hard 100 MB limit -----------------------
-# (kept out so a push can never be rejected mid-transfer)
+# (kept out so a push can never be rejected mid-transfer; the checkpoint
+# store's >100MB files are exempt because .gitattributes routes them via LFS)
 pod_archive/poda_20260715/lewm_cube_negatives/
 previous/pod_migration_20260709/pod_bundle_20260709.tgz
-stable-worldmodel/checkpoints/ogbench_cube_full_handoff_*/models/*/weights_step_100000.pt

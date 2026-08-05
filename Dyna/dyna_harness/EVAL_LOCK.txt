@@ -1,0 +1,15 @@
+=== EVAL LANE LOCK — 2026-07-26 ===
+CLAIMED BY: the Dyna/RLP session running rep012_run.sh — seeds 0/1/2, a
+replication of the historical 87.6 result using its exact seeds and hypers.
+
+WHY THIS EXISTS: two sessions evaluated concurrently today. Concurrent evals do
+NOT crash — they silently corrupt results. That is what produced the bogus
+pre-Dyna a0 = 68.0 (vs ~87 when re-run clean), which made the Dyna gain look
+~8 points larger than it is. Do NOT run eval_wm.py while this lock is held.
+
+ALSO: seed_batch2.sh (seeds 6/7/8, other session) was stopped mid-run at 17:52.
+Its v2rep_s6_e42 / e43 cells recorded FAIL because of that kill, not because of
+the model — those cells must be re-run, not reported. Seed 6's *training* is
+valid (E_final 7.47, which is itself an outlier vs 3.2–4.1 for good seeds).
+
+Release: delete this file when rep012_run.sh logs REP012_DONE.

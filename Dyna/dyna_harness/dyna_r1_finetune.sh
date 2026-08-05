@@ -1,4 +1,12 @@
 #!/bin/bash
+# ############################################################################
+# # DATA SPLIT WARNING -- see ../DATA_SPLIT_POLICY.md
+# # Dyna on-policy collection MUST come from episodes disjoint from the ones
+# # eval draws its tasks from. It currently does NOT: collection and eval both
+# # draw from the same 10k-episode expert lance, so the fine-tuned WM has seen
+# # the eval states. Required split: collect 0-7999, eval 8000-9999
+# # (episode_split.COLLECT / .EVAL). Numbers from this script are upper bounds.
+# ############################################################################
 # Dyna round-1 fine-tune driver (loop pod). Gated on COLLECT_R1_DONE.
 # Builds the two arm lances (expert ⊕ dup(on-policy) by ROW fraction), then
 # fine-tunes v2WM on each arm (single GPU each, parallel):

@@ -1,0 +1,206 @@
+PWM-TRAIN lejepa s0: FAIL
+PWM-TRAIN pldm s0: FAIL
+PWM-TRAIN lejepa s1: FAIL
+PWM-TRAIN pldm s1: FAIL
+PWM-TRAIN lejepa s2: FAIL
+PWM-TRAIN_DONE lejepa gpu0
+PWM-EVAL lejepa t0: actor missing
+PWM-EVAL lejepa t1: actor missing
+PWM-EVAL lejepa t2: actor missing
+PWM-EVAL_DONE proto lejepa gpu0
+PWM-EVAL lejepa t0: actor missing
+PWM-EVAL lejepa t1: actor missing
+PWM-EVAL lejepa t2: actor missing
+PWM-EVAL_DONE rh1 lejepa gpu0
+PWM-TRAIN pldm s2: FAIL
+PWM-TRAIN_DONE pldm gpu1
+PWM-EVAL pldm t0: actor missing
+PWM-EVAL pldm t1: actor missing
+PWM-EVAL pldm t2: actor missing
+PWM-EVAL_DONE proto pldm gpu1
+PWM-EVAL pldm t0: actor missing
+PWM-EVAL pldm t1: actor missing
+PWM-EVAL pldm t2: actor missing
+PWM-EVAL_DONE rh1 pldm gpu1
+PWM-TRAIN dinowm s0: FAIL
+PWM-TRAIN_DONE dinowm gpu3
+PWM-EVAL dinowm t0: actor missing
+PWM-EVAL_DONE proto dinowm gpu3
+PWM-EVAL dinowm t0: actor missing
+PWM-EVAL_DONE rh1 dinowm gpu3
+PWM-TRAIN pldm s0: OK
+PWM-TRAIN lejepa s0: OK
+PWM-TRAIN lejepa s1: OK
+PWM-TRAIN pldm s1: OK
+PWM-TRAIN pldm s2: OK
+PWM-TRAIN_DONE pldm gpu1
+PWM-TRAIN lejepa s2: OK
+PWM-TRAIN_DONE lejepa gpu0
+PWM proto pldm t0 h25 sd42: FAIL
+PWM proto lejepa t0 h25 sd42: FAIL
+PWM proto pldm t0 h50 sd42: FAIL
+PWM proto lejepa t0 h50 sd42: FAIL
+PWM proto pldm t0 h25 sd43: FAIL
+PWM proto lejepa t0 h25 sd43: FAIL
+PWM proto pldm t0 h50 sd43: FAIL
+PWM proto lejepa t0 h50 sd43: FAIL
+PWM proto pldm t0 h25 sd44: FAIL
+PWM proto lejepa t0 h25 sd44: FAIL
+PWM proto pldm t0 h50 sd44: FAIL
+PWM proto lejepa t0 h50 sd44: FAIL
+PWM proto pldm t1 h25 sd42: FAIL
+PWM proto lejepa t1 h25 sd42: FAIL
+PWM proto pldm t1 h50 sd42: FAIL
+PWM proto lejepa t1 h50 sd42: FAIL
+PWM proto pldm t1 h25 sd43: FAIL
+PWM proto lejepa t1 h25 sd43: FAIL
+PWM proto pldm t1 h50 sd43: FAIL
+PWM proto lejepa t1 h50 sd43: FAIL
+PWM proto pldm t1 h25 sd44: FAIL
+PWM proto lejepa t1 h25 sd44: FAIL
+PWM proto pldm t1 h50 sd44: FAIL
+PWM proto lejepa t1 h50 sd44: FAIL
+PWM proto pldm t2 h25 sd42: FAIL
+PWM proto lejepa t2 h25 sd42: FAIL
+PWM proto pldm t2 h50 sd42: FAIL
+PWM proto lejepa t2 h50 sd42: FAIL
+PWM proto pldm t2 h25 sd43: FAIL
+PWM proto lejepa t2 h25 sd43: FAIL
+PWM proto pldm t2 h50 sd43: FAIL
+PWM proto lejepa t2 h50 sd43: FAIL
+PWM proto pldm t2 h25 sd44: FAIL
+PWM proto lejepa t2 h25 sd44: FAIL
+PWM proto pldm t2 h50 sd44: FAIL
+PWM-EVAL_DONE proto pldm gpu1
+PWM proto lejepa t2 h50 sd44: FAIL
+PWM-EVAL_DONE proto lejepa gpu0
+PWM rh1 pldm t0 h25 sd42: FAIL
+PWM rh1 lejepa t0 h25 sd42: FAIL
+PWM rh1 pldm t0 h50 sd42: FAIL
+PWM rh1 lejepa t0 h50 sd42: FAIL
+PWM rh1 pldm t0 h25 sd43: FAIL
+PWM rh1 lejepa t0 h25 sd43: FAIL
+PWM rh1 pldm t0 h50 sd43: FAIL
+PWM rh1 lejepa t0 h50 sd43: FAIL
+PWM rh1 pldm t0 h25 sd44: FAIL
+PWM rh1 lejepa t0 h25 sd44: FAIL
+PWM rh1 pldm t0 h50 sd44: FAIL
+PWM rh1 lejepa t0 h50 sd44: FAIL
+PWM rh1 pldm t1 h25 sd42: FAIL
+PWM rh1 lejepa t1 h25 sd42: FAIL
+PWM rh1 pldm t1 h50 sd42: FAIL
+PWM rh1 lejepa t1 h50 sd42: FAIL
+PWM rh1 pldm t1 h25 sd43: FAIL
+PWM rh1 lejepa t1 h25 sd43: FAIL
+PWM rh1 pldm t1 h50 sd43: FAIL
+PWM rh1 lejepa t1 h50 sd43: FAIL
+PWM rh1 pldm t1 h25 sd44: FAIL
+PWM rh1 lejepa t1 h25 sd44: FAIL
+PWM rh1 pldm t1 h50 sd44: FAIL
+PWM rh1 lejepa t1 h50 sd44: FAIL
+PWM rh1 pldm t2 h25 sd42: FAIL
+PWM rh1 lejepa t2 h25 sd42: FAIL
+PWM rh1 pldm t2 h50 sd42: FAIL
+PWM rh1 lejepa t2 h50 sd42: FAIL
+PWM rh1 pldm t2 h25 sd43: FAIL
+PWM rh1 lejepa t2 h25 sd43: FAIL
+PWM rh1 pldm t2 h50 sd43: FAIL
+PWM rh1 lejepa t2 h50 sd43: FAIL
+PWM rh1 pldm t2 h25 sd44: FAIL
+PWM rh1 lejepa t2 h25 sd44: FAIL
+PWM rh1 pldm t2 h50 sd44: FAIL
+PWM-EVAL_DONE rh1 pldm gpu1
+PWM rh1 lejepa t2 h50 sd44: FAIL
+PWM-EVAL_DONE rh1 lejepa gpu0
+PWM proto pldm t0 h25 sd42: 46.0
+PWM proto lejepa t0 h25 sd42: 32.0
+PWM proto lejepa t0 h50 sd42: 22.0
+PWM proto pldm t0 h50 sd42: 10.0
+PWM proto lejepa t0 h25 sd43: 32.0
+PWM proto pldm t0 h25 sd43: 42.0
+PWM proto lejepa t0 h50 sd43: 16.0
+PWM proto pldm t0 h50 sd43: 14.000000000000002
+PWM proto lejepa t0 h25 sd44: 40.0
+PWM proto pldm t0 h25 sd44: 28.000000000000004
+PWM proto lejepa t0 h50 sd44: 18.0
+PWM proto pldm t0 h50 sd44: 10.0
+PWM proto lejepa t1 h25 sd42: 32.0
+PWM proto pldm t1 h25 sd42: 32.0
+PWM proto lejepa t1 h50 sd42: 14.000000000000002
+PWM proto pldm t1 h50 sd42: 8.0
+PWM proto lejepa t1 h25 sd43: 40.0
+PWM proto pldm t1 h25 sd43: 26.0
+PWM proto lejepa t1 h50 sd43: 18.0
+PWM proto pldm t1 h50 sd43: 12.0
+PWM proto lejepa t1 h25 sd44: 36.0
+PWM proto pldm t1 h25 sd44: 22.0
+PWM proto pldm t1 h50 sd44: 10.0
+PWM proto lejepa t1 h50 sd44: 18.0
+PWM proto pldm t2 h25 sd42: 28.000000000000004
+PWM proto lejepa t2 h25 sd42: 34.0
+PWM-TRAIN dinowm s0: OK
+PWM-TRAIN_DONE dinowm gpu3
+PWM proto lejepa t2 h50 sd42: 24.0
+PWM proto pldm t2 h50 sd42: 6.0
+PWM proto dinowm t0 h25 sd42: 28.000000000000004
+PWM proto pldm t2 h25 sd43: 24.0
+PWM proto lejepa t2 h25 sd43: 26.0
+PWM proto dinowm t0 h50 sd42: 18.0
+PWM proto lejepa t2 h50 sd43: 26.0
+PWM proto pldm t2 h50 sd43: 4.0
+PWM proto dinowm t0 h25 sd43: 40.0
+PWM proto lejepa t2 h25 sd44: 46.0
+PWM proto pldm t2 h25 sd44: 26.0
+PWM proto dinowm t0 h50 sd43: 22.0
+PWM proto lejepa t2 h50 sd44: 34.0
+PWM-EVAL_DONE proto lejepa gpu0
+PWM proto pldm t2 h50 sd44: 10.0
+PWM-EVAL_DONE proto pldm gpu1
+PWM proto dinowm t0 h25 sd44: 40.0
+PWM rh1 lejepa t0 h25 sd42: 32.0
+PWM rh1 pldm t0 h25 sd42: 44.0
+PWM proto dinowm t0 h50 sd44: 22.0
+PWM-EVAL_DONE proto dinowm gpu3
+PWM rh1 lejepa t0 h50 sd42: 22.0
+PWM rh1 pldm t0 h50 sd42: 22.0
+PWM rh1 dinowm t0 h25 sd42: 28.000000000000004
+PWM rh1 lejepa t0 h25 sd43: 32.0
+PWM rh1 pldm t0 h25 sd43: 44.0
+PWM rh1 lejepa t0 h50 sd43: 16.0
+PWM rh1 dinowm t0 h50 sd42: 18.0
+PWM rh1 pldm t0 h50 sd43: 28.000000000000004
+PWM rh1 lejepa t0 h25 sd44: 40.0
+PWM rh1 pldm t0 h25 sd44: 40.0
+PWM rh1 dinowm t0 h25 sd43: 40.0
+PWM rh1 lejepa t0 h50 sd44: 18.0
+PWM rh1 pldm t0 h50 sd44: 18.0
+PWM rh1 dinowm t0 h50 sd43: 22.0
+PWM rh1 pldm t1 h25 sd42: 28.000000000000004
+PWM rh1 lejepa t1 h25 sd42: 28.000000000000004
+PWM rh1 dinowm t0 h25 sd44: 40.0
+PWM rh1 pldm t1 h50 sd42: 8.0
+PWM rh1 lejepa t1 h50 sd42: 20.0
+PWM rh1 dinowm t0 h50 sd44: 22.0
+PWM-EVAL_DONE rh1 dinowm gpu3
+PWM rh1 lejepa t1 h25 sd43: 44.0
+PWM rh1 pldm t1 h25 sd43: 26.0
+PWM rh1 pldm t1 h50 sd43: 10.0
+PWM rh1 lejepa t1 h50 sd43: 20.0
+PWM rh1 pldm t1 h25 sd44: 22.0
+PWM rh1 lejepa t1 h25 sd44: 38.0
+PWM rh1 pldm t1 h50 sd44: 10.0
+PWM rh1 lejepa t1 h50 sd44: 22.0
+PWM rh1 pldm t2 h25 sd42: 28.000000000000004
+PWM rh1 lejepa t2 h25 sd42: 38.0
+PWM rh1 pldm t2 h50 sd42: 6.0
+PWM rh1 lejepa t2 h50 sd42: 24.0
+PWM rh1 pldm t2 h25 sd43: 24.0
+PWM rh1 lejepa t2 h25 sd43: 34.0
+PWM rh1 pldm t2 h50 sd43: 14.000000000000002
+PWM rh1 lejepa t2 h50 sd43: 28.000000000000004
+PWM rh1 lejepa t2 h25 sd44: 56.00000000000001
+PWM rh1 pldm t2 h25 sd44: 30.0
+PWM rh1 pldm t2 h50 sd44: 18.0
+PWM-EVAL_DONE rh1 pldm gpu1
+PWM rh1 lejepa t2 h50 sd44: 36.0
+PWM-EVAL_DONE rh1 lejepa gpu0

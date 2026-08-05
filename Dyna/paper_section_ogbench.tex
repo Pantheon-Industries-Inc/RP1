@@ -1,0 +1,192 @@
+%======================================================================
+% PRELIMINARY -- Section 5.3, OGBench cube. Drop in after
+% \subsection{Planning in Higher Dimensions} (sec:highdim).
+%
+% Every number is from held-out episodes 8000:10000, 3 LIP seeds x 3 task
+% seeds, 50 tasks per cell. Provenance: Dyna/RESULTS_TABLE_20260802.md and
+% Dyna/RESULTS_freeze_dyna_20260801.md.
+%
+% OPEN ITEMS flagged inline with \todo{}:
+%   - seed count is 3, not the 6 used in Section 5.2
+%   - no MPPI row and no latent-distance Adam row were run
+%   - DINO-WM not run (same cache-size reason as Reacher)
+%   - the reactive-policy amax is RLP's, not its own default
+%======================================================================
+
+\subsection{Contact-Rich Manipulation}
+\label{sec:ogbench}
+
+\paragraph{Setup.}
+Throughout, RLP denotes the residual refiner of Section~\ref{sec:optimality};
+it appears as \texttt{LIPv4} in the released artifacts and logs.
+Cube is the single-block manipulation task of OGBench \citep{park2025ogbench},
+observed as $224\times224$ RGB with a $5$-d action; success is the block within
+$4$\,cm of its target position, so the arm's own configuration is irrelevant and
+only what it does to the block counts. As in
+Sections~\ref{sec:tworoom}--\ref{sec:highdim} a plan is $N=5$ action blocks of
+$F=5$ primitive steps, executed before replanning. Two features make it the
+hardest of the three environments for the objective. Manipulation is
+\emph{contact-rich}: the map from plan to terminal latent is discontinuous at
+every make-or-break of contact, so neither a latent norm nor a smooth value
+surface is locally faithful. And the task is \emph{under-actuated through an
+intermediary}: the planner controls the gripper but is scored on the block, so
+success requires a plan whose effect is mediated by a contact event it must
+first bring about. We use the two single-token world models
+($192$-d), pretrained on $10{,}000$ episodes, and reserve episodes
+$8{,}000$--$9{,}999$ for task draws. We report the in-distribution horizon
+($\Delta = 25$, budget $50$) and a four-fold extension ($\Delta = 100$, budget
+$200$), the latter out of distribution for every learned component.
+
+\begin{table}[t]
+\centering
+\caption{Cube success rate (\%) and world-model queries per decision, before and
+after one round of world-model fine-tuning \eqref{eq:dyna-fixpoint}. All learned
+rows are $3$ planner seeds $\times$ $3$ task seeds; CEM rows have no planner
+seed and average $3$ task seeds. Queries count rollout-equivalents: $300$
+candidates $\times$ $30$ iterations for CEM, $8$ refinements $\times$ (forward
+unroll $+$ backward pass) for RLP. The reactive policy is the same architecture
+and objective as in Tables~\ref{tab:tworoom}--\ref{tab:reacher}, replanning every
+action block (its natural setting, and the one in which it issues \emph{no}
+world-model queries at all). Post-Dyna columns share the fine-tuned model with
+every row in that column, including the parameter-free latent-distance
+baseline.}
+\label{tab:cube}
+\begin{tabular}{lrcccc}
+\toprule
+& queries & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+planner & / dec. & pre-Dyna & post-Dyna & pre-Dyna & post-Dyna \\
+\midrule
+\multicolumn{6}{l}{\emph{$\Delta = 25$ (one planning horizon)}} \\
+\quad latent distance $+$ CEM & $9{,}000$ & 76.0 & 78.0 & 66.7 & 72.0 \\
+\quad value metric $+$ CEM    & $9{,}000$ & 79.3 & 85.3 & 73.3 & 84.0 \\
+\quad Reactive Policy         & $0$       & 84.0 & 81.3 & 62.2 & 61.1 \\
+\quad \textbf{RLP (ours)}     & ${\sim}16$ & \textbf{88.7} & \textbf{92.0} & \textbf{85.3} & \textbf{91.3} \\
+\midrule
+\multicolumn{6}{l}{\emph{$\Delta = 100$ (four planning horizons, out of distribution)}} \\
+\quad latent distance $+$ CEM & $9{,}000$ & 60.0 & 70.7 & 55.3 & 60.0 \\
+\quad value metric $+$ CEM    & $9{,}000$ & 74.0 & 82.0 & 63.3 & 79.3 \\
+\quad Reactive Policy         & $0$       & 81.6 & 81.6 & 53.8 & 58.0 \\
+\quad \textbf{RLP (ours)}     & ${\sim}16$ & \textbf{81.8} & \textbf{85.3} & \textbf{83.1} & 80.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Here neither cost is adequate, and the search is what closes the gap.}
+Cube completes the pattern the previous two sections started. On TwoRoom the
+objective was wrong and the critic fixed it; on Reacher the objective was
+adequate and the critic was a liability. On Cube \emph{neither} cost suffices
+under a sampling planner: at $\Delta = 25$ the latent distance reaches $76.0$
+and $66.7$ and the value metric $79.3$ and $73.3$, against RLP's $88.7$ and
+$85.3$ at $562\times$ fewer queries. Swapping the cost buys $3.3$ and $6.6$
+points; swapping the optimizer buys $9.4$ and $12.0$ on top of the better cost.
+This is the regime the theory of Section~\ref{sec:optimality} speaks to most
+directly: with the objective held fixed and the budget cut by nearly three
+orders of magnitude, the entire margin is attributable to where in the $25$-d
+block space the candidates are placed.
+
+\paragraph{Direct descent on the learned metric is worse than sampling it.}
+The sharpest evidence that the difficulty is the shape of the search space
+rather than the density of coverage comes from replacing the sampler with
+gradient descent on the identical objective. Holding the world model, the
+critic and the planner seed fixed---all four planners below score against
+\emph{the same} critic instance, the one co-trained inside that seed's RLP
+run---and varying only the optimizer:
+
+\begin{center}
+\begin{tabular}{lrcc}
+\toprule
+optimizer & queries / dec. & LeWM & PLDM \\
+\midrule
+\textbf{RLP} (learned refinement, $K{=}8$) & ${\sim}16$ & \textbf{90.2} & \textbf{83.3} \\
+CEM (sampling)                             & $9{,}000$  & 82.4 & 74.9 \\
+AdamW (fixed-step first-order, $30$ steps) & $3{,}000$  & 77.8 & 64.4 \\
+Reactive Policy (single pass)              & $0$        & 58.0 & 45.3 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+AdamW on the learned metric lands \emph{below} CEM on both models, by $4.6$ and
+$10.5$ points, despite having access to a gradient the sampler discards. A fixed
+step size cannot be simultaneously right for the flat regions of the value
+surface and for the neighbourhoods of contact events where it is sharply curved,
+and a first-order method with one schedule descends into whichever it meets
+first. Sampling is blind to curvature but is not committed to a step length, so
+it degrades more gracefully. RLP is the only arm that is both first-order and
+adaptive, and it exceeds the better of the two by $7.8$ and $8.4$ points at
+$1/560$ the budget. The ordering \mbox{RLP $>$ CEM $>$ Adam $>$ single-pass} is
+the ordering Theorems~\ref{thm:dominance}--\ref{thm:strict} predict when the
+task distribution is heterogeneous enough that no fixed hyperparameter serves
+it.
+
+\paragraph{Model error is the remaining constraint, and the Dyna loop removes
+part of it.}
+Cube is also the one environment in which fine-tuning the world model on
+on-policy data \eqref{eq:dyna-fixpoint} helps rather than hurts. One round lifts
+RLP by $3.3$ and $6.0$ points ($t = 8.7$ and $9.0$, $3$ seeds, all six
+positive), and---the observation that identifies \emph{what} improved---it lifts
+the parameter-free latent-distance baseline as well, by $2.0$ and $5.3$. That
+row has no learned component and no capacity to adapt, so its gain can only come
+from the model. The fine-tune therefore improves the world model itself rather
+than merely making it easier for a learned actor to exploit, which is the
+failure mode a Dyna round is usually suspected of. The largest gain in the table
+is the value metric under CEM ($+6.0$ and $+10.7$), i.e.\ the critic benefits
+more from a better model than the actor does. The effect also closes the gap
+between the two world models: PLDM goes from $3.4$ points behind LeWM to $0.7$,
+statistically indistinguishable at this sample size.
+
+\paragraph{Out of distribution the amortized policy stops being the weak
+baseline.}
+Quadrupling the goal distance to $\Delta = 100$---four planning horizons, and out
+of distribution for every learned component---compresses RLP's advantage on the
+stronger model to nothing: $81.8$ against the reactive policy's $81.6$ on LeWM
+pre-Dyna. The reason is visible in the same column. RLP loses $6.9$ points
+moving from $\Delta = 25$ to $100$ while the reactive policy loses $2.4$, and on
+the fine-tuned model it loses none at all ($81.6$ at both distances). RLP
+optimizes a plan whose terminal state sits a fixed $25$ primitive steps ahead, so
+that horizon is built into what it was trained for; a memoryless policy
+$\pi(\hat z, \hat z_g)$ has no horizon in it and is invariant by construction.
+This is the one place in the paper where the refinement recursion is not worth
+its cost, and it localizes the reason: not the learned value, and not the search,
+but the fixed plan length. It also marks the only negative Dyna cell we measure
+($83.1 \to 80.2$ on PLDM), where a model fine-tuned on $\Delta = 25$ rollouts is
+evaluated at $\Delta = 100$; \todo{the matched-horizon collection run that would
+separate collection distribution from horizon extrapolation is in progress.}
+
+\paragraph{The configuration is not brittle.}
+Section~\ref{sec:discussion} argues against planners whose behaviour is
+committed through hyperparameters before a task is seen. It is worth reporting
+that RLP's own configuration does not appear to be such a commitment on this
+task. Sweeping $29$ single-factor arms around the reported setting---the action
+clip $a_{\max}$, batch size, actor and critic learning rates and their decay
+shapes, the critic's discount over six values, its backup span, the refinement
+freeze point, the hindsight cross-episode rate, and the intermediate-step weight
+$\lambda$---produced no arm that improved on it on PLDM, and none that cleared
+significance on LeWM. Four settings that a single sweep had flagged as
+improvements failed to replicate when re-measured at more seeds. We read this as
+the operating point sitting in a flat basin rather than on a ridge, which is the
+property one wants of a method whose selling point is not needing to be tuned per
+task; \todo{it is also, honestly, a null result about our own tuning and should
+be stated as one.}
+
+\paragraph{Limitations.}
+Every cell is $3$ planner seeds $\times$ $3$ task seeds, against
+Section~\ref{sec:highdim}'s $6\times6$; at $50$ episodes per cell the paired
+standard error is ${\approx}2$--$3$ points, so differences inside that band are
+not an ordering and only the double-digit margins above should be read as
+such. \todo{Raise to 6 seeds before submission.} The world models are pretrained
+on all $10{,}000$ episodes including the $2{,}000$ reserved for tasks, so
+absolute rates are upper bounds; the pre/post-Dyna \emph{deltas} are unaffected,
+both arms sharing the base, and every planner in a column shares one world
+model. Two rows of Tables~\ref{tab:tworoom}--\ref{tab:reacher} are absent here:
+we ran neither MPPI nor a latent-distance Adam arm, so the optimizer comparison
+under the native cost is incomplete. The patch-token model is omitted for the
+cache-size reason given in Appendix~\ref{app:reacher}. The reactive policy runs
+at RLP's $a_{\max}$ rather than its own released default, which its $\Delta=25$
+PLDM figure ($62.2$) may understate---its output is a $\tanh$ scaled by
+$a_{\max}$, so the bound is part of the learned function rather than an external
+clip. Finally the sweep in the preceding paragraph selected on the same task
+draws it reports, inheriting the optimism noted in
+Section~\ref{sec:highdim}. \todo{Confirm the reported operating point on a fresh
+draw.}

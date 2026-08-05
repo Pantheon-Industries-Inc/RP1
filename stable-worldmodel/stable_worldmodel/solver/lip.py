@@ -329,17 +329,24 @@ class PlannerNetV3(nn.Module):
         return A_new.clamp(-self.amax, self.amax)
 
 
-def rollout_terminal(wm, z_hist, a_hist, plan):
+def rollout_terminal(wm, z_hist, a_hist, plan, compat=False, hs=3):
     """Pooled-latent WM: autoregressive H-block unroll; returns terminal latent.
 
     z_hist: (B, 3, D) latent history, a_hist: (B, 2, a) action-block history,
     plan: (B, H, a). Differentiable w.r.t. ``plan``.
     """
-    return rollout_traj(wm, z_hist, a_hist, plan)[:, -1]
+    return rollout_traj(wm, z_hist, a_hist, plan, compat=compat, hs=hs)[:, -1]
 
 
-def rollout_traj(wm, z_hist, a_hist, plan):
-    """Like :func:`rollout_terminal` but returns all H imagined latents (B, H, D)."""
+def rollout_traj(wm, z_hist, a_hist, plan, compat=False, hs=3):
+    """Like :func:`rollout_terminal` but returns all H imagined latents (B, H, D).
+
+    ``compat=True`` selects the CEM-identical windowing (see
+    :func:`rollout_traj_cem`); ``z_hist`` must then be the REAL encoder frames
+    only (no padding) and ``a_hist`` is ignored.
+    """
+    if compat:
+        return rollout_traj_cem(wm, z_hist, plan, hs=hs)
     embs = list(z_hist.unbind(dim=1))
     acts = list(a_hist.unbind(dim=1))
     outs = []
@@ -347,6 +354,49 @@ def rollout_traj(wm, z_hist, a_hist, plan):
         acts.append(plan[:, t])
         win_e = torch.stack(embs[-3:], dim=1)
         win_a = torch.stack(acts[-3:], dim=1)
+        nxt = wm.predict(win_e, wm.action_encoder(win_a))[:, -1]
+        embs.append(nxt)
+        outs.append(nxt)
+    return torch.stack(outs, dim=1)
+
+
+def rollout_traj_cem(wm, z_real, plan, hs=3):
+    """Unroll the WM exactly as ``LeWM.rollout`` does — the CEM/MPPI/Adam path.
+
+    The two planners did not share an interface. ``LeWM.rollout`` (used by
+    every sampling/gradient solver) splits the plan as
+    ``act_0, act_future = split(action_sequence, [H, T - H])`` where
+    ``H = info['pixels'].size(2)`` is the number of REAL frames the env pool
+    hands the policy. ``EnvPool`` stacks infos as ``(num_envs, 1, ...)``, so at
+    eval time H = 1: the whole plan is future actions, and the attention window
+    *grows* 1, 2, 3, 3, ... frames, truncated to the last ``hs``. No action slot
+    is ever fabricated.
+
+    LIP's own :func:`rollout_traj` instead always builds a full ``hs``-frame
+    window, padding it with copies of z0 and with ZERO action blocks for the
+    first ``hs - 1`` steps. Same (state_i, action_i) -> state_{i+1} pairing and
+    the same number of optimized dims, but different context for the first
+    ``hs - 1`` imagined steps, and a different positional-embedding slice
+    (``pos[:hs]`` from step 0 instead of ``pos[:1]``, ``pos[:2]``, ...).
+
+    Args:
+        z_real: (B, H, D) real encoder frames available at plan time.
+        plan: (B, T, a) action blocks, T >= H.
+        hs: predictor context length (``predictor.num_frames``).
+
+    Returns:
+        (B, T - H + 1, D) imagined latents — with H = 1, one per plan block,
+        matching :func:`rollout_traj`'s output length.
+    """
+    H, T = z_real.shape[1], plan.shape[1]
+    assert T >= H, f"plan length {T} < history frames {H}"
+    embs = list(z_real.unbind(dim=1))
+    acts = list(plan.unbind(dim=1))
+    outs = []
+    for t in range(T - H + 1):
+        lo = max(0, H + t - hs)
+        win_e = torch.stack(embs[lo : H + t], dim=1)
+        win_a = torch.stack(acts[lo : H + t], dim=1)
         nxt = wm.predict(win_e, wm.action_encoder(win_a))[:, -1]
         embs.append(nxt)
         outs.append(nxt)
@@ -394,11 +444,50 @@ class LIPSolver(CEMSolver):
                  restarts: int = 1, restart_noise: float = 0.5,
                  lip_select: str = "last", robust_m: int = 0,
                  init_mode: str = "zero", init_samples: int = 64,
-                 init_scale: float = 1.5, **kwargs):
+                 init_scale: float = 1.5, rollout_compat: bool = True,
+                 plan_scale: float = 1.0, plan_clip: float | None = None,
+                 use_frame_history: bool = False,
+                 align_deadline: bool = False,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         from stable_worldmodel.trm import load_metric
 
         self.lam = lam
+        # align_deadline: score the terminal cost at the chunk the EPISODE
+        # actually ends on, instead of always at the plan's last chunk.
+        #
+        # The actor emits `horizon` chunks, so its plan reaches
+        # t + horizon*action_block primitive steps. When that lands past the
+        # episode budget the terminal cost optimises a state the episode never
+        # reaches. At receding_horizon == horizon the two coincide by
+        # construction (cube: solves at t=0,25 end at 25,50 against a budget of
+        # 50), which is why this was invisible until the cadence was changed:
+        # at receding_horizon=1 the solves at t=30..45 aim at steps 55..70.
+        #
+        # With this on, E and grad_A V are read at index
+        # min(horizon, chunks_remaining) - 1. WorldModelPolicy supplies
+        # chunks_remaining via `set_align_remaining` (it is the only object that
+        # knows the step count); when it is absent the behaviour is unchanged.
+        # Default False so every banked number stays reproducible and so the
+        # shared pod checkout is untouched for other campaigns.
+        self.align_deadline = bool(align_deadline)
+        self._align_remaining = None
+        # see solve() for why plan_scale exists; 1.0 == identity == old behavior
+        self.plan_scale = float(plan_scale)
+        self.plan_clip = None if plan_clip is None else float(plan_clip)
+        # use_frame_history: consume the real (pixels_hist, action_hist) that
+        # WorldModelPolicy accumulates, instead of padding one observed frame
+        # into 3 copies with 2 zero action blocks. The WM trained on 3 real
+        # frameskip-5 frames plus real actions, so the pad is a train/deploy
+        # mismatch: it puts the true action sequence's imagined terminal
+        # 0.1216 rad from the goal where matched conditioning gives 0.0580,
+        # against a 0.05 rad success tolerance.
+        self.use_frame_history = bool(use_frame_history)
+        # rollout_compat: roll the WM exactly as LeWM.rollout does for
+        # CEM/MPPI/Adam (see rollout_traj_cem). False = the legacy LIP
+        # convention (history padded to 3 copies of z0, 2 zero action blocks),
+        # which is what every actor trained before 2026-07-27 saw.
+        self.rollout_compat = bool(rollout_compat)
         self.restarts = int(restarts)
         self.restart_noise = restart_noise
         self.lip_select = lip_select
@@ -474,7 +563,7 @@ class LIPSolver(CEMSolver):
     def _base(self):
         return getattr(self.model, "base", self.model)
 
-    def _value_init(self, wm, z_hist, a_hist, zg):
+    def _value_init(self, wm, z_hist, a_hist, zg, rollT=None):
         """A(0) = argmin-E over {zero, iid-Gaussian, time-tiled Gaussian} raw plans.
 
         The tiled half (one action block repeated across the horizon) covers
@@ -493,10 +582,11 @@ class LIPSolver(CEMSolver):
                           iid, tile.expand(B, n_tile, H, adim)], dim=1)
         cand = cand.clamp(-amax, amax)
         C = cand.shape[1]
+        rollT = rollT or (lambda zh, ah, p: rollout_terminal(wm, zh, ah, p))
         with torch.no_grad():
-            term = rollout_terminal(wm, z_hist.repeat_interleave(C, dim=0),
-                                    a_hist.repeat_interleave(C, dim=0),
-                                    cand.reshape(B * C, H, adim))
+            term = rollT(z_hist.repeat_interleave(C, dim=0),
+                         a_hist.repeat_interleave(C, dim=0),
+                         cand.reshape(B * C, H, adim))
             E = self.lip_value(term.float(), zg.repeat_interleave(C, dim=0)).view(B, C)
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
@@ -504,17 +594,29 @@ class LIPSolver(CEMSolver):
     def _proposal_lip(self, info_dict, n_envs):
         wm = self._base()
         with torch.no_grad():
-            px = info_dict["pixels"].to(self.device, dtype=self.dtype)
+            px_key = "pixels"
+            if self.use_frame_history and info_dict.get("pixels_hist") is not None:
+                # (B, <=3, C, H, W) of real frames at action_block spacing,
+                # accumulated by WorldModelPolicy. Falls back to the single
+                # observed frame for the first blocks of an episode, where a
+                # history genuinely does not exist yet.
+                px_key = "pixels_hist"
+            px = info_dict[px_key].to(self.device, dtype=self.dtype)
             enc_in = {"pixels": px}
             if getattr(wm, "wants_proprio", False):
-                pro = info_dict.get("proprio")
+                pro_key = ("proprio_hist"
+                           if px_key == "pixels_hist"
+                           and info_dict.get("proprio_hist") is not None
+                           else "proprio")
+                pro = info_dict.get(pro_key)
                 if pro is None:
                     raise KeyError("proprio-variant WM: info_dict lacks 'proprio'")
                 pro = torch.as_tensor(np.asarray(pro), dtype=torch.float32,
                                       device=self.device)
                 enc_in["proprio"] = pro.reshape(px.shape[0], px.shape[1], -1)
             enc = wm.encode(enc_in)
-            z_hist = enc["emb"][:, -3:].float()
+            z_real = enc["emb"][:, -3:].float()    # REAL frames (1 unless history is on)
+            z_hist = z_real
             if z_hist.shape[1] < 3:                # pad short history at episode start
                 pad = z_hist[:, :1].expand(-1, 3 - z_hist.shape[1], -1)
                 z_hist = torch.cat([pad, z_hist], dim=1)
@@ -533,25 +635,66 @@ class LIPSolver(CEMSolver):
 
         R = max(1, self.restarts)
         B = n_envs
-        zh_r = z_hist.repeat_interleave(R, dim=0)
+        # --- rollout interface (see rollout_traj_cem) ----------------------
+        # compat: real frames + CEM's growing window, no fabricated actions.
+        # legacy: 3-frame padded history + 2 zero action blocks.
+        hs = int(getattr(getattr(wm, "predictor", None), "num_frames", 3))
+        z_roll = z_real if self.rollout_compat else z_hist
+
+        def roll(zh, ah, plan):
+            return rollout_traj(wm, zh, ah, plan,
+                               compat=self.rollout_compat, hs=hs)
+
+        def rollT(zh, ah, plan):
+            return roll(zh, ah, plan)[:, -1]
+
+        zh_r = z_roll.repeat_interleave(R, dim=0)
         zg_r = zg.repeat_interleave(R, dim=0)
-        z0_r = zh_r[:, -1]
+        z0_r = zh_r[:, -1]                         # last REAL frame either way
         a_hist = torch.zeros(B * R, 2, self.action_dim, device=self.device)
+        if self.use_frame_history and info_dict.get("action_hist") is not None:
+            # Real executed action blocks where the legacy path fed zeros. The
+            # WM attends over (state, action) pairs, so zeros in the two most
+            # recent history slots are inputs it never saw in training.
+            ah = torch.as_tensor(np.asarray(info_dict["action_hist"]),
+                                 dtype=torch.float32, device=self.device)
+            ah = ah.reshape(B, -1, self.action_dim).to(self.dtype)
+            k = min(ah.shape[1], a_hist.shape[1])
+            if k > 0:
+                a_hist[:, -k:] = ah[:, -k:].repeat_interleave(R, dim=0)
         A = self.restart_noise * torch.randn(B * R, self.horizon, self.action_dim,
                                              device=self.device, generator=self.torch_gen)
         A[::R] = 0.0                               # one zero-init restart per env
         if self.init_mode == "value" and R == 1:
-            A = self._value_init(wm, z_hist, a_hist, zg)
+            A = self._value_init(wm, z_roll, a_hist, zg, rollT=rollT)
         s = self.actor.init_state(A.shape[0], z0_r) if self.kind == "lip4r" else None
+
+        # Deadline-aligned terminal index. `term(traj)` picks the chunk the
+        # EPISODE ends on rather than the plan's last chunk; identical to
+        # traj[:, -1] whenever the plan already ends on (or before) the cap, so
+        # this is provably inert at receding_horizon == horizon.
+        rem = self._align_remaining
+        term_idx = None
+        if self.align_deadline and rem is not None:
+            r = torch.as_tensor(rem, device=self.device).reshape(-1).long()
+            if r.numel() == B:                      # one entry per env -> per restart
+                r = r.repeat_interleave(R, dim=0)
+            if r.numel() == A.shape[0]:
+                term_idx = (r - 1).clamp_(0, self.horizon - 1)
+        def term(tr):
+            if term_idx is None:
+                return tr[:, -1]
+            return tr[torch.arange(tr.shape[0], device=tr.device), term_idx]
+
         buf = []
         for k_it in range(self.lip_iters):
             with torch.enable_grad():
                 A_in = A.detach().requires_grad_(True)
-                traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                (gA,) = torch.autograd.grad(self.lip_value(traj[:, -1], zg_r).sum(), A_in)
+                traj = roll(zh_r, a_hist, A_in)
+                (gA,) = torch.autograd.grad(self.lip_value(term(traj), zg_r).sum(), A_in)
             with torch.no_grad():
-                traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                E = self.lip_value(traj_f[:, -1], zg_r)
+                traj_f = roll(zh_r, a_hist, A)
+                E = self.lip_value(term(traj_f), zg_r)
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and
@@ -572,24 +715,30 @@ class LIPSolver(CEMSolver):
             zh_c = zh_r.repeat_interleave(C, dim=0)
             ah_c = a_hist.repeat_interleave(C, dim=0)
             zg_c = zg_r.repeat_interleave(C, dim=0)
+            # the candidate block is expanded by C, so the aligned index must be
+            # too, or selection would score a different step than refinement did
+            idx_c = None if term_idx is None else term_idx.repeat_interleave(C, dim=0)
+            def termC(tr):
+                if idx_c is None:
+                    return tr[:, -1]
+                return tr[torch.arange(tr.shape[0], device=tr.device), idx_c]
+            rollTc = lambda zh, ah, pl: termC(roll(zh, ah, pl))
             if self.robust_m > 0:                  # value of m perturbed copies (robust argmin)
                 scores = 0
                 amax = self.actor.amax
                 for _ in range(self.robust_m):
                     pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
-                    scores = scores + self.lip_value(
-                        rollout_terminal(wm, zh_c, ah_c, pert), zg_c)
+                    scores = scores + self.lip_value(rollTc(zh_c, ah_c, pert), zg_c)
                 Ef = (scores / self.robust_m).view(B, R * C)
             else:
-                Ef = self.lip_value(
-                    rollout_terminal(wm, zh_c, ah_c, cf), zg_c).view(B, R * C)
+                Ef = self.lip_value(rollTc(zh_c, ah_c, cf), zg_c).view(B, R * C)
             best = Ef.argmin(dim=1)
             A = cands.view(B, R * C, self.horizon, self.action_dim)[
                 torch.arange(B, device=self.device), best]
         if os.environ.get("LIP_PROBE_DIR"):
             global _LIP_PROBE_N
             with torch.no_grad():
-                z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)     # (B,H,D) imagined path
+                z_traj = roll(z_roll, a_hist[:B], A)                # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
                 e_imag = self.lip_value(z_imag, zg)
             torch.save(
@@ -633,6 +782,14 @@ class LIPSolver(CEMSolver):
         return (A * self._ast + self._amu).to(self.dtype)            # raw action units
 
     # ------------------------------------------------------------------ solve
+    def set_align_remaining(self, remaining_chunks) -> None:
+        """Number of plan chunks the episode has left, per replanning env.
+
+        Called by WorldModelPolicy, which is the only object that tracks the
+        step count. Ignored unless ``align_deadline`` is set.
+        """
+        self._align_remaining = remaining_chunks
+
     def solve(self, info_dict: dict, init_action: torch.Tensor | None = None) -> dict:
         start_time = time.time()
         outputs = {"costs": [], "mean": [], "var": []}
@@ -681,6 +838,21 @@ class LIPSolver(CEMSolver):
             mean[start_idx:end_idx] = batch_mean
             var[start_idx:end_idx] = batch_var
             outputs["costs"].extend(final_cost)
+
+        # Deploy-time plan rescale. Probe F measured LIP reaching a BETTER
+        # terminal value than CEM (0.278 vs 0.314) and a better imagined
+        # terminal (0.0397 vs 0.0422 rad) while still losing the card, with
+        # plan rms 0.32 against CEM's 0.58 and the data's 1.00 -- the minimizer
+        # set is broad and biased toward weak torques, so the actor picks a
+        # valid-but-limp member of it. Scaling at deploy time tests that
+        # directly without retraining. plan_scale=1.0 is the identity, so the
+        # default reproduces every number measured before this existed.
+        if self.plan_scale != 1.0:
+            mean = mean * self.plan_scale
+            if self.plan_clip is not None:
+                # Past the physical box MuJoCo clips anyway; clipping here keeps
+                # the plan we score identical to the one that gets executed.
+                mean = mean.clamp(-self.plan_clip, self.plan_clip)
 
         outputs["actions"] = mean.detach().cpu()
         outputs["mean"] = [mean.detach().cpu()]

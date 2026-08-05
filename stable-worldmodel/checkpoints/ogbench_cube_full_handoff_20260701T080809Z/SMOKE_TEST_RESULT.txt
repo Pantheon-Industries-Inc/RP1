@@ -1,0 +1,15 @@
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 10400.87it/s]
+OK models/ogbench_cube_single_dino/weights_step_100000.pt: PreJEPA (42,252,576 params)
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 10753.64it/s]
+OK models/ogbench_cube_double_dino/weights_step_100000.pt: PreJEPA (42,252,706 params)
+Loading weights:   0%|          | 0/223 [00:00<?, ?it/s]Loading weights: 100%|██████████| 223/223 [00:00<00:00, 10256.60it/s]
+OK models/ogbench_cube_triple_dino/weights_step_100000.pt: PreJEPA (42,252,836 params)
+03:00:26 | INFO  | __init__.py | PyTorch version 2.12.0 available.
+03:00:26 | INFO  | __init__.py | JAX version 0.10.1 available.
+03:00:27 | INFO  | atomic_chec~| [atomic_save] installed crash-safe checkpoint plugin (write to sibling .tmp + fsync + atomic rename)
+03:00:27 | INFO  | utils.py    | Created ViT-tiny from scratch with config: {'hidden_size': 192, 'num_hidden_layers': 12, 'num_attention_heads': 3, 'intermediate_size': 768, 'image_size': 224, 'patch_size': 14}
+OK models/ogbench_cube_single_lewm/weights_step_40000.pt: LeWM (18,034,628 params)
+03:00:27 | INFO  | utils.py    | Created ViT-tiny from scratch with config: {'hidden_size': 192, 'num_hidden_layers': 12, 'num_attention_heads': 3, 'intermediate_size': 768, 'image_size': 224, 'patch_size': 14}
+OK models/ogbench_cube_double_lewm/weights_step_40000.pt: LeWM (18,034,628 params)
+03:00:27 | INFO  | utils.py    | Created ViT-tiny from scratch with config: {'hidden_size': 192, 'num_hidden_layers': 12, 'num_attention_heads': 3, 'intermediate_size': 768, 'image_size': 224, 'patch_size': 14}
+OK models/ogbench_cube_triple_lewm/weights_step_40000.pt: LeWM (18,034,628 params)

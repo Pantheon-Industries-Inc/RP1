@@ -212,10 +212,15 @@ logs/
 **/__pycache__/**
 **/*.pyc
 !scripts/minerl.sh
+# reacher campaign drivers — tracked deliberately: the pipeline IS the experiment
+!scripts/plan/reacher_*.sh
+!scripts/plan/train_td_seeds.sh
+# same for the tworoom matrix / per-planner-Dyna campaign
+!scripts/plan/tworoom_*.sh
 
 outputs/
 multirun/
-checkpoints/
+.DS_Store
 dino_wm_ckpt/
 pusht_noise/
 results/

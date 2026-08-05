@@ -2,8 +2,23 @@
 # Dyna round-1 on-policy collection (pod A, must be otherwise QUIET).
 # 3 actors x 8 calls x 50 envs (= up to 400 eps/actor before the <25-step drop).
 # Each call: eval-path rollout with SWM_RECORD_PATH -> per-actor lance
-# (concurrent writers must not share one lance). Seeds 1000+ disjoint from
-# eval (42/43/44) and smoke (777). Parallelism: 3 -> auto-degrade to 1 on abort.
+# (concurrent writers must not share one lance). Parallelism: 3 -> auto-degrade
+# to 1 on abort.
+#
+# ############################################################################
+# # DATA SPLIT WARNING -- see ../DATA_SPLIT_POLICY.md
+# #
+# # Collection seeds are 1000+ while eval uses 42/43/44. That is SEED
+# # disjointness, which guarantees NOTHING: both draw start states from the
+# # SAME 10k-episode expert lance, so this collection covers eval episodes and
+# # the WM fine-tuned on it has seen the states it is later scored on.
+# #
+# # Required: restrict collection to episodes 0-7999 and eval to 8000-9999
+# # (episode_split.COLLECT / .EVAL). eval_wm.py has no episode-range filter
+# # yet, so this script CANNOT yet honour the split -- results from it are
+# # upper bounds, not generalization estimates. Measure the leak with:
+# #   python episode_split.py overlap --collect <lances> --eval-dataset <lance>
+# ############################################################################
 set -u
 export PYTHONPATH=/workspace/code/stable-worldmodel
 export STABLEWM_HOME=/workspace/swm_home

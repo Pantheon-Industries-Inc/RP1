@@ -6,6 +6,15 @@ unique. EXPERT_MULT=1.5 -> 60/40 expert/on-policy.
 
 Usage: build_redo_dataset.py OUT_LANCE EXPERT_MULT ONPOLICY.lance [ONPOLICY2 ...] [--seed N]
 """
+# ############################################################################
+# # DATA SPLIT WARNING -- see ../DATA_SPLIT_POLICY.md
+# # The expert slice mixed in here, and the on-policy lances appended to it,
+# # MUST exclude every episode the evaluation draws tasks from. They currently
+# # do NOT: expert episodes are sampled from all 10k and the on-policy rollouts
+# # were collected from all 10k, while eval draws from the same pool. Required
+# # split: fine-tune on episodes 0-7999 only, eval on 8000-9999
+# # (episode_split.COLLECT / .EVAL; assert_disjoint() to enforce).
+# ############################################################################
 import shutil
 import sys
 from pathlib import Path
