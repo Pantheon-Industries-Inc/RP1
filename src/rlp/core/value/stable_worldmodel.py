@@ -46,7 +46,11 @@ class LatentGoalCost(nn.Module):
         if "goal_emb" not in info_dict:
             if "goal" not in info_dict:
                 raise KeyError("planning info lacks 'goal'")
-            goal = {key: value[:, 0] for key, value in info_dict.items() if torch.is_tensor(value)}
+            goal = {
+                key: value[:, 0]
+                for key, value in info_dict.items()
+                if torch.is_tensor(value) and not key.startswith("_")
+            }
             goal["pixels"] = goal["goal"]
             for key in tuple(goal):
                 if key.startswith("goal_"):

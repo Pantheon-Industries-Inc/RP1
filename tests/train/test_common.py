@@ -10,6 +10,8 @@ import torch
 from lightning import LightningModule, Trainer
 from torchvision.transforms import v2
 
+from rlp.core.temporal import trajectory_value
+from rlp.data import LatentCache
 from rlp.train import callbacks
 from rlp.train.callbacks import NonFiniteGradientGuard, PortableCheckpointCallback
 from rlp.train.transforms import nested_clip, nested_resize
@@ -46,6 +48,34 @@ def test_sample_windows_aligns_values_and_actions() -> None:
     assert sampled_values.shape == sampled_actions.shape == (8, 3, 2)
     assert torch.equal(sampled_actions, sampled_values + 100)
     assert torch.equal(sampled_values[:, 1:, 0], sampled_values[:, :-1, 0] + 2)
+
+
+def test_latent_cache_windowing_is_causal_and_episode_local() -> None:
+    cache = LatentCache(
+        z=torch.arange(10, dtype=torch.float32).view(5, 2),
+        episode_idx=torch.tensor([0, 0, 0, 1, 1]),
+        step_idx=torch.tensor([0, 1, 2, 0, 1]),
+    )
+    windowed = cache.windowed(frames=3)
+    assert windowed.z.shape == (5, 6)
+    assert torch.equal(windowed.z[0], torch.tensor([0.0, 1.0, 0.0, 1.0, 0.0, 1.0]))
+    assert torch.equal(windowed.z[2], torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]))
+    assert torch.equal(windowed.z[3], torch.tensor([6.0, 7.0, 6.0, 7.0, 6.0, 7.0]))
+
+
+def test_tel_exact_preserves_terminal_gradient_and_adds_start_baseline() -> None:
+    def value(state: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+        return ((state - goal) ** 2).sum(dim=-1)
+
+    start = torch.tensor([[2.0]], requires_grad=True)
+    trajectory = torch.tensor([[[1.5], [1.0], [0.5]]], requires_grad=True)
+    goal = torch.zeros(1, 1)
+    terminal = trajectory_value(value, trajectory, goal, start, "terminal")
+    telescoping = trajectory_value(value, trajectory, goal, start, "tel-exact")
+    terminal_gradient = torch.autograd.grad(terminal.sum(), trajectory, retain_graph=True)[0]
+    telescoping_gradient = torch.autograd.grad(telescoping.sum(), trajectory)[0]
+    assert torch.equal(terminal_gradient, telescoping_gradient)
+    assert torch.equal(telescoping, terminal - value(start, goal))
 
 
 def test_nested_dependency_transforms_match_torchvision() -> None:

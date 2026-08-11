@@ -34,6 +34,7 @@ from rlp.logging import logger
 
 from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
+from ..temporal import trajectory_value
 from ..world_model.protocols import LatentWorldModel, TokenWorldModel
 
 
@@ -87,6 +88,7 @@ class LIPCheckpoint(TypedDict):
     amu5: NotRequired[torch.Tensor]
     ast5: NotRequired[torch.Tensor]
     hwm: NotRequired[str]
+    temporal_objective: NotRequired[str]
 
 
 # Mech-interp hook: ``probe_directory`` dumps per-replan
@@ -219,6 +221,9 @@ class LIPSolver(CEMSolver):
         self.actor.eval()
         self._actor_horizon = ck["horizon"]  # plan length must match the trained net
         self.lip_iters = ck["iters"]
+        self.temporal_objective = ck.get("temporal_objective", "terminal")
+        if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
+            raise ValueError(f"unsupported temporal objective: {self.temporal_objective}")
         value_module = load_metric(ck["value"], device=self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
@@ -330,7 +335,8 @@ class LIPSolver(CEMSolver):
             with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
                 A_in = A.detach().requires_grad_(True)
                 traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                (gA,) = torch.autograd.grad(self.lip_value(traj[:, -1], zg_r).sum(), A_in)
+                score = trajectory_value(self.lip_value, traj, zg_r, z0_r, self.temporal_objective)
+                (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
                 reuse = self.reuse_trajectory
                 if reuse == "verify":
@@ -341,7 +347,7 @@ class LIPSolver(CEMSolver):
                     traj_f = traj.detach()
                 else:
                     traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                E = self.lip_value(traj_f[:, -1], zg_r)
+                E = trajectory_value(self.lip_value, traj_f, zg_r, z0_r, self.temporal_objective)
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
@@ -371,10 +377,16 @@ class LIPSolver(CEMSolver):
                 amax = self.actor.amax
                 for _ in range(self.robust_m):
                     pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
-                    scores = scores + self.lip_value(rollout_terminal(wm, zh_c, ah_c, pert), zg_c)
+                    perturbed = rollout_traj(wm, zh_c, ah_c, pert)
+                    scores = scores + trajectory_value(
+                        self.lip_value, perturbed, zg_c, zh_c[:, -1], self.temporal_objective
+                    )
                 Ef = (scores / self.robust_m).view(B, R * C)
             else:
-                Ef = self.lip_value(rollout_terminal(wm, zh_c, ah_c, cf), zg_c).view(B, R * C)
+                final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
+                Ef = trajectory_value(
+                    self.lip_value, final_trajectory, zg_c, zh_c[:, -1], self.temporal_objective
+                ).view(B, R * C)
             best = Ef.argmin(dim=1)
             A = cands.view(B, R * C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
         if self.probe_directory is not None:
@@ -382,7 +394,7 @@ class LIPSolver(CEMSolver):
             with torch.no_grad():
                 z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
-                e_imag = self.lip_value(z_imag, zg)
+                e_imag = trajectory_value(self.lip_value, z_traj, zg, z_hist[:, -1], self.temporal_objective)
             torch.save(
                 {
                     "z0": z_hist[:, -1].detach().cpu(),

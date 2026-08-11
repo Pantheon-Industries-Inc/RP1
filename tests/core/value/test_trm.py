@@ -9,6 +9,7 @@ import torch
 
 from rlp.core.value import (
     IQEHead,
+    L2WindowCost,
     MetricCost,
     PairwiseMetricHead,
     QuasimetricHead,
@@ -185,12 +186,64 @@ def test_metric_cost_reconstructs_context_and_uses_pessimistic_ensemble() -> Non
     assert torch.equal(ensemble._metric_terminal_cost(info), torch.full((2, 5), 3.0))
 
 
-def test_metric_cost_rejects_unavailable_context() -> None:
+def test_metric_cost_pads_unavailable_context() -> None:
     metric = PairwiseMetricHead(12)
     cost = MetricCost(_PlanningStub(), metric)
     info = {"predicted_emb": torch.randn(2, 4, 2, 4), "goal_emb": torch.randn(2, 1, 4)}
-    with pytest.raises(ValueError, match="requires 3 predicted frames"):
-        cost._metric_terminal_cost(info)
+    assert cost._metric_terminal_cost(info).shape == (2, 4)
+
+
+def test_metric_cost_left_pads_window_and_scores_deadline_chunk() -> None:
+    class RecordingMetric(torch.nn.Module):
+        latent_dim = 6
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.predicted: torch.Tensor | None = None
+
+        def cost(self, predicted: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
+            del goal
+            self.predicted = predicted
+            return predicted.sum(dim=-1)
+
+    metric = RecordingMetric()
+    cost = MetricCost(_PlanningStub(), metric, deadline_mode="deadline")
+    timeline = torch.arange(5, dtype=torch.float32).view(1, 1, 5, 1).expand(1, 2, 5, 2)
+    info = {"predicted_emb": timeline, "goal_emb": torch.zeros(1, 1, 2)}
+    actions = torch.zeros(1, 2, 5, 1)
+
+    cost.set_align_remaining([1])
+    result = cost._metric_terminal_cost(info, actions)
+    assert result.shape == (1, 2)
+    assert metric.predicted is not None
+    assert torch.equal(metric.predicted[0, 0], torch.tensor([0.0, 0.0] * 3))
+
+    cost.set_align_remaining([4])
+    cost._metric_terminal_cost(info, actions)
+    assert metric.predicted is not None
+    assert torch.equal(metric.predicted[0, 0], torch.tensor([1.0, 1.0, 2.0, 2.0, 3.0, 3.0]))
+
+    batched_info = {
+        "predicted_emb": timeline.expand(2, -1, -1, -1),
+        "goal_emb": torch.zeros(2, 1, 2),
+        "_align_remaining": torch.tensor([[1, 1], [4, 4]]),
+    }
+    cost.set_align_remaining([99])  # Per-batch payload takes precedence over wrapper state.
+    cost._metric_terminal_cost(batched_info, actions.expand(2, -1, -1, -1))
+    assert metric.predicted is not None
+    assert torch.equal(metric.predicted[0, 0], torch.tensor([0.0, 0.0] * 3))
+    assert torch.equal(metric.predicted[1, 0], torch.tensor([1.0, 1.0, 2.0, 2.0, 3.0, 3.0]))
+
+
+def test_l2_window_cost_is_parameter_free_and_gradient_safe() -> None:
+    metric = L2WindowCost(12)
+    predicted = torch.randn(4, 12, requires_grad=True)
+    goal = torch.randn(4, 12)
+    cost = metric.cost(predicted, goal)
+    (gradient,) = torch.autograd.grad(cost.sum(), predicted)
+    assert cost.shape == (4,)
+    assert gradient.shape == predicted.shape
+    assert list(metric.parameters()) == []
 
 
 def test_scsa_perfect_and_anti() -> None:

@@ -23,7 +23,7 @@ from torch import nn
 from torchvision.transforms import v2 as transforms
 
 from rlp.config import dispatch, run_hydra
-from rlp.core.policy import NoMovePolicy
+from rlp.core.policy import NoMovePolicy, PlanConfig, WorldModelPolicy
 from rlp.core.value import as_planning_cost
 from rlp.core.world_model import load_pretrained
 from rlp.core.world_model.runtime import pick_device
@@ -94,7 +94,7 @@ def _run(cfg: DictConfig) -> None:
 
     # create the transform
     img_dtype = torch.bfloat16 if cfg.runtime.bfloat16 else torch.float32
-    transform = {
+    transform: dict[str, Callable[[object], torch.Tensor]] = {
         "pixels": img_transform(cfg, img_dtype),
         "goal": img_transform(cfg, img_dtype),
     }
@@ -112,6 +112,20 @@ def _run(cfg: DictConfig) -> None:
         logger.info(f"Using normalization stats from {stats_name}; evaluation tasks and goals from {cfg.data.path}")
     col_name = episode_col(dataset)
     ep_indices, _ = np.unique(dataset.get_col_data(col_name), return_index=True)
+    episode_range = cfg.evaluation.episode_range
+    if episode_range:
+        parts = str(episode_range).split(":")
+        if len(parts) != 2:
+            raise ValueError("evaluation.episode_range must use LO:HI syntax")
+        low, high = map(int, parts)
+        if low < 0 or high <= low:
+            raise ValueError("evaluation.episode_range must satisfy 0 <= LO < HI")
+        ep_indices = ep_indices[(ep_indices >= low) & (ep_indices < high)]
+        if len(ep_indices) < cfg.evaluation.num_episodes:
+            raise ValueError(
+                f"episode range {episode_range} has {len(ep_indices)} episodes; need {cfg.evaluation.num_episodes}"
+            )
+        logger.info(f"Restricted evaluation pool to episodes [{low}, {high}): {len(ep_indices)} eligible")
 
     process: dict[str, Any] = {}
     for col in cfg.data.keys_to_cache:
@@ -152,7 +166,11 @@ def _run(cfg: DictConfig) -> None:
             if not callable(predictor):
                 raise TypeError("world-model predictor must be callable")
             dynamic_model.predictor = torch.compile(predictor)
-        config = swm.PlanConfig(**cfg.planning)
+        planning_raw = OmegaConf.to_container(cfg.planning, resolve=True)
+        if not isinstance(planning_raw, dict):
+            raise TypeError("planning configuration must resolve to a mapping")
+        planning = cast(dict[str, Any], planning_raw)
+        config = PlanConfig(**planning)
 
         # optional plan-score metric hook: replace (or blend with) the raw
         # latent cost by a trained value function (ported from pod snapshot2)
@@ -175,6 +193,7 @@ def _run(cfg: DictConfig) -> None:
                 cfg.core.value.mode,
                 lam=float(cfg.core.value.blend_weight),
                 metrics=loaded_metrics,
+                deadline_mode=str(cfg.core.value.deadline_mode),
             )
             logger.info(f"Plan-score metrics={metric_paths} mode={cfg.core.value.mode}")
 
@@ -184,9 +203,7 @@ def _run(cfg: DictConfig) -> None:
             device=device,
             seed=cfg.runtime.seed,
         )
-        policy: BasePolicy = swm.policy.WorldModelPolicy(
-            solver=solver, config=config, process=process, transform=transform
-        )
+        policy: BasePolicy = WorldModelPolicy(solver=solver, config=config, process=process, transform=transform)
 
     else:
         policy = NoMovePolicy() if policy_kind == "no_move" else swm.policy.RandomPolicy()
@@ -201,10 +218,12 @@ def _run(cfg: DictConfig) -> None:
     # columns: lance serves them as (N,1), h5 as (N,)).
     _row_epi = np.asarray(dataset.get_col_data(col_name)).reshape(-1)
     _row_step = np.asarray(dataset.get_col_data("step_idx")).reshape(-1)
-    max_start_per_row = np.array([max_start_idx_dict[ep_id] for ep_id in _row_epi])
+    max_start_per_row = np.full(_row_epi.shape, -1, dtype=np.int64)
+    for ep_id, maximum in max_start_idx_dict.items():
+        max_start_per_row[_row_epi == ep_id] = maximum
 
     # remove all the lines of dataset for which dataset['step_idx'] > max_start_per_row
-    valid_mask = _row_step <= max_start_per_row
+    valid_mask = (max_start_per_row >= 0) & (_row_step <= max_start_per_row)
     valid_indices = np.nonzero(valid_mask)[0]
     logger.info(f"Found {int(valid_mask.sum())} valid evaluation starting points")
 

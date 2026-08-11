@@ -4120,6 +4120,7 @@ packages:
   - h5py>=3.16
   - huggingface-hub>=1.26
   - hydra-core>=1.3.2
+  - imageio>=2.37
   - lightning>=2.6
   - loguru>=0.7
   - numpy>=2.3
@@ -4134,7 +4135,7 @@ packages:
   - torchvision==0.22.1
   - tqdm>=4.67
   - stable-worldmodel[env]==0.1.1 ; extra == 'all-envs'
-  - imageio[ffmpeg]>=2.37 ; extra == 'campaign'
+  - imageio-ffmpeg>=0.6 ; extra == 'campaign'
   - ogbench>=1.2 ; extra == 'campaign'
   - opencv-python-headless>=4.12 ; extra == 'campaign'
   - pygame>=2.6 ; extra == 'campaign'

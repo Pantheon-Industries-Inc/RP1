@@ -5,6 +5,9 @@ defaults:
   - _self_
 entrypoint: {_target_: rlp.train.metric._run}
 cache: ???
+cache_mmap: true
+window_frames: 1
+window_lag: 1
 learner: td
 output:
   checkpoint: value

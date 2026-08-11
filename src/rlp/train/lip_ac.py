@@ -53,6 +53,7 @@ from rlp.config import dispatch, run_hydra
 from rlp.core.planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from rlp.core.rollout import rollout_traj
 from rlp.core.solver.lip import ValueFunction
+from rlp.core.temporal import trajectory_value
 from rlp.core.value import load_metric
 from rlp.core.value.io import build_metric, save_metric
 from rlp.core.value.learners.td import _expectile_loss
@@ -94,6 +95,12 @@ def _run(cfg: DictConfig) -> None:
     }
     for old, new in aliases.items():
         a[old] = not a[new] if old == "no_gate" else a[new]
+    if a.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
+        raise ValueError(f"unsupported temporal objective: {a.temporal_objective}")
+    if a.actor_only and not a.init_value:
+        raise ValueError("actor_only=true requires init_value")
+    if not a.actor_only and not a.cache_td:
+        raise ValueError("cache_td is required unless actor_only=true")
     if torch.cuda.is_available():
         dev = "cuda"
     elif torch.backends.mps.is_available():
@@ -108,7 +115,7 @@ def _run(cfg: DictConfig) -> None:
     wm = cast(LatentWorldModel, wm_module)
 
     # ------------------------------------------------------------ actor data (fs5 + h5)
-    c = LatentCache.load(a.cache)
+    c = LatentCache.load(a.cache, mmap=bool(a.cache_mmap))
     z = c.z.to(dev).float()
     eps = c.episodes()
     keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]
@@ -188,11 +195,14 @@ def _run(cfg: DictConfig) -> None:
         )
 
     # ------------------------------------------------------------ critic (fs1 cache)
-    c_td = LatentCache.load(a.cache_td)
+    c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
-        assert critic.latent_dim == c_td.latent_dim, "init-value latent dim mismatch"
+        expected_dim = z.shape[-1] if c_td is None else c_td.latent_dim
+        assert critic.latent_dim == expected_dim, "init-value latent dim mismatch"
     else:
+        if c_td is None:
+            raise RuntimeError("critic cache unavailable")
         critic = build_metric(
             "td",
             c_td.latent_dim,
@@ -213,16 +223,20 @@ def _run(cfg: DictConfig) -> None:
     critic_fn = cast(ValueFunction, critic)
     teacher_fn = cast(ValueFunction, teacher)
 
-    td_sampler = NStepGoalSampler(
-        c_td,
-        n_step=a.n_step,
-        p_cross=a.td_p_cross,
-        n_buckets=10,
-        balanced=True,
-        seed=a.seed,
-        max_delta=a.td_max_delta,
+    td_sampler = (
+        None
+        if c_td is None
+        else NStepGoalSampler(
+            c_td,
+            n_step=a.n_step,
+            p_cross=a.td_p_cross,
+            n_buckets=10,
+            balanced=True,
+            seed=a.seed,
+            max_delta=a.td_max_delta,
+        )
     )
-    c_opt = torch.optim.AdamW(critic.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
+    c_opt = None if a.actor_only else torch.optim.AdamW(critic.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
 
     n_plan = a.horizon * fs  # plan length in primitive steps
     if a.gamma >= 1.0:
@@ -232,6 +246,8 @@ def _run(cfg: DictConfig) -> None:
         plan_cost = (1.0 - plan_disc) / (1.0 - a.gamma)
 
     def critic_step(expand: ExpandBatch | None = None, tau: float | None = None, lr: float | None = None) -> float:
+        if td_sampler is None or c_opt is None:
+            raise RuntimeError("critic_step called during actor-only training")
         tau = a.expectile if tau is None else tau
         if lr is not None:
             for pg in c_opt.param_groups:
@@ -358,16 +374,29 @@ def _run(cfg: DictConfig) -> None:
         e_path: list[torch.Tensor] = []
         zT: torch.Tensor | None = None
         tr: torch.Tensor | None = None
+        rollout_action: torch.Tensor | None = None
+        rollout_trajectory: torch.Tensor | None = None
+        rollout_score: torch.Tensor | None = None
+        if a.reuse_refinement_rollouts:
+            rollout_action = A.detach().requires_grad_(True)
+            rollout_trajectory = rollout_traj(wm, zh, ah, rollout_action)
+            rollout_score = trajectory_value(teacher_fn, rollout_trajectory, zg, z0, a.temporal_objective)
         for k in range(a.iters):
             # gradient feature (detached — input to the learned rule, not the training path)
-            with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
-                A_in = A.detach().requires_grad_(True)
-                traj = rollout_traj(wm, zh, ah, A_in)
-                (gA,) = torch.autograd.grad(teacher_fn(traj[:, -1], zg).sum(), A_in)
-            # A_in holds A's values, so the grad pass's trajectory IS the feature
-            # trajectory — reuse it instead of a third WM rollout (value-identical)
-            traj_f = traj.detach()
-            E_feat = teacher_fn(traj_f[:, -1], zg).detach()
+            if a.reuse_refinement_rollouts:
+                if rollout_action is None or rollout_trajectory is None or rollout_score is None:
+                    raise RuntimeError("refinement rollout was not initialized")
+                (gA,) = torch.autograd.grad(rollout_score.sum(), rollout_action, retain_graph=k > 0)
+                traj_f = rollout_trajectory.detach()
+                E_feat = rollout_score.detach()
+            else:
+                with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
+                    A_in = A.detach().requires_grad_(True)
+                    traj = rollout_traj(wm, zh, ah, A_in)
+                    score = trajectory_value(teacher_fn, traj, zg, z0, a.temporal_objective)
+                    (gA,) = torch.autograd.grad(score.sum(), A_in)
+                traj_f = traj.detach()
+                E_feat = score.detach()
             vtraj = None
             if a.goal_mode == "sep" or (a.goal_mode == "vonly" and a.cond_mode == "token"):
                 vtraj = (
@@ -386,7 +415,10 @@ def _run(cfg: DictConfig) -> None:
                 A = net(A, gA.detach(), E_feat, z0, zg, traj_f, k=k, vtraj=vtraj)
             tr = rollout_traj(wm, zh, ah, A)
             zT = tr[:, -1]
-            e_path.append(teacher_fn(zT, zg).mean())
+            score = trajectory_value(teacher_fn, tr, zg, z0, a.temporal_objective)
+            e_path.append(score.mean())
+            if a.reuse_refinement_rollouts and k + 1 < a.iters:
+                rollout_action, rollout_trajectory, rollout_score = A, tr, score
         if a.replay_prob > 0:
             if tr is None:
                 raise RuntimeError("actor produced no rollout trajectory")
@@ -405,13 +437,13 @@ def _run(cfg: DictConfig) -> None:
         return float(e_path[0].item()), float(e_path[-1].item()), expand
 
     # ------------------------------------------------------------ schedule
-    pretrain = a.pretrain if a.pretrain >= 0 else (0 if a.init_value else 2000)
+    pretrain = 0 if a.actor_only else (a.pretrain if a.pretrain >= 0 else (0 if a.init_value else 2000))
     for i in range(pretrain):
         cl = critic_step()
         if i % 500 == 0:
             logger.info(f"LIP-AC pretrain {i}/{pretrain}: td_loss={cl:.4f}")
 
-    freeze_at = int(a.freeze_critic_frac * a.steps)
+    freeze_at = 0 if a.actor_only else int(a.freeze_critic_frac * a.steps)
     expand = None
     for step in range(a.steps):
         critic_live = step < freeze_at
@@ -486,6 +518,7 @@ def _run(cfg: DictConfig) -> None:
             "head_scale": a.head_scale,
             "pre_ln": a.pre_ln,
             "value": str(value_checkpoint),
+            "temporal_objective": a.temporal_objective,
         },
         planner_checkpoint,
     )

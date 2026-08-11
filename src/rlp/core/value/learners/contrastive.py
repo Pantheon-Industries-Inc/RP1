@@ -70,7 +70,6 @@ class ContrastiveCritic(nn.Module):
     def forward(self, z_a: torch.Tensor, z_b: torch.Tensor) -> torch.Tensor:
         return torch.as_tensor((self.phi(z_a) * self.psi(z_b)).sum(dim=-1))
 
-    @torch.no_grad()
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         return -self.forward(z_pred, z_goal)
 

@@ -73,6 +73,14 @@ def validate_config(cfg: DictConfig) -> None:
             raise ValueError("evaluation.num_episodes must be positive")
         if int(evaluation.budget) <= 0:
             raise ValueError("evaluation.budget must be positive")
+        episode_range = evaluation.get("episode_range")
+        if episode_range:
+            try:
+                low, high = map(int, str(episode_range).split(":"))
+            except ValueError as error:
+                raise ValueError("evaluation.episode_range must use LO:HI syntax") from error
+            if low < 0 or high <= low:
+                raise ValueError("evaluation.episode_range must satisfy 0 <= LO < HI")
 
     planning = cfg.get("planning")
     if planning is not None:
@@ -81,6 +89,12 @@ def validate_config(cfg: DictConfig) -> None:
                 raise ValueError(f"planning.{key} must be positive")
         if evaluation is not None and int(evaluation.budget) < int(planning.receding_horizon):
             raise ValueError("evaluation.budget must be at least planning.receding_horizon")
+        deadline = planning.get("deadline")
+        if deadline is not None:
+            if int(deadline) <= 0:
+                raise ValueError("planning.deadline must be positive")
+            if evaluation is not None and int(deadline) > int(evaluation.budget):
+                raise ValueError("planning.deadline must fall within the evaluation budget")
 
 
 def dispatch(cfg: DictConfig) -> object:

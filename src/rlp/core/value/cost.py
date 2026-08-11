@@ -50,6 +50,7 @@ class MetricCost(nn.Module):
         mode: str = "replacement",
         lam: float = 1.0,
         metrics: Sequence[nn.Module] | None = None,
+        deadline_mode: str = "terminal",
     ) -> None:
         super().__init__()
         assert mode in {"latent", "replacement", "hybrid", "shuffled"}, mode
@@ -60,6 +61,14 @@ class MetricCost(nn.Module):
         self.metrics = nn.ModuleList(metrics or ([] if metric is None else [metric]))
         self.mode = mode
         self.lam = lam
+        if deadline_mode not in {"terminal", "deadline"}:
+            raise ValueError(f"unsupported deadline mode: {deadline_mode}")
+        self.deadline_mode = deadline_mode
+        self._align_remaining: tuple[int, ...] | None = None
+
+    def set_align_remaining(self, remaining_chunks: Sequence[int] | None) -> None:
+        """Publish per-environment chunks remaining until the graded step."""
+        self._align_remaining = None if remaining_chunks is None else tuple(map(int, remaining_chunks))
 
     def parameters(self, *args: Any, **kwargs: Any) -> Iterator[nn.Parameter]:
         return self.base.parameters(*args, **kwargs)
@@ -71,7 +80,11 @@ class MetricCost(nn.Module):
         sd = x.std(dim=-1, keepdim=True).clamp_min(1e-6)
         return (x - mu) / sd
 
-    def _metric_inputs(self, info_dict: TensorInfo) -> tuple[torch.Tensor, torch.Tensor]:
+    def _metric_inputs(
+        self,
+        info_dict: TensorInfo,
+        action_candidates: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Build terminal/history inputs matching the metric checkpoint width."""
         if self.metric is None:
             raise RuntimeError("metric input requested in latent-only mode")
@@ -88,43 +101,65 @@ class MetricCost(nn.Module):
         if context < 1:
             raise ValueError(f"invalid metric context width: {context}")
 
-        pred = predicted[..., -1, :]
         goal = goal_raw[..., -1, :]
+        timeline = predicted.shape[-2]
+        end = torch.full((predicted.shape[0],), timeline - 1, device=predicted.device, dtype=torch.long)
+        remaining_raw = info_dict.get("_align_remaining")
+        if (
+            self.deadline_mode == "deadline"
+            and action_candidates is not None
+            and (remaining_raw is not None or self._align_remaining is not None)
+        ):
+            if remaining_raw is None:
+                remaining = torch.as_tensor(self._align_remaining, device=predicted.device)
+            else:
+                remaining = remaining_raw.to(device=predicted.device)
+                if remaining.ndim > 1:
+                    remaining = remaining[:, 0]
+            if remaining.numel() != predicted.shape[0]:
+                raise ValueError(
+                    f"deadline metadata does not match planning batch: {remaining.numel()} != {predicted.shape[0]}"
+                )
+            plan_chunks = int(action_candidates.shape[-2])
+            offset = timeline - plan_chunks
+            end = offset + remaining.clamp(1, plan_chunks) - 1
+
+        offsets = torch.arange(context, device=predicted.device) - context + 1
+        indices = (end[:, None] + offsets[None]).clamp_min(0)
+        view = indices[:, None, :, None].expand(predicted.shape[0], predicted.shape[1], context, predicted.shape[-1])
+        window = predicted.gather(-2, view)
+        pred = window.flatten(start_dim=-2)
         if context == 2:
-            if predicted.shape[-2] < 2:
-                raise ValueError("two-frame delta metric requires at least two predicted frames")
-            previous = predicted[..., -2, :]
-            pred = torch.cat([pred, pred - previous], dim=-1)
+            current, previous = window[..., -1, :], window[..., -2, :]
+            pred = torch.cat([current, current - previous], dim=-1)
             goal = torch.cat([goal, torch.zeros_like(goal)], dim=-1)
         elif context > 2:
-            if predicted.shape[-2] < context:
-                raise ValueError(
-                    f"{context}-frame metric requires {context} predicted frames; got {predicted.shape[-2]}"
-                )
-            pred = predicted[..., -context:, :].flatten(start_dim=-2)
             goal = torch.cat([goal] * context, dim=-1)
 
         if goal.ndim < pred.ndim:
             goal = goal.unsqueeze(1)
         return pred, goal.expand_as(pred)
 
-    def _metric_terminal_cost(self, info_dict: TensorInfo) -> torch.Tensor:
+    def _metric_terminal_cost(
+        self,
+        info_dict: TensorInfo,
+        action_candidates: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Apply the learned metric to the cached terminal/goal latents.
 
         Expects ``predicted_emb`` (B, S, T, D) and ``goal_emb`` in either
         ``(B, T, D)`` or Stable-WM's ``(B, 1, T, D)`` form.
         """
-        pred, goal = self._metric_inputs(info_dict)
+        pred, goal = self._metric_inputs(info_dict, action_candidates)
         costs = [cast(ValueMetric, metric).cost(pred.float(), goal.float()) for metric in self.metrics]
         return torch.stack(costs).amax(dim=0)
 
-    @torch.inference_mode()
     def get_cost(self, info_dict: TensorInfo, action_candidates: torch.Tensor) -> torch.Tensor:
         # base.get_cost computes c_lat AND populates predicted_emb / goal_emb.
         c_lat = self.base.get_cost(info_dict, action_candidates)
         if self.mode == "latent":
             return c_lat
-        m = self._metric_terminal_cost(info_dict)
+        m = self._metric_terminal_cost(info_dict, action_candidates)
         if self.mode in ("replacement", "shuffled"):
             return m
         # hybrid

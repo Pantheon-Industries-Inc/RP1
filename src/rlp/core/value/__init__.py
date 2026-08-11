@@ -18,7 +18,7 @@ Public surface:
 
 from . import diagnostics, learners, oracle, samplers
 from .cost import MetricCost
-from .head import IQEHead, PairwiseMetricHead, QuasimetricHead, pair_features
+from .head import IQEHead, L2WindowCost, PairwiseMetricHead, QuasimetricHead, pair_features
 from .io import build_metric, load_metric, save_metric
 from .stable_worldmodel import LatentGoalCost, as_planning_cost
 
@@ -26,6 +26,7 @@ __all__ = [
     "PairwiseMetricHead",
     "QuasimetricHead",
     "IQEHead",
+    "L2WindowCost",
     "pair_features",
     "MetricCost",
     "LatentGoalCost",

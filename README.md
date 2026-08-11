@@ -26,8 +26,10 @@ Read §0 (TL;DR), §1 (three regimes — they have *different* bottlenecks), the
 | `src/rlp/data/` | frozen-latent caching (`LatentCache`, `encode_dataset`) — kept outside `core/` so probes and cache builders do not import the control stack |
 | `src/rlp/train/` | model, metric, planner, online-TD, and composed pipeline trainers |
 | `src/rlp/eval/` | world-model, TRM, hard-set, and SCSA evaluation drivers |
+| `src/rlp/campaigns/` | validated experiment matrices and campaign safety invariants |
 | `configs/` | Hydra configuration tree mirroring the corresponding `src/rlp/` subsystems |
 | `src/rlp/tools/` | import-safe, Hydra-configured data preparation and latent-cache tools |
+| `docs/campaigns/` | dated protocols, immutable launch records, and result tables |
 | `docs/lip/` | LIP writeup + benchmark results |
 | `logs/` | generated run directories, grouped by local date and start time |
 | `assets/core/world_model/lewm_cube/` | the prerequisite cube LeWM checkpoint; generated checkpoints remain pipeline outputs and are not kept in the source tree |
@@ -242,7 +244,13 @@ pixi run eval model=lewm                           # LeWM, OGBench Cube
 pixi run eval model=prejepa core.world_model.checkpoint=<checkpoint>
 pixi run tool tool=fetch_dataset dataset=ogb_cube  # Fetch the public Cube dataset (~20 GiB)
 pixi run tool tool=cache_latents wm=<checkpoint> dataset=<data> out=<cache.pt>
+pixi run -e default -x python -m rlp.campaigns.rlp_20260811 validate
 ```
+
+The dated campaign command validates resource limits and the complete expected
+job matrix; it does not submit or relaunch jobs. See
+[`docs/campaigns/2026-08-11/HANDOFF.md`](docs/campaigns/2026-08-11/HANDOFF.md)
+for the active-job record and completion protocol.
 
 The fetch command downloads the pinned public Hugging Face Lance dataset into
 `$RLP_DATA_HOME/datasets` (default: `~/.cache/rlp/datasets`), resumes partial

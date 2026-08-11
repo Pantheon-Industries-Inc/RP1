@@ -11,7 +11,7 @@ from torch import nn
 
 from rlp.core.world_model import load_pretrained, save_pretrained
 
-from .head import IQEHead, PairwiseMetricHead, QuasimetricHead
+from .head import IQEHead, L2WindowCost, PairwiseMetricHead, QuasimetricHead
 from .learners.contrastive import ContrastiveCritic
 
 
@@ -58,6 +58,8 @@ def _bool_setting(arch: Mapping[str, object], name: str, default: bool) -> bool:
 
 def build_metric(learner: str, latent_dim: int, arch: Mapping[str, object]) -> nn.Module:
     """Construct an untrained metric module from training architecture settings."""
+    if learner == "l2":
+        return L2WindowCost(latent_dim)
     if learner in ("regression", "td", "shuffled"):
         if arch.get("head") == "iqe":
             return IQEHead(
