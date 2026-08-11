@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - /core/planner: lip_dino
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.lip_dino._run}
+cache: ???
+h5: ???
+wm: ???
+value: ???
+output:
+  checkpoint: planner.pt
+steps: 3000
+batch: 32
+max_delta: 10
+p_cross: 0.3
+mean_weight: 0.1
+lr: 3e-4

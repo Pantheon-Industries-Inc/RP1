@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.tools.data.build_reacher_h5._run}
+dataset: dmc/reacher_random.lance
+train_out: ???
+eval_out: ???
+eval_episodes: 1024

@@ -1,0 +1,7 @@
+# @package core.world_model
+name: state
+checkpoint: null
+latent_dim: 64
+hidden_dim: 256
+history: 1
+num_predictions: 1

@@ -1,0 +1,5 @@
+# @package data
+path: pusht_expert_train.h5
+stats: ${data.path}
+cache_dir: null
+keys_to_cache: [action, proprio, state]

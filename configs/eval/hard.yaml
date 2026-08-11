@@ -1,0 +1,25 @@
+# @package _global_
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.eval.hard._run}
+wm: ???
+dataset: ???
+env: swm/TwoRoom-v1
+conditions: [latent]
+n_per_class: 50
+min_geo: 90.0
+max_geo: 180.0
+action_block: 5
+horizon: 8
+receding: 8
+eval_budget: 80
+solver_batch: 10
+num_samples: 200
+cem_steps: 8
+topk: 20
+lam: 1.0
+device: auto
+seed: 1
+output:
+  filename: hard_results.txt

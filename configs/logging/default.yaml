@@ -1,0 +1,11 @@
+# @package logging
+level: INFO
+wandb:
+  mode: disabled
+  config:
+    entity: stable-wm
+    project: stable-wm
+    name: null
+    id: null
+    resume: allow
+    log_model: false

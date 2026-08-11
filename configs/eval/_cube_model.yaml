@@ -1,0 +1,21 @@
+# @package _global_
+defaults:
+  - _world_model
+  - /environment: cube
+  - /data: ogb_cube_eval
+  - /core/solver: cem
+  - /core/value: latent
+  - _self_
+evaluation:
+  callables:
+    - method: set_state
+      args:
+        qpos: {value: qpos}
+        qvel: {value: qvel}
+    - method: set_target_pos
+      args:
+        cube_id: {value: 0, in_dataset: false}
+        target_pos: {value: goal_privileged_block_0_pos}
+        target_quat: {value: goal_privileged_block_0_quat}
+output:
+  filename: ogb_cube_results.txt

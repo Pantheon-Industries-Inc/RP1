@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - /core/world_model: state
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.state._run}
+dataset: ???
+output:
+  model_name: statewm_tworoom
+obs_key: proprio
+steps: 4000
+batch_size: 512
+lr: 1e-3
+recon_weight: 1.0
+state_scale: 1.0
+device: auto
+seed: 0

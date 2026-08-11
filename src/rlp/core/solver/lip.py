@@ -1,0 +1,502 @@
+"""LIPSolver — plan with a trained LIP checkpoint against a frozen value fn.
+
+Two world-model families are supported, selected by the ``kind`` field of the
+actor checkpoint (written by the training scripts):
+
+- ``kind='lip'``      pooled-latent WMs (e.g. LeWM): state = (B, 3, D) pooled
+  history, rollout via :func:`rlp.core.rollout.rollout_terminal`.
+- ``kind='lip4'``     LIPv4 (current default): same rollout as ``lip`` but the
+  minimal-input, gate-free update rule — f_theta sees only [A, grad_A V, E];
+  state and goal reach the planner exclusively through the value function.
+- ``kind='lip_dino'`` patch-token WMs (PreJEPA/DINO): state = (B, 3, P, D)
+  patch tokens, action embeddings injected per block, rollout via
+  :func:`rlp.core.rollout.rollout_terminal_dino`. Plans are trained/rolled in
+  normalized action units and denormalized (stats stored in the checkpoint)
+  before execution.
+
+At plan time one refinement pass costs ~2 WM rollouts per iteration
+(~16-20 rollout-equivalents total at K=8) versus ~9000 for the repo's CEM
+defaults (300 samples x 30 iterations) — a ~450x compute reduction at equal
+or better success rate (see docs/lip/README_lip.md for benchmarks).
+
+Trainers: ``rlp/train/lip.py`` and ``rlp/train/lip_dino.py``.
+"""
+
+import time
+from pathlib import Path
+from typing import Any, NotRequired, Protocol, TypedDict, cast
+
+import numpy as np
+import torch
+from stable_worldmodel.solver.cem import CEMSolver
+
+from rlp.logging import logger
+
+from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
+from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
+from ..world_model.protocols import LatentWorldModel, TokenWorldModel
+
+
+class ValueFunction(Protocol):
+    def __call__(self, state: torch.Tensor, goal: torch.Tensor) -> torch.Tensor: ...
+
+
+class EncoderWorldModel(LatentWorldModel, Protocol):
+    wants_proprio: bool
+    obs_key: str
+    goal_key: str
+
+    def encode(self, info: dict[str, torch.Tensor], **kwargs: Any) -> dict[str, torch.Tensor]: ...
+
+
+class TokenEncoderWorldModel(TokenWorldModel, Protocol):
+    def encode(self, info: dict[str, torch.Tensor], **kwargs: Any) -> dict[str, torch.Tensor]: ...
+
+
+class EnvironmentCost(Protocol):
+    def get_cost(self, info: dict[str, Any], actions: torch.Tensor) -> torch.Tensor: ...
+
+
+class LIPCheckpoint(TypedDict):
+    kind: str
+    z_dim: int
+    horizon: int
+    iters: int
+    value: str
+    sd: dict[str, torch.Tensor]
+    a_dim: NotRequired[int]
+    amax: NotRequired[float]
+    feed: NotRequired[str]
+    hidden: NotRequired[int]
+    s_dim: NotRequired[int]
+    s0_mode: NotRequired[str]
+    width: NotRequired[int]
+    layers: NotRequired[int]
+    goal_mode: NotRequired[str]
+    gd_init: NotRequired[float]
+    feat_norm: NotRequired[bool]
+    vscale: NotRequired[float]
+    iter_mode: NotRequired[str]
+    head_mode: NotRequired[str]
+    cond_mode: NotRequired[str]
+    pre_ln: NotRequired[bool]
+    use_zg: NotRequired[bool]
+    use_gate: NotRequired[bool]
+    use_z0: NotRequired[bool]
+    use_grad: NotRequired[bool]
+    amu5: NotRequired[torch.Tensor]
+    ast5: NotRequired[torch.Tensor]
+    hwm: NotRequired[str]
+
+
+# Mech-interp hook: ``probe_directory`` dumps per-replan
+# (z0, imagined-terminal latent, its value, goal latent) so an open-loop eval
+# yields imagined-vs-actually-reached (consecutive replans) for the A/B probe.
+_LIP_PROBE_N = 0
+
+
+__all__ = [
+    "LIPSolver",
+]
+
+
+class LIPSolver(CEMSolver):
+    """Plan with a trained LIP checkpoint; optionally refine with MPPI.
+
+    With ``n_steps=0`` (the benchmarked configuration) the solver is fully
+    deterministic: K learned refinement iterations, execute the plan. With
+    ``restarts=R > 1`` it runs R noisy-initialized refinements per env and
+    picks by terminal value (argmin-V; ``robust_m > 0`` averages the value of
+    m perturbed copies instead). ``n_steps > 0`` additionally runs MPPI
+    (softmax-weighted, temperature ``lam``) seeded from the LIP plan.
+
+    The plan length (horizon) always comes from the actor checkpoint.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        actor_path: str = "",
+        lam: float = 1.0,
+        restarts: int = 1,
+        restart_noise: float = 0.5,
+        lip_select: str = "last",
+        robust_m: int = 0,
+        init_mode: str = "zero",
+        init_samples: int = 64,
+        init_scale: float = 1.5,
+        reuse_trajectory: bool | str = False,
+        record_probes: bool = False,
+        probe_directory: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        from rlp.core.value import load_metric
+
+        self.lam = lam
+        self.restarts = int(restarts)
+        self.restart_noise = restart_noise
+        self.lip_select = lip_select
+        self.robust_m = int(robust_m)
+        # value-guided initialization: A(0) = argmin-E over a candidate set of
+        # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
+        # before refinement. Unlike `restarts` (noise around zero, argmin over
+        # REFINED plans — the configuration that hurt on v2WM), selection here
+        # happens on unrefined samples, exactly CEM's iteration-0, and the
+        # refinement trajectory stays single and deterministic.
+        self.init_mode = init_mode
+        self.init_samples = int(init_samples)
+        self.init_scale = float(init_scale)
+        self.reuse_trajectory = reuse_trajectory
+        self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
+        if self.probe_directory is not None:
+            self.probe_directory.mkdir(parents=True, exist_ok=True)
+
+        raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
+        if not isinstance(raw_checkpoint, dict):
+            raise TypeError("LIP checkpoint must contain a mapping")
+        ck = cast(LIPCheckpoint, raw_checkpoint)
+        self.kind = ck.get("kind")
+        if self.kind not in (
+            "lip",
+            "lip2",
+            "lip3",
+            "lip4",
+            "lip4r",
+            "lip_dino",
+        ):
+            raise ValueError(f"LIPSolver: unsupported checkpoint kind {self.kind!r}")
+        self.feed = ck.get("feed", "none") if self.kind == "lip2" else "none"
+        self.actor: PlannerNet | PlannerNetRec | PlannerNetV3
+        if self.kind == "lip4r":
+            self.actor = PlannerNetRec(
+                ck["z_dim"],
+                horizon=ck["horizon"],
+                a_dim=ck.get("a_dim", 25),
+                hidden=ck.get("hidden", 512),
+                s_dim=ck.get("s_dim", 256),
+                amax=ck.get("amax", 2.5),
+                use_z0=ck.get("use_z0", False),
+                use_zg=ck.get("use_zg", False),
+                use_grad=ck.get("use_grad", True),
+                s0_mode=ck.get("s0_mode", "zero"),
+            ).to(self.device)
+        elif self.kind == "lip3":
+            self.actor = PlannerNetV3(
+                ck["z_dim"],
+                horizon=ck["horizon"],
+                a_dim=ck.get("a_dim", 25),
+                width=ck.get("width", 256),
+                layers=ck.get("layers", 2),
+                amax=ck.get("amax", 2.5),
+                n_iters=ck["iters"],
+                goal_mode=ck.get("goal_mode", "diff"),
+                gd_init=ck.get("gd_init", 0.0),
+                feat_norm=ck.get("feat_norm", False),
+                vscale=ck.get("vscale", 25.0),
+                iter_mode=ck.get("iter_mode", "emb"),
+                head_mode=ck.get("head_mode", "gate"),
+                cond_mode=ck.get("cond_mode", "token"),
+                use_gate=ck.get("use_gate", True),
+                pre_ln=ck.get("pre_ln", False),
+            ).to(self.device)
+        else:
+            # lip4 checkpoints store the flags explicitly; the flipped ck.get
+            # defaults only guard hand-rolled checkpoints of each kind
+            v4 = self.kind == "lip4"
+            self.actor = PlannerNet(
+                ck["z_dim"],
+                horizon=ck["horizon"],
+                a_dim=ck.get("a_dim", 25),
+                amax=ck.get("amax", 2.5),
+                feed=self.feed,
+                use_zg=ck.get("use_zg", not v4),
+                use_gate=ck.get("use_gate", not v4),
+                use_z0=ck.get("use_z0", not v4),
+                use_grad=ck.get("use_grad", True),
+            ).to(self.device)
+        self.actor.load_state_dict(ck["sd"])
+        self.actor.eval()
+        self._actor_horizon = ck["horizon"]  # plan length must match the trained net
+        self.lip_iters = ck["iters"]
+        value_module = load_metric(ck["value"], device=self.device)
+        value_module.eval()
+        self.lip_value = cast(ValueFunction, value_module)
+        if self.kind == "lip_dino":
+            if "amu5" not in ck or "ast5" not in ck:
+                raise ValueError("lip_dino checkpoint lacks action statistics")
+            self._amu = ck["amu5"].to(self.device).float()
+            self._ast = ck["ast5"].to(self.device).float()
+
+    @property
+    def horizon(self) -> int:
+        ah = getattr(self, "_actor_horizon", None)
+        return int(ah if ah else self._config.horizon)
+
+    def _base(self) -> torch.nn.Module:
+        candidate = getattr(self.model, "base", self.model)
+        if not isinstance(candidate, torch.nn.Module):
+            raise TypeError("solver model base must be torch.nn.Module")
+        return candidate
+
+    def _value_init(
+        self,
+        wm: LatentWorldModel,
+        z_hist: torch.Tensor,
+        a_hist: torch.Tensor,
+        zg: torch.Tensor,
+    ) -> torch.Tensor:
+        """A(0) = argmin-E over {zero, iid-Gaussian, time-tiled Gaussian} raw plans.
+
+        The tiled half (one action block repeated across the horizon) covers
+        sustained-motion plans — the long-transport family the zero-init
+        refinement cannot reach when the value gradient is flat at A=0.
+        """
+        B, H, adim = z_hist.shape[0], self.horizon, self.action_dim
+        amax = float(self.actor.amax)
+        n_iid = self.init_samples // 2
+        n_tile = self.init_samples - n_iid
+        iid = self.init_scale * torch.randn(B, n_iid, H, adim, device=self.device, generator=self.torch_gen)
+        tile = self.init_scale * torch.randn(B, n_tile, 1, adim, device=self.device, generator=self.torch_gen)
+        cand = torch.cat(
+            [
+                torch.zeros(B, 1, H, adim, device=self.device),
+                iid,
+                tile.expand(B, n_tile, H, adim),
+            ],
+            dim=1,
+        )
+        cand = cand.clamp(-amax, amax)
+        C = cand.shape[1]
+        with torch.no_grad():
+            term = rollout_terminal(
+                wm,
+                z_hist.repeat_interleave(C, dim=0),
+                a_hist.repeat_interleave(C, dim=0),
+                cand.reshape(B * C, H, adim),
+            )
+            E = self.lip_value(term.float(), zg.repeat_interleave(C, dim=0)).view(B, C)
+        return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
+
+    # ------------------------------------------------------------------ lip
+    def _proposal_lip(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        wm = cast(EncoderWorldModel, self._base())
+        with torch.no_grad():
+            px = info_dict["pixels"].to(self.device, dtype=self.dtype)
+            enc_in = {"pixels": px}
+            if getattr(wm, "wants_proprio", False):
+                pro = info_dict.get("proprio")
+                if pro is None:
+                    raise KeyError("proprio-variant WM: info_dict lacks 'proprio'")
+                pro = torch.as_tensor(np.asarray(pro), dtype=torch.float32, device=self.device)
+                enc_in["proprio"] = pro.reshape(px.shape[0], px.shape[1], -1)
+            enc = wm.encode(enc_in)
+            z_hist = enc["emb"][:, -3:].float()
+            if z_hist.shape[1] < 3:  # pad short history at episode start
+                pad = z_hist[:, :1].expand(-1, 3 - z_hist.shape[1], -1)
+                z_hist = torch.cat([pad, z_hist], dim=1)
+            gx = info_dict["goal"].to(self.device, dtype=self.dtype)
+            genc_in = {"pixels": gx}
+            if getattr(wm, "wants_proprio", False):
+                gpro = info_dict.get("goal_state")
+                if gpro is None:
+                    raise KeyError(
+                        "proprio-variant WM: info_dict lacks 'goal_state' (goal agent position for the goal latent)"
+                    )
+                gpro = torch.as_tensor(np.asarray(gpro), dtype=torch.float32, device=self.device)
+                gpro = gpro.reshape(gx.shape[0], -1)[:, -2:]  # last frame's (x, y)
+                genc_in["proprio"] = gpro.unsqueeze(1).expand(-1, gx.shape[1], -1)
+            zg = wm.encode(genc_in)["emb"][:, -1].float()
+
+        R = max(1, self.restarts)
+        B = n_envs
+        zh_r = z_hist.repeat_interleave(R, dim=0)
+        zg_r = zg.repeat_interleave(R, dim=0)
+        z0_r = zh_r[:, -1]
+        a_hist = torch.zeros(B * R, 2, self.action_dim, device=self.device)
+        A = self.restart_noise * torch.randn(
+            B * R,
+            self.horizon,
+            self.action_dim,
+            device=self.device,
+            generator=self.torch_gen,
+        )
+        A[::R] = 0.0  # one zero-init restart per env
+        if self.init_mode == "value" and R == 1:
+            A = self._value_init(wm, z_hist, a_hist, zg)
+        s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
+        buf: list[torch.Tensor] = []
+        for k_it in range(self.lip_iters):
+            with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
+                A_in = A.detach().requires_grad_(True)
+                traj = rollout_traj(wm, zh_r, a_hist, A_in)
+                (gA,) = torch.autograd.grad(self.lip_value(traj[:, -1], zg_r).sum(), A_in)
+            with torch.no_grad():
+                reuse = self.reuse_trajectory
+                if reuse == "verify":
+                    traj_f = rollout_traj(wm, zh_r, a_hist, A)
+                    difference = (traj_f - traj.detach()).abs().max().item()
+                    logger.info(f"Reuse verification iteration={k_it} max_difference={difference:.3e}")
+                elif reuse and reuse != "0":
+                    traj_f = traj.detach()
+                else:
+                    traj_f = rollout_traj(wm, zh_r, a_hist, A)
+                E = self.lip_value(traj_f[:, -1], zg_r)
+                vtraj = None
+                gm = getattr(self.actor, "goal_mode", None)
+                if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
+                    Bh, H = traj_f.shape[0], traj_f.shape[1]
+                    vtraj = self.lip_value(
+                        traj_f.reshape(Bh * H, -1),
+                        zg_r.repeat_interleave(H, dim=0),
+                    ).view(Bh, H)
+                if self.kind == "lip4r":
+                    if not isinstance(self.actor, PlannerNetRec) or s is None:
+                        raise RuntimeError("lip4r checkpoint did not create a recurrent actor state")
+                    A, s = self.actor(A, gA, E, z0_r, zg_r, s, traj_f, k=k_it, vtraj=vtraj)
+                else:
+                    if isinstance(self.actor, PlannerNetRec):
+                        raise RuntimeError("non-recurrent checkpoint created a recurrent actor")
+                    A = self.actor(A, gA, E, z0_r, zg_r, traj_f, k=k_it, vtraj=vtraj)
+                buf.append(A.clone())
+        with torch.no_grad():
+            cands = torch.stack(buf if self.lip_select == "buffer" else buf[-1:], dim=1)
+            C = cands.shape[1]
+            cf = cands.reshape(B * R * C, self.horizon, self.action_dim)
+            zh_c = zh_r.repeat_interleave(C, dim=0)
+            ah_c = a_hist.repeat_interleave(C, dim=0)
+            zg_c = zg_r.repeat_interleave(C, dim=0)
+            if self.robust_m > 0:  # value of m perturbed copies (robust argmin)
+                scores = torch.zeros(cf.shape[0], device=cf.device)
+                amax = self.actor.amax
+                for _ in range(self.robust_m):
+                    pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
+                    scores = scores + self.lip_value(rollout_terminal(wm, zh_c, ah_c, pert), zg_c)
+                Ef = (scores / self.robust_m).view(B, R * C)
+            else:
+                Ef = self.lip_value(rollout_terminal(wm, zh_c, ah_c, cf), zg_c).view(B, R * C)
+            best = Ef.argmin(dim=1)
+            A = cands.view(B, R * C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
+        if self.probe_directory is not None:
+            global _LIP_PROBE_N
+            with torch.no_grad():
+                z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
+                z_imag = z_traj[:, -1]
+                e_imag = self.lip_value(z_imag, zg)
+            torch.save(
+                {
+                    "z0": z_hist[:, -1].detach().cpu(),
+                    "z_traj": z_traj.detach().cpu(),
+                    "z_imag": z_imag.detach().cpu(),
+                    "A": A.detach().cpu(),
+                    "E": e_imag.detach().cpu(),
+                    "zg": zg.detach().cpu(),
+                },
+                self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
+            )
+            _LIP_PROBE_N += 1
+        return A.detach().to(self.dtype)
+
+    # ------------------------------------------------------------- lip_dino
+    def _proposal_lip_dino(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        del n_envs
+        wm = cast(TokenEncoderWorldModel, self._base())
+        px = info_dict["pixels"].to(self.device).float()[:, -3:]
+        B = px.shape[0]
+        pro = info_dict.get("proprio")
+        pro = (
+            pro.to(self.device).float()[:, -3:]
+            if pro is not None
+            else torch.zeros(B, px.shape[1], 41, device=self.device)
+        )
+        if px.shape[1] < 3:
+            k = 3 - px.shape[1]
+            px = torch.cat([px[:, :1].expand(-1, k, -1, -1, -1), px], dim=1)
+            pro = torch.cat([pro[:, :1].expand(-1, k, -1), pro], dim=1)
+        with torch.no_grad():
+            info = {
+                "pixels": px,
+                "proprio": pro,
+                "action": torch.zeros(B, 3, self.action_dim, device=self.device),
+            }
+            toks = wm.encode(info)["emb"].float()  # (B,3,P,D)
+            gx = info_dict["goal"].to(self.device).float()
+            genc = wm.encode({"pixels": gx}, emb_keys=[], target="gemb")
+            zg = genc["pixels_gemb"][:, -1].mean(dim=1).float()
+            z0 = toks[:, -1, :, :384].mean(dim=1)
+        A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
+        for _ in range(self.lip_iters):
+            with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
+                A_in = A.detach().requires_grad_(True)
+                zT = rollout_terminal_dino(wm, toks, A_in * self._ast + self._amu)
+                (gA,) = torch.autograd.grad(self.lip_value(zT, zg).sum(), A_in)
+            with torch.no_grad():
+                E = self.lip_value(
+                    rollout_terminal_dino(wm, toks, A * self._ast + self._amu),
+                    zg,
+                )
+                if isinstance(self.actor, PlannerNetRec):
+                    raise RuntimeError("DINO checkpoint cannot use a recurrent actor")
+                A = self.actor(A, gA, E, z0, zg)
+        return (A * self._ast + self._amu).to(self.dtype)  # raw action units
+
+    # ------------------------------------------------------------------ solve
+    def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:
+        del init_action
+        start_time = time.time()
+        outputs: dict[str, Any] = {"costs": [], "mean": [], "var": []}
+        total_envs = len(next(iter(info_dict.values())))
+
+        if self.kind == "lip_dino":
+            proposal = self._proposal_lip_dino(info_dict, total_envs)
+        else:
+            proposal = self._proposal_lip(info_dict, total_envs)
+        mean = proposal
+        var = self.var_scale * torch.ones_like(mean)
+
+        # optional MPPI refinement around the LIP plan (n_steps=0 -> pure LIP)
+        for start_idx in range(0, total_envs, self.batch_size):
+            end_idx = min(start_idx + self.batch_size, total_envs)
+            bs = end_idx - start_idx
+            batch_mean = mean[start_idx:end_idx]
+            batch_var = var[start_idx:end_idx]
+
+            expanded: dict[str, Any] = {}
+            for k, v in info_dict.items():
+                vb = v[start_idx:end_idx]
+                if torch.is_tensor(v):
+                    td = self.dtype if vb.is_floating_point() else None
+                    vb = vb.to(device=self.device, dtype=td).unsqueeze(1).expand(bs, self.num_samples, *vb.shape[1:])
+                elif isinstance(v, np.ndarray):
+                    vb = np.repeat(vb[:, None, ...], self.num_samples, axis=1)
+                expanded[k] = vb
+
+            final_cost = [0.0] * bs
+            for _ in range(self.n_steps):
+                cand = torch.randn(
+                    bs,
+                    self.num_samples,
+                    self.horizon,
+                    self.action_dim,
+                    generator=self.torch_gen,
+                    device=self.device,
+                    dtype=self.dtype,
+                )
+                cand = cand * batch_var.unsqueeze(1) + batch_mean.unsqueeze(1)
+                cand[:, 0] = batch_mean
+                costs = cast(EnvironmentCost, self.model).get_cost(expanded, cand)
+                w = torch.softmax(-costs.float() / self.lam, dim=1)
+                batch_mean = (w[..., None, None] * cand.float()).sum(dim=1).to(self.dtype)
+                spread = (cand.float() - batch_mean.unsqueeze(1).float()) ** 2
+                batch_var = (w[..., None, None] * spread).sum(dim=1).sqrt().clamp(min=0.05).to(self.dtype)
+                final_cost = (w * costs.float()).sum(dim=1).cpu().tolist()
+
+            mean[start_idx:end_idx] = batch_mean
+            var[start_idx:end_idx] = batch_var
+            outputs["costs"].extend(final_cost)
+
+        outputs["actions"] = mean.detach().cpu()
+        outputs["mean"] = [mean.detach().cpu()]
+        outputs["var"] = [var.detach().cpu()]
+        logger.info(f"LIP solve completed in {time.time() - start_time:.4f} seconds")
+        return outputs

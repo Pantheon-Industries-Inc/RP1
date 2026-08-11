@@ -1,0 +1,23 @@
+# @package _global_
+defaults:
+  - /core/value: temporal_distance
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.metric._run}
+cache: ???
+learner: td
+output:
+  checkpoint: value
+steps: 5000
+batch_size: 1024
+scale: null
+max_delta: null
+labels: "true"
+gamma: 1.0
+expectile: 0.7
+n_step: 5
+p_cross: 0.3
+no_balanced: false
+temperature: 1.0
+device: auto
+seed: 0

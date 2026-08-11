@@ -1,0 +1,12 @@
+# @package data
+path: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/ogb_cube_single.lance
+cache_dir: null
+num_steps: 4
+frameskip: 5
+image_size: 224
+train_split: 0.9
+merge_proprio_from: [qpos, qvel]
+proprio_clip: 10.0
+loader:
+  batch_size: 64
+  num_workers: 12

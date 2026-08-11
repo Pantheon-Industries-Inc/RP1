@@ -2,10 +2,13 @@
 
 Audience: someone who optimizes kernels / systems. Written 2026-07-25 against
 `galilai-group/stable-worldmodel` @ `b298aa70` plus `Dyna/dyna_harness`.
+Reusable LIP/TRM code now lives under `src/rlp/`; campaign-specific shell
+drivers were removed from the application tree. References prefixed with
+`main:Dyna/dyna_harness/` identify their historical locations on Git `main`.
 
 Every claim is anchored to `file:line`. Numbers are labelled **[measured]** (from the repo's own
 benchmarks/logs, or from experiments run for this audit) or **[derived]** (static FLOP count from
-`v2WM/config.json`). Nothing here is a guess about what the code *probably* does.
+`assets/core/world_model/lewm_cube/config.json`). Nothing here is a guess about what the code *probably* does.
 
 ---
 
@@ -60,7 +63,7 @@ Do not optimize "LIP". Optimize one of these; they share code but nothing else.
 
 ## 2. Shape / cost reference card
 
-From `v2WM/config.json` and `scripts/plan/config/cube.yaml`. Everything is small — that is the problem.
+From `assets/core/world_model/lewm_cube/config.json` and `configs/eval/cube.yaml`. Everything is small — that is the problem.
 
 ```
 encoder    ViT-tiny, patch 14, 224px   -> 257 tokens, d=192, depth 12    2.73 GFLOP / image  [derived]
@@ -97,9 +100,9 @@ levers are *launches per decision* and *bytes moved*.
 
 ---
 
-## 3. Regime B — LIP actor–critic training (`scripts/plan/train_lip_ac.py`)
+## 3. Regime B — LIP actor–critic training (`rlp/train/lip_ac.py`)
 
-**[measured]** 0.77–0.79 s/step (`previous/lip_ac_20260712/LIP_AC_MATH.md:157`); 6000 steps ≈ **1.3 h
+**[historical measurement]** 0.77–0.79 s/step; 6000 steps ≈ **1.3 h
 per actor**; ~2.2 TFLOP/step at B=128 → **~2.8 TFLOP/s effective**, i.e. 4–14% of fp32 peak.
 ~30,000 kernel launches per training step ≈ **26 µs of wall-clock per kernel**.
 
@@ -108,61 +111,61 @@ per actor**; ~2.2 TFLOP/step at B=128 → **~2.8 TFLOP/s effective**, i.e. 4–1
 Two nested Python loops, 40 deep, with only B=128 of parallelism inside each level:
 
 ```python
-# scripts/plan/train_lip_ac.py:401
+# rlp/train/lip_ac.py:588
 for k in range(a.iters):                       # K = 8, genuinely sequential (learned optimizer)
-    traj = rollout_traj(wm, zh, ah, A_in)      # :405   H=5 serial WM steps
-    (gA,) = torch.autograd.grad(...)           # :406   backward through those 5
-    tr = rollout_traj(wm, zh, ah, A)           # :420   H=5 serial WM steps
+    traj = rollout_traj(wm, zh, ah, A_in)      # :591   H=5 serial WM steps
+    (gA,) = torch.autograd.grad(...)           # :592   backward through those 5
+    tr = rollout_traj(wm, zh, ah, A)           # :611   H=5 serial WM steps
 ```
 
 ```python
-# stable_worldmodel/solver/lip.py:346
+# rlp/core/rollout.py:35
 for t in range(plan.shape[1]):                 # H = 5, autoregressive — irreducibly serial
-    win_e = torch.stack(embs[-3:], dim=1)      # :348   reallocates the window every step
-    win_a = torch.stack(acts[-3:], dim=1)      # :349
-    nxt = wm.predict(win_e, wm.action_encoder(win_a))[:, -1]   # :350
+    win_e = torch.stack(embs[-3:], dim=1)      # :37   reallocates the window every step
+    win_a = torch.stack(acts[-3:], dim=1)      # :38
+    nxt = wm.predict(win_e, wm.action_encoder(win_a))[:, -1]   # :39
 ```
 
 The **depth** is irreducible. The **constant factor** is very reducible.
 
 ### 3.1 The duplicate rollout — a one-line, ~2× win, already written elsewhere in the repo
 
-`solver/lip.py:549-553`, the **inference** path:
+`rlp/core/solver/lip.py:251-255`, the **inference** path:
 
 ```python
-549    A_in = A.detach().requires_grad_(True)
-550    traj = rollout_traj(wm, zh_r, a_hist, A_in)          # rollout #1 (grad)
-551    (gA,) = torch.autograd.grad(self.lip_value(traj[:, -1], zg_r).sum(), A_in)
-552    with torch.no_grad():
-553        traj_f = rollout_traj(wm, zh_r, a_hist, A)       # rollout #2 — IDENTICAL VALUES
+251    A_in = A.detach().requires_grad_(True)
+252    traj = rollout_traj(wm, zh_r, a_hist, A_in)          # rollout #1 (grad)
+253    (gA,) = torch.autograd.grad(self.lip_value(traj[:, -1], zg_r).sum(), A_in)
+254    with torch.no_grad():
+255        traj_f = rollout_traj(wm, zh_r, a_hist, A)       # rollout #2 — IDENTICAL VALUES
 ```
 
-`A` is not modified between 549 and 553, `A_in` holds `A`'s values, and the WM is deterministic in
+`A` is not modified between 251 and 255, `A_in` holds `A`'s values, and the WM is deterministic in
 `.eval()` (dropout off, BatchNorm on running stats). So `traj_f == traj.detach()`, exactly.
 **40 of the solver's 85 forward predict calls (47%) recompute a tensor it already has.** `E` at
-`:554` is likewise the scalar already summed at `:551`.
+`:256` is likewise the scalar already summed at `:253`.
 
-The trainer already knows this — `train_lip_ac.py:407-409`:
+The trainer already knows this — `rlp/train/lip_ac.py:594-596`:
 
 ```python
-407    # A_in holds A's values, so the grad pass's trajectory IS the feature
-408    # trajectory — reuse it instead of a third WM rollout (value-identical)
-409    traj_f = traj.detach()
+593    # A_in holds A's values, so the grad pass's trajectory IS the feature
+594    # trajectory — reuse it instead of a third WM rollout (value-identical)
+595    traj_f = traj.detach()
 ```
 
-**Fix: port line 409 into `lip.py:553`.** An env-gated patch that also verifies value-identity is in
-`harness/patch_lip_reuse_traj.py` (`LIP_REUSE_TRAJ=1` to enable, `=verify` to print
+**Fix: port line 595 into `rlp/core/solver/lip.py:255`.** An env-gated patch that also verifies value-identity is in
+`rlp/tools/patch/patch_lip_reuse_traj.py` (`LIP_REUSE_TRAJ=1` to enable, `=verify` to print
 `max|traj_f - traj.detach()|` per iteration).
 
-A second, *inter*-iteration instance exists that neither has fixed: in the trainer, `traj` at `:405`
-in iteration `k+1` recomputes what `tr` at `:420` produced in iteration `k`. Taking `gA` off the
-existing `:420` graph via `autograd.grad(..., inputs=A, retain_graph=True)` cuts the trainer from
+A second, *inter*-iteration instance exists that neither has fixed: in the trainer, `traj` at `:591`
+in iteration `k+1` recomputes what `tr` at `:611` produced in iteration `k`. Taking `gA` off the
+existing `:611` graph via `autograd.grad(..., inputs=A, retain_graph=True)` cuts the trainer from
 80 → 41 forward WM calls and removes 7 of 8 extra backward passes.
 
 ### 3.2 Discarded compute inside every rollout step
 
 `wm/lewm/lewm.py:44-52` runs the predictor and `pred_proj` over **all 3 window tokens**; the caller
-keeps only `[:, -1]` (`lip.py:350`, `lewm.py:100`).
+keeps only `[:, -1]` (`rlp/core/rollout.py:39`, `lewm.py:100`).
 
 - `pred_proj` (192→2048→192) over 3 tokens when 1 is needed — **free 2/3 saving**, one line.
 - The transformer body genuinely needs all 3 positions at every layer, so you cannot trim it
@@ -171,9 +174,9 @@ keeps only `[:, -1]` (`lip.py:350`, `lewm.py:100`).
   window slides while `pos_embedding[:, :T]` is indexed from 0 (`module.py:291`), so a frame's
   positional offset changes every step and its K/V is not reusable. RoPE or a time-invariant slot
   convention would unlock a ~3× KV-cache win — but it changes numerics and needs a retrain.
-- `wm.action_encoder(win_a)` (`lip.py:350`) re-encodes all 3 action blocks each step when 2 were
-  encoded the previous step. LeWM's own `rollout()` batches this correctly (`lewm.py:88-90`);
-  `rollout_traj` does not.
+- `wm.action_encoder(win_a)` (`rlp/core/rollout.py:39`) re-encodes all 3 action blocks each step
+  when 2 were encoded the previous step. LeWM's own `rollout()` batches this correctly
+  (`lewm.py:88-90`); `rollout_traj` does not.
 - `Embedder.forward` (`wm/lewm/module.py:200-209`) does `permute → Conv1d(k=1) → permute`. A
   kernel-size-1 Conv1d **is** a Linear; the permutes are pure memory shuffling.
 
@@ -182,9 +185,9 @@ keeps only `[:, -1]` (`lip.py:350`, `lewm.py:100`).
 Three `.item()` calls per training step, **24,000 over a run**, for values printed once every 500:
 
 ```python
-train_lip_ac.py:352    return loss.item()                              # critic_step
-train_lip_ac.py:434    return e_path[0].item(), e_path[-1].item(), ... # actor_step
-train_lip_ac.py:466    if step % 500 == 0:                             # ...only read here
+train_lip_ac.py:500    return loss.item()                              # critic_step
+train_lip_ac.py:626    return e_path[0].item(), e_path[-1].item(), ... # actor_step
+train_lip_ac.py:665    if step % 500 == 0:                             # ...only read here
 ```
 
 ### 3.4 Single-threaded Python samplers with no DataLoader
@@ -193,42 +196,42 @@ train_lip_ac.py:466    if step % 500 == 0:                             # ...only
 `prefetch_factor`, no `pin_memory`, no `non_blocking=True`. Both samplers are per-item Python loops:
 
 ```python
-trm/samplers.py:178          for b in range(batch_size):     # 1024 iterations, per critic step
-trm/samplers.py:166              edges = np.linspace(...)    # a fresh allocation PER SAMPLE
-train_lip_ac.py:268          for _ in range(B):              # 128 iterations, per actor step
-train_lip_ac.py:283              [blocks(e, ...) for k in range(a.horizon)]   # 640 calls/step
+rlp/core/value/samplers.py:195   for b in range(batch_size):     # 1024 iterations, per critic step
+rlp/core/value/samplers.py:180       edges = np.linspace(...)    # a fresh allocation PER SAMPLE
+train_lip_ac.py:398          for _ in range(B):              # 128 iterations, per actor step
+train_lip_ac.py:412              [blocks(e, ...) for k in range(a.horizon)]   # 640 calls/step
 ```
 
 ~6,000 Python-level RNG calls per critic step; ~37M over a run. Gathers come from a **1.54 GB
 CPU-resident** fs1 cache (2.01M × 192 fp32 — `LatentCache.load` pins to CPU at
-`trm/latent_cache.py:75` and nothing moves it), then **8 blocking pageable H2D copies per step**
-(`train_lip_ac.py:291-292, 329-330`).
+`rlp/data/latent_cache.py:75` and nothing moves it), then **8 blocking pageable H2D copies per
+step** (`train_lip_ac.py:422,423,473,475-477`).
 
-**Dead work:** `aref` is computed unconditionally at `:283` (640 of 896 per-step `blocks()` calls)
-but consumed only under `if a.bc_weight > 0` at `:428`, and `--bc-weight` defaults to `0.0`.
+**Dead work:** `aref` is computed unconditionally at `:411` (640 of 896 per-step `blocks()` calls)
+but consumed only under `if a.bc_weight > 0` at `:618`, and `bc_weight=0.0` by default.
 
-**Cold start:** `LatentCache.episodes()` (`trm/latent_cache.py:53-55`) is O(E × N) — 10,000 full
-boolean masks over 2.01M rows ≈ 2×10¹⁰ comparisons, single-threaded, before step 0.
+**Cold start:** `LatentCache.episodes()` (`rlp/data/latent_cache.py:53-55`) is O(E × N) — 10,000
+full boolean masks over 2.01M rows ≈ 2×10¹⁰ comparisons, single-threaded, before step 0.
 
 ### 3.5 Memory caps the batch at 128
 
-All 8 differentiable rollouts stay alive until `loss.backward()` at `:430`, because `e_path` (`:422`)
-is reduced by `torch.stack(e_path).mean()` at `:426` → **~2 GB of retained WM activations**.
+All 8 differentiable rollouts stay alive until `loss.backward()` at `:621`, because `e_path`
+(`:586`) is reduced by `torch.stack(e_path).mean()` at `:617` → **~2 GB of retained WM activations**.
 Per-rollout-step activation checkpointing (the WM is frozen — no weight grads) frees most of it.
 **A bigger batch costs almost nothing in wall-clock in a launch-bound regime.**
 
-The DINO world-model already does this — `wm/dinowm/tokens.py:165-174`:
+The DINO world-model already does this — `rlp/core/world_model/dinowm/tokens.py:167-169`:
 
 ```python
-165    # the K-step LIP unroll keeps every iteration's rollout graph alive for
-166    # the final backward — full fp32 activations OOM an 80GB H100 at B=128,
-167    # so recompute predictor activations in backward instead of storing them
+167    # the K-step LIP unroll keeps every iteration's rollout graph alive for
+168    # the final backward — full fp32 activations OOM an 80GB H100 at B=128,
+169    # so recompute predictor activations in backward instead of storing them
 ```
 
 ### 3.6 No multi-GPU inside a run
 
 No DDP, no FSDP, no gradient accumulation. Single-GPU by construction
-(`train_lip_ac.py:211-216`). All multi-GPU use is shell-level fan-out over seeds — a 4-GPU box gets
+(`train_lip_ac.py:336-341`). All multi-GPU use is shell-level fan-out over seeds — a 4-GPU box gets
 4× *sweep* throughput and **zero** speedup on any single actor's 1.3 h latency.
 
 ---
@@ -254,11 +257,11 @@ Each `env.step` triggers an unconditional 224×224 render (`wrapper/default.py:4
 one `mujoco.Renderer` per env — **50 GL contexts per process**.
 
 **[measured]** One 50-env × 50-step call takes **119 s** — CEM mean 132.0 s, LIP mean 110.3 s across
-15 evals in `Dyna/dyna_r1_results/driver_r1_ladder.log`. That is **~48 ms per env-step**, of which
+15 evals in `logs/dyna_r1_results/driver_r1_ladder.log`. That is **~48 ms per env-step**, of which
 the planner accounts for ~1.8 s *in the entire call* (2 replans; the log shows exactly two
 `solve time: 0.9199 / 0.8214` lines). **GPU duty cycle ≈ 1.5%.**
 
-The repo states the consequence outright — `scripts/trm/td_sweep_fast.sh:3`:
+The original campaign driver states the consequence outright:
 
 ```
 # Eval is CPU-bound (GPU ~0%, per-step 100-env pixel pipeline), so run many jobs concurrently
@@ -270,8 +273,8 @@ Free instrumentation is already there and unused: `wrapper/default.py:433-435` r
 ### 4.1b The segfault's root cause: `MUJOCO_EGL_DEVICE_ID` — **CONFIRMED, 2026-07-25**
 
 > **Status: verified from source *and* measured on the 4× H100 loop pod.** This was a hypothesis in
-> the first draft; it is now an experimental result. Probe: `harness/egl_device_probe.py`,
-> driver: `harness/egl_device_test.sh`.
+> the first draft; it is now an experimental result. Probe: `rlp/tools/probe/egl_device_probe.py`,
+> driver: `main:Dyna/dyna_harness/egl_device_test.sh`.
 
 **Source-level mechanism** (`mujoco/egl/__init__.py`, mujoco 3.10.0):
 
@@ -312,7 +315,7 @@ software/other EGL device, which is its own reason to pin the index explicitly.)
 | `MUJOCO_EGL_DEVICE_ID` **unset** | 1096 → **1117** | 1 → **1** | 1 → **1** |
 | `MUJOCO_EGL_DEVICE_ID=$gpu` | 1096 | 1 → **6** | 1 → **6** |
 
-**Measurement 3 — under a real 3-way 50-env eval** (`harness/egl_3way_eval_test.sh`, CEM, var unset):
+**Measurement 3 — under a real 3-way 50-env eval** (`main:Dyna/dyna_harness/egl_3way_eval_test.sh`, CEM, var unset):
 
 ```
 t0    0: 1096 MiB | 1:   1 | 2:   1        <- baseline
@@ -334,47 +337,48 @@ Two consequences beyond the abort itself:
   so the three "parallel" collectors contend and self-serialize.
 
 **Fix:** set `MUJOCO_EGL_DEVICE_ID=$gpu` next to every `CUDA_VISIBLE_DEVICES=$gpu`. Applied in
-`harness/collect_r1_fixed.sh`.
+`main:Dyna/dyna_harness/collect_r1_fixed.sh`.
 
 **⚠ Not yet closed:** the with-fix/without-fix *exit codes* for a full 3-way eval were never
 captured — the run was killed to protect an unrelated experiment sharing the pod. The mechanism is
 confirmed; **the "does the fix prevent the abort" test still needs one clean run.**
 
-Historical bracket, consistent with all of the above:
-- 2 concurrent EGL evals: fine — `Dyna/dyna_harness/capture_videos.sh:5`
-- 3 concurrent EGL evals: aborts — `collect_r1.sh:56`
-- 3 concurrent **osmesa** evals: fine — `ogbench_retrain_20260717/run_retrain_campaign.sh:166-168`
-- 12 concurrent **osmesa** evals, `OMP_NUM_THREADS=18`: **~40× wall-clock**, numerically identical —
-  `previous/tworoom_min0_20260714/WRITEUP_tworoom_min0.md:171-177`
+Historical bracket, consistent with all of the above (the archived campaign
+artifacts are no longer part of this repository):
+- 2 concurrent EGL evals: fine — `main:Dyna/dyna_harness/capture_videos.sh:5`
+- 3 concurrent EGL evals: aborts — `main:Dyna/dyna_harness/collect_r1.sh:56`
+- 3 concurrent **osmesa** evals: fine
+- 12 concurrent **osmesa** evals, `OMP_NUM_THREADS=18`: **~40× wall-clock**, numerically identical
 
 osmesa "worked" because software rendering never touches a GPU — it sidestepped the bug by
 abandoning the accelerator, at the cost of putting rendering on the CPU critical path (§4.1).
 
 ### 4.2 `batch_size: 1` turns one batched solve into 50 sequential ones
 
-`scripts/plan/config/solver/cem.yaml:3` sets `batch_size: 1`; `solver/cem.py:152` loops over it.
+`configs/eval/solver/cem.yaml` sets `batch_size: 1`; the packaged CEM solver loops over it.
 With 50 envs that is **50 sequential CEM solves**, each 30 iterations × 300 samples →
 **7,500 strictly sequential predictor calls per replan**, plus 100 separate batch-1 ViT forwards.
 
-The fix already exists elsewhere — `scripts/trm/eval_hard.py:79-81`:
+The fix already exists elsewhere — `rlp/train/trm_pipeline/eval_hard.py:87-94`:
 
 ```python
     solver = swm.solver.CEMSolver(..., batch_size=args.solver_batch)  # batch ALL envs together (GPU, not serial)
 ```
 
-with `--solver-batch` defaulting to 1024. **The `scripts/plan/config/` solvers never got it.**
+with `core.solver.batch_size=1024`. **The evaluation solver configs never got it.**
 Same loop in `gd.py:192`, `mppi.py:149`, `icem.py:179`, `predictive_sampling.py:121`.
 
-LIP's *proposal* correctly batches all envs (`lip.py:534-541`), but `lip.py:649` reuses the chunk
-loop for its MPPI tail — and with `n_steps: 0` that loop body builds an `expanded` dict including
-`np.repeat(..., 300)` at `:663`, then does nothing with it.
+LIP's *proposal* correctly batches all envs (`rlp/core/solver/lip.py:231-236`), but
+`rlp/core/solver/lip.py:362` reuses the chunk loop for its MPPI tail — and with `n_steps: 0` that
+loop body builds an `expanded` dict including `np.repeat(..., 300)` at `:375`, then does nothing
+with it.
 
 ### 4.3 D2H syncs inside the innermost optimization loop
 
 ```python
 solver/cem.py:263      final_batch_cost = topk_vals.mean(dim=1).cpu().tolist()   # INSIDE the 30-iter loop
 solver/mppi.py:249     (same pattern)
-solver/lip.py:679      final_cost = (w * costs.float()).sum(dim=1).cpu().tolist()
+rlp/core/solver/lip.py:396   final_cost = (w * costs.float()).sum(dim=1).cpu().tolist()
 solver/gd.py:271       batch_cost_history.append(cost.item())
 ```
 
@@ -398,7 +402,7 @@ More per-step host memcpy on the critical path:
 
 ### 4.5 The goal latent is re-encoded every single replan
 
-`solver/lip.py:521-532` encodes the goal image on every call; the goal is fixed for the episode. CEM
+`rlp/core/solver/lip.py:218-229` encodes the goal image on every call; the goal is fixed for the episode. CEM
 at least caches it within a solve (`lewm.py:132`); LIP does not cache it at all. With
 `history_len=1` that is **50% of all encoder FLOPs, thrown away.**
 
@@ -424,7 +428,7 @@ Pod is **4× H100, 64 cores**. Almost nothing uses more than one GPU.
 
 ### 5.1 Measured breakdown of one ladder
 
-**[measured]** `Dyna/dyna_r1_results/driver_r1_ladder.log`, 2026-07-24:
+**[measured]** `logs/dyna_r1_results/driver_r1_ladder.log`, 2026-07-24:
 
 | phase | duration | GPUs busy | share |
 |---|---|---|---|
@@ -440,17 +444,17 @@ the same job measured **6 m 19 s**. See §9 — the sharding script was broken a
 
 ### 5.2 Collection is ~45% of a round at 1.5% GPU duty
 
-Collection is the eval path with a lance-writer hook spliced in (`patch_world_record.py`, gated on
-`SWM_RECORD_PATH`), so it inherits every cost in §4.
+Collection is the eval path with a lance-writer hook spliced in (`rlp/tools/patch/patch_world_record.py`,
+gated on `SWM_RECORD_PATH`), so it inherits every cost in §4.
 
 - Round 1: 24 calls → ~50 min sequential (~17 min at PAR=3).
-- **Round 2: 180 calls, strictly sequential (`r2_driver.sh:73-77`) ≈ 6.3 h — the single largest
-  serial block in the pipeline.**
+- **Round 2: 180 calls, strictly sequential (`main:Dyna/dyna_harness/r2_driver.sh:73-77`) ≈ 6.3 h — the single
+  largest serial block in the pipeline.**
 
 And the 3× parallelism gets latched off permanently by one abort:
 
 ```bash
-# Dyna/dyna_harness/collect_r1.sh:43-64
+# main:Dyna/dyna_harness/collect_r1.sh:43-64
 44    if [ "$PAR" = 3 ]; then
 52      wait $P0 || R=1  ...                       # lockstep barrier: batch i+1 waits for the slowest
 56        log "parallel batch $i had a failure -> degrading to sequential + retrying"
@@ -459,7 +463,7 @@ And the 3× parallelism gets latched off permanently by one abort:
 64      collect_call "$a" 0 "$i"                   # <-- sequential path pins GPU 0 too
 ```
 
-Fixed in `harness/collect_r1_fixed.sh`: EGL device pinning, bounded per-job retry on the worker's
+Fixed in `main:Dyna/dyna_harness/collect_r1_fixed.sh`: EGL device pinning, bounded per-job retry on the worker's
 own GPU, and one independent worker per actor instead of the lockstep batch barrier (one worker per
 actor is *required* — concurrent writers must not share a lance).
 
@@ -476,15 +480,15 @@ uncapped OMP × 77-thread dataloader workers has already exhausted it.
 
 ### 5.4 Dataset mixing: ~65 GB of single-threaded rewrite, arms back-to-back
 
-`build_dyna_mix.py` is one generator feeding one `lance.write_dataset`. JPEG passes through
-undecoded (good), but:
+`rlp/tools/data/build_dyna_mix.py` is one generator feeding one `lance.write_dataset`. JPEG passes
+through undecoded (good), but:
 
 - arm 5050 = 2,010,000 expert + **25×** 80,746 on-policy = 4,028,650 rows ≈ **40 GB written**
 - arm 8020 = 2,010,000 + **6×** = 2,494,476 rows ≈ **25 GB written**
 - both built **sequentially** before either GPU starts
-- `:36-42` — a **per-row Python loop** to remap `episode_idx`, repeated K=25 times
-  (`build_arm_dataset.py:59-60` already does this with vectorized `pyarrow.compute`)
-- `:91-93` — a full re-read of the 4 M-row output to assert monotonicity
+- `:36-43` — a **per-row Python loop** to remap `episode_idx`, repeated K=25 times
+  (`build_arm_dataset.py:57-58` already does this with vectorized `pyarrow.compute`)
+- `:92-96` — a full re-read of the 4 M-row output to assert monotonicity
 
 The 25× duplication exists **only** because the loader has no sample weights (stated in the
 docstring). A weighted sampler deletes ~20 GB of writes per round.
@@ -494,28 +498,28 @@ docstring). A weighted sampler deletes ~20 GB of writes per round.
 **Real:** collect→mix, mix→fine-tune, fine-tune→gate, TD→LIP actor.
 
 **Scripted only** — all independent, all pinned to GPU 0: the 15 ladder evals
-(`dyna_r1_ladder.sh:102-118`, comment `# 4. evals — sequential (quiet pod)`), the 2 gate arms
-(`dyna_r1_gate.sh:72-73`, `# All evals SEQUENTIAL (quiet-pod rule).`), the 2 mix builds, the 6 P1
-validation evals.
+(`main:Dyna/dyna_harness/dyna_r1_ladder.sh:102-118`, comment `# 4. evals — sequential (quiet pod)`), the 2 gate
+arms (`main:Dyna/dyna_harness/dyna_r1_gate.sh:72-73`, `# All evals SEQUENTIAL (quiet-pod rule).`), the 2 mix
+builds, the 6 P1 validation evals.
 
-An N-way worker **already exists** (`run_evals_b.sh:81-101`), and every eval driver is idempotent
-per row, so aggressive re-running is safe.
+An N-way worker **already exists** (`main:Dyna/dyna_harness/run_evals_b.sh:81-101`), and every eval driver is
+idempotent per row, so aggressive re-running is safe.
 
-Most damning: `r2_driver.sh:3` forbids overlapping eval-path work with training. **Collection is
-~98% CPU and fine-tune is ~100% GPU — the ideal overlap pair, and the harness bans it.** The ban is
-a workaround for §4.1b, not a fundamental constraint; an earlier version (`dyna_stage1.sh:118-124`)
-*did* overlap them.
+Most damning: `main:Dyna/dyna_harness/r2_driver.sh:3` forbids overlapping eval-path work with training.
+**Collection is ~98% CPU and fine-tune is ~100% GPU — the ideal overlap pair, and the harness bans
+it.** The ban is a workaround for §4.1b, not a fundamental constraint; an earlier version
+(`main:Dyna/dyna_harness/dyna_stage1.sh:118-124`) *did* overlap them.
 
 ### 5.6 Polling gates
 
-`dyna_r1_finetune.sh:26` — `while ! grep -q "COLLECT_R1_DONE" ...; do sleep 300; done`: **up to 5
-minutes of pure idle** at the collection→fine-tune handoff. Cross-machine "IPC" is
-grep-a-logfile-for-a-string; `r2_driver.sh:89` ends with a **human-in-the-loop barrier**.
+`main:Dyna/dyna_harness/dyna_r1_finetune.sh:26` — `while ! grep -q "COLLECT_R1_DONE" ...; do sleep 300; done`:
+**up to 5 minutes of pure idle** at the collection→fine-tune handoff. Cross-machine "IPC" is
+grep-a-logfile-for-a-string; `main:Dyna/dyna_harness/r2_driver.sh:89` ends with a **human-in-the-loop barrier**.
 
 ### 5.7 Cache building has no prefetch
 
-`trm/latent_cache.py:123-131` is a synchronous read → jpeg-decode → GPU-encode → `.cpu()` loop with
-no DataLoader, no workers, no double buffering.
+`rlp/data/latent_cache.py:98-133` (`encode_dataset`) is a synchronous read → jpeg-decode →
+GPU-encode → `.cpu()` loop with no DataLoader, no workers, no double buffering.
 
 ### 5.8 Ops trap worth preserving
 
@@ -541,9 +545,10 @@ that pattern, and kills your own session. Kill by PID.)*
 The production path runs **fp32 without even TF32**, uncompiled — while the machinery exists and is
 used elsewhere in the same repo:
 
-- `scripts/plan/eval_wm.py:136,148-150,324-326` — bf16 cast, `torch.compile` on encoder + predictor,
-  autocast. All gated behind flags `cube.yaml` never sets.
-- `wm/dinowm/tokens.py:162,171` — `torch.compile` + bf16 autocast + grad checkpointing.
+- `src/rlp/eval/world_model.py` — bf16 cast, `torch.compile` on encoder +
+  predictor, autocast. All gated behind flags `cube.yaml` never sets.
+- `rlp/core/world_model/dinowm/tokens.py:165,172` — `torch.compile` + bf16 autocast + grad
+  checkpointing.
 - `wm/lewm/lewm.py`, `wm/lewm/module.py` — **zero** occurrences. This is the path used for every
   cube result and the entire Dyna campaign.
 - The WM was **trained** at `precision: bf16-mixed`, so bf16 inference is in-distribution.
@@ -559,25 +564,25 @@ Ordered by (wall-clock won) ÷ (effort). "Free" = no numerics change.
 
 | # | fix | where | payoff | risk |
 |---|---|---|---|---|
-| 1 | **Set `MUJOCO_EGL_DEVICE_ID=$gpu`** next to `CUDA_VISIBLE_DEVICES`; retest 3-way collection | `collect_r1.sh:27`, all cube Dyna scripts | unblocks 3× on **the** longest stage (~45% of a round) | **confirmed root cause**; done in `harness/collect_r1_fixed.sh` |
-| 2 | Un-latch `PAR`, stop pinning retries to GPU 0, drop the batch barrier | `collect_r1.sh:57,59,64` | one abort currently costs the whole run's parallelism | low; done in `harness/collect_r1_fixed.sh` |
-| 3 | Reuse `traj.detach()` instead of re-rolling | `solver/lip.py:553` | **−47% of LIP forward rollout** | **free**, exact; patch in `harness/patch_lip_reuse_traj.py` |
-| 4 | `batch_size: 1` → `>= num_envs` for CEM/GD/MPPI/iCEM | `config/solver/cem.yaml:3` | 50× fewer sequential solves per replan | **free**, one line, proven at `eval_hard.py:81` |
-| 5 | Wire in 4-way sharded cache build | `dyna_r1_ladder.sh:55-64` | **[measured]** 22 m → 6 m 19 s, 22% of the ladder | script was broken; **fixed + validated**, see §9 |
-| 6 | Generalize the existing N-way eval worker; run gate arms + mix builds concurrently | `run_evals_b.sh:81-101` | ~30 m → ~8 m ladder; 3 idle GPUs recovered | gated on #1 |
-| 7 | Hoist `.cpu()/.item()` out of inner loops | `cem.py:263`, `mppi.py:249`, `lip.py:679`, `gd.py:271`, `train_lip_ac.py:352,434` | −1,500 syncs/replan; −24,000/training run | **free**; `icem.py:324` shows the correct form |
-| 8 | Cache the goal latent per episode | `solver/lip.py:521-532`; `pldm.py:78-81` | −50% encoder FLOPs (LIP) | **free** |
-| 9 | `pred_proj` on last token only; batch the action encoder; ring-buffer the window; Conv1d(k=1)→Linear | `lewm.py:50-51`, `lip.py:348-350`, `module.py:200-209` | −2/3 of `pred_proj`; −160 kernels/actor step | **free** |
+| 1 | **Set `MUJOCO_EGL_DEVICE_ID=$gpu`** next to `CUDA_VISIBLE_DEVICES`; retest 3-way collection | `main:Dyna/dyna_harness/collect_r1.sh:27`, all cube Dyna scripts | unblocks 3× on **the** longest stage (~45% of a round) | **confirmed root cause**; historical fix in `main:Dyna/dyna_harness/collect_r1_fixed.sh` |
+| 2 | Un-latch `PAR`, stop pinning retries to GPU 0, drop the batch barrier | `main:Dyna/dyna_harness/collect_r1.sh:57,59,64` | one abort currently costs the whole run's parallelism | low; historical fix in `main:Dyna/dyna_harness/collect_r1_fixed.sh` |
+| 3 | Reuse `traj.detach()` instead of re-rolling | `rlp/core/solver/lip.py:255` | **−47% of LIP forward rollout** | **free**, exact; patch in `rlp/tools/patch/patch_lip_reuse_traj.py` |
+| 4 | `batch_size: 1` → `>= num_envs` for CEM/GD/MPPI/iCEM | `config/solver/cem.yaml:3` | 50× fewer sequential solves per replan | **free**, one line, proven at `rlp/train/trm_pipeline/eval_hard.py:94` |
+| 5 | Wire in 4-way sharded cache build | `main:Dyna/dyna_harness/dyna_r1_ladder.sh:55-64` | **[measured]** 22 m → 6 m 19 s, 22% of the ladder | script was broken; **fixed + validated**, see §9 |
+| 6 | Generalize the historical N-way eval worker; run gate arms + mix builds concurrently | `main:Dyna/dyna_harness/run_evals_b.sh:81-101` | ~30 m → ~8 m ladder; 3 idle GPUs recovered | gated on #1 |
+| 7 | Hoist `.cpu()/.item()` out of inner loops | `cem.py:263`, `mppi.py:249`, `rlp/core/solver/lip.py:396`, `gd.py:271`, `train_lip_ac.py:500,625` | −1,500 syncs/replan; −24,000/training run | **free**; `icem.py:324` shows the correct form |
+| 8 | Cache the goal latent per episode | `rlp/core/solver/lip.py:218-229`; `pldm.py:78-81` | −50% encoder FLOPs (LIP) | **free** |
+| 9 | `pred_proj` on last token only; batch the action encoder; ring-buffer the window; Conv1d(k=1)→Linear | `lewm.py:50-51`, `rlp/core/rollout.py:37-39`, `module.py:200-209` | −2/3 of `pred_proj`; −160 kernels/actor step | **free** |
 | 10 | Turn on bf16 + `torch.compile` + TF32 | `cube.yaml`, `set_float32_matmul_precision('high')` | large in a launch-bound regime | low; needs #12 for compile to stick |
-| 11 | Delete dead work | `train_lip_ac.py:283`; `lip.py:649-666`; `build_dyna_mix.py:91-93` | small but pure | **free** |
+| 11 | Delete dead work | `train_lip_ac.py:412`; `rlp/core/solver/lip.py:362-375`; `build_dyna_mix.py:92-96` | small but pure | **free** |
 | 12 | Pin the solve batch (pad + mask) | `policy.py:393-397` | prerequisite for CUDA graphs | low |
-| 13 | Export the documented NCCL env, 2 GPUs/arm | `dyna_r1_finetune.sh:54` | **[measured]** 1.7× on ~36% of a round | medium; NVLS off + P2P on; watch the pid quota |
+| 13 | Export the documented NCCL env, 2 GPUs/arm | `main:Dyna/dyna_harness/dyna_r1_finetune.sh:54` | **[measured]** 1.7× on ~36% of a round | medium; NVLS off + P2P on; watch the pid quota |
 | 14 | Parallelize env stepping + rendering in-process | `world/env_pool.py:134` | attacks the 48 ms/env-step directly | medium; needs #1 first |
-| 15 | Weighted sampler instead of 25× row duplication | `build_dyna_mix.py:66-68` | deletes ~20 GB of writes per round | medium |
-| 16 | Activation-checkpoint the rollout; raise B | `train_lip_ac.py:420`; pattern at `tokens.py:165-174` | frees ~2 GB → larger batch ≈ free throughput | low |
-| 17 | CUDA-graph the K×H unroll | `lip.py:547-567`, `train_lip_ac.py:401` | the big one once #10/#12 land | medium |
-| 18 | Vectorize samplers; `argsort`-based `episodes()`; DataLoader + pinned memory; vectorize the remap | `trm/samplers.py`, `trm/latent_cache.py:53`, `build_dyna_mix.py:36-42` | ~37M Python RNG calls → 0 | **free** |
-| 19 | Drop the collection→fine-tune poll from `sleep 300` to `sleep 15` | `dyna_r1_finetune.sh:26` | up to 5 min/round | **free** |
+| 15 | Weighted sampler instead of 25× row duplication | `rlp/tools/data/build_dyna_mix.py:66-68` | deletes ~20 GB of writes per round | medium |
+| 16 | Activation-checkpoint the rollout; raise B | `train_lip_ac.py:612`; pattern at `rlp/core/world_model/dinowm/tokens.py:167-175` | frees ~2 GB → larger batch ≈ free throughput | low |
+| 17 | CUDA-graph the K×H unroll | `rlp/core/solver/lip.py:249-269`, `train_lip_ac.py:588` | the big one once #10/#12 land | medium |
+| 18 | Vectorize samplers; `argsort`-based `episodes()`; DataLoader + pinned memory; vectorize the remap | `rlp/core/value/samplers.py`, `rlp/data/latent_cache.py:53`, `rlp/tools/data/build_dyna_mix.py:36-43` | ~37M Python RNG calls → 0 | **free** |
+| 19 | Drop the collection→fine-tune poll from `sleep 300` to `sleep 15` | `main:Dyna/dyna_harness/dyna_r1_finetune.sh:26` | up to 5 min/round | **free** |
 | 20 | RoPE / time-invariant positions → KV-cache the window | `wm/lewm/module.py:269,291` | ~3× rollout transformer FLOPs | **high — changes numerics, needs a retrain** |
 
 **Do first:** #1 and #2 are written and ready. Then the free, correctness-preserving batch: #3, #4,
@@ -593,11 +598,11 @@ training. Fix the renderer concurrency and a large amount of scheduling freedom 
 
 ## 8. What is *not* a bottleneck — don't waste time here
 
-- **The actor network.** 455k params, ~0.04% of WM FLOPs. Measured directly: swapping the MLP actor
-  for a transformer moved step time 2.6% (`LIP_AC_MATH.md:157` — *"rollouts dominate
-  (0.77 vs 0.79 s/step)"*).
+- **The actor network.** 455k params, ~0.04% of WM FLOPs. The historical
+  measurement found that swapping the MLP actor for a transformer moved step
+  time only 2.6% (0.77 vs 0.79 s/step).
 - **The critic / teacher / value head.** 147k params, ~1.2 GFLOP/step at B=1024.
-- **The EMA update** (`train_lip_ac.py:350-351`) — 12 tiny kernels.
+- **The EMA update** (`train_lip_ac.py:497-499`) — 12 tiny kernels.
 - **top-k / elite selection** (`cem.py:225-245`) — already GPU-side on a `(1,300)` tensor.
 - **`expanded_infos` tensor expansion** (`cem.py:168-176`) — stride-0 `.expand()`, never materialized.
 
@@ -609,36 +614,38 @@ training. Fix the renderer concurrency and a large amount of scheduling freedom 
    (`MUJOCO_EGL_DEVICE_ID` controls placement; `CUDA_VISIBLE_DEVICES` does not), but the
    with-fix/without-fix *exit codes* for a full 3-way eval were never captured — the run was killed
    to protect an unrelated experiment sharing the pod. **Needs one clean run of
-   `harness/egl_3way_eval_test.sh` on a quiet pod.**
+   restoring `main:Dyna/dyna_harness/egl_3way_eval_test.sh` or an equivalent
+   driver on a quiet pod.**
 
 2. **The launch-count estimate (~25–35k/decision) is static counting, not Nsight.** It is the number
    here that most deserves direct measurement before anyone commits to fix #17.
 
-3. ~~`cache_lance_shard.py:52-53` looks wrong~~ — **CONFIRMED BROKEN, FIXED, AND VALIDATED.**
-   `get_row_data(self, i): return full.get_row_data(s + i)` is called from `latent_cache.py:124-125`
-   with `i` as a **list**, and `int + list` raises
+3. ~~`rlp/tools/data/cache_lance_shard.py:50` looks wrong~~ — **CONFIRMED BROKEN, FIXED, AND VALIDATED.**
+   `get_row_data(self, i): return full.get_row_data(s + i)` is called from
+   `rlp/data/latent_cache.py:125` with `i` as a **list**, and `int + list` raises
    `TypeError: unsupported operand type(s) for +: 'int' and 'list'` — on the *first batch*, for
    *every* shard including shard 0. This script could never have run. Corroborated on the pod:
    `/workspace/caches/` contained only whole-dataset `fs1`/`fs5` caches, **no shard files**, and no
    log referenced it. The measured 4-way cache time quoted elsewhere came from the older
-   `cache_cube_full.py` (`--ep-start/--ep-end`), not this one.
+   `cache_cube_full.py` (`episode_start` / `episode_end`), not this one.
 
    This matters because fix #5 — the 22 min → 6 min cache win, 22% of a ladder — *is delivered by
    this script*. It was staged as a "round-2+ speed lever (scripts ready)" but never exercised, so
    the bug sat undetected.
 
-   **Fixed** element-wise in `harness/cache_lance_shard.py` and **validated on the pod**: a
+   **Fixed** element-wise in `rlp/tools/data/cache_lance_shard.py` and **validated on the pod**: a
    10-episode shard (rows 402000–404010) encoded on GPU3 and compared against the reference fs1
    cache — `episode_idx` and `step_idx` exact, latents matching to **1.7e-6** (ordinary fp32
    batch-tiling nondeterminism, not a logic error).
 
 4. **Two rollout code paths differ.** CEM goes through `LeWM.rollout` (`lewm.py:96`), LIP uses
-   `rollout_traj` (`lip.py:346`) with a zero-filled 2-block action history (`lip.py:539`). Both land
+   `rollout_traj` (`rlp/core/rollout.py:30`) with a zero-filled 2-block action history
+   (`rlp/core/solver/lip.py:236`). Both land
    on 5 predict calls here, but the equivalence is incidental to `history_len=1`. Anyone changing
    the rollout must change both.
 
 ---
 
-*Method note: FLOP figures are static counts from `v2WM/config.json`, not profiler output. They are
+*Method note: FLOP figures are static counts from `assets/core/world_model/lewm_cube/config.json`, not profiler output. They are
 consistent with the measured 0.56 s @ B=1 / 0.58 s @ B=50 and 0.78 s/training-step to within the
 precision the argument needs.*

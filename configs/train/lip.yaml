@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - /core/planner: lip
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.train.lip._run}
+cache: ???
+h5: ???
+wm: ???
+value: ???
+output:
+  checkpoint: planner.pt
+steps: 8000
+batch: 128
+max_delta: 10
+p_cross: 0.3
+lr: 3e-4
+mean_weight: 0.1
+seed: 0
