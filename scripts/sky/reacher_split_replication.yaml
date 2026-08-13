@@ -315,6 +315,9 @@ run: |
   find "$FAILDIR" -maxdepth 1 -type f -delete
   DRV=$RESULTS/driver.log
   SUM=$RESULTS/summary.csv; touch "$SUM"
+  # failed cells (recorded as =FAIL by an earlier payload) must retry, not
+  # be skipped by the grep-based resume check
+  sed -i '/=FAIL/d' "$SUM" 2>/dev/null || true
   SLOT=/workspace/logs/slots; mkdir -p "$SLOT"
   # GRANULAR amax (0.2 steps) around each base's carded winner -- the old
   # amax closure predates the standardized recipe and must be re-found.
