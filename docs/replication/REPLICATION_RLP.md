@@ -150,9 +150,22 @@ The Dyna row is a procedure, not a single entry point:
 The historical campaign harness for step 1–2 lives in git history on `main`
 (`Dyna/`); it was deliberately not carried into this tree.
 
-## 5. Data-split discipline
+## 5. Data-split discipline — what the shipped numbers actually did
 
-Everything trains on episodes 0–7999; all evaluation start/goal states draw
-from episodes 8000–9999. Values and planners must never see the eval episodes
-(the pre-split legacy numbers are upper bounds — do not mix generations).
+The split differs per environment; the configs encode the protocol each
+table's numbers were actually produced under:
+
+- **Cube** (current generation: corrected replication + Dyna rows): value and
+  planner train on episodes 0–7999 (`train_episodes=8000`), eval tasks draw
+  from 8000–9999 (`evaluation.episode_range="8000:10000"`, pinned in the cube
+  eval roots). The pre-correction h25 row-(c) actors predate the split and are
+  upper bounds.
+- **Reacher**: same held-out split, pinned in `configs/eval/reacher.yaml`.
+- **TwoRoom**: the shipped numbers follow the original LeWM/DINO-WM contract —
+  training and evaluation share the full 10k-episode pool (no split). All
+  planner arms draw tasks from the same pool, so the within-table comparison
+  is unaffected, but RLP and value-objective rows are formally upper bounds.
+  For the held-out variant, train with `train_episodes=8000` and evaluate with
+  `evaluation.episode_range="8000:10000"`.
+
 Hyperparameter selection uses eval seeds 50/51; report on 42/43/44 only.

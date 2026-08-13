@@ -8,6 +8,12 @@ defaults:
   - /core/value: latent
   - _self_
 evaluation:
+  # TwoRoom's shipped numbers follow the original LeWM/DINO-WM contract:
+  # training and evaluation share the full 10k-episode pool (no episode
+  # split was applied in the producing campaigns). Set
+  # evaluation.episode_range="8000:10000" and train with
+  # train_episodes=8000 for the held-out variant.
+  episode_range: null
   callables:
     - method: _set_state
       args:
