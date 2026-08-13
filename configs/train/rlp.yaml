@@ -45,6 +45,7 @@ planner:
   critic_lr: 1e-3
   critic_lr_final: 1e-4
   td_batch: 1024
-  freeze_critic_frac: 0.5
+  freeze_critic_frac: 0.5   # critic live for the first 3,000 of 6,000 steps
+  expand_weight: 1.0        # value expansion on planner rollouts (Cube recipe; set 0 on Reacher)
   temporal_objective: terminal
-  amax: 1.6   # residual clip range — the one per-base knob in the paper
+  amax: 1.6   # residual clip range — the one per-base knob (LeWM 1.6, PLDM 4.5)

@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
   - _cube_model
-  - /core/world_model: prejepa
+  - /core/world_model: pldm
   - /core/policy: world_model
   - _self_

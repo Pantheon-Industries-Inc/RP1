@@ -48,7 +48,7 @@ def test_every_default_eval_config_composes(config_name: str) -> None:
     assert not OmegaConf.missing_keys(config)
 
 
-@pytest.mark.parametrize("config_name", ["train/lewm", "train/prejepa"])
+@pytest.mark.parametrize("config_name", ["train/lewm"])
 def test_every_train_config_composes(config_name: str) -> None:
     with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
         config = compose(config_name=config_name)
@@ -64,9 +64,9 @@ def test_config_root_can_be_overridden(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 def test_run_hydra_composes_the_selected_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["rlp", "model=prejepa", "runtime.seed=7"])
+    monkeypatch.setattr(sys, "argv", ["rlp", "model=lewm", "runtime.seed=7"])
     config = run_hydra(lambda cfg: cfg, config_name="train/lewm", selector=("model", "train"))
-    assert config.core.world_model.name == "prejepa"
+    assert config.core.world_model.name == "lewm"
     assert config.runtime.seed == 7
     run_directory = Path(config.run.directory)
     assert run_directory.parent.parent == tmp_path / "logs"

@@ -74,7 +74,7 @@ pixi run eval model=lewm core/solver=cem \
 pixi run eval model=lewm core/policy=no_move
 ```
 
-`model=lewm` / `model=prejepa` select the Cube eval roots. For TwoRoom and
+`model=lewm` / `model=pldm` select the Cube eval roots. For TwoRoom and
 Reacher use the parametric roots and pass the environment's checkpoint
 explicitly:
 
@@ -104,12 +104,20 @@ pixi run train model=lewm data=tworoom_lewm     # TwoRoom base
 pixi run train model=lewm data=reacher_lewm     # Reacher base
 ```
 
-**PLDM** is not trained in this repository. Paper cells used the authors'
-pretrained PLDM checkpoints converted into the LeWM key layout (validated to
-~2e-6 agreement; see [docs/lip/lip_results.md](../lip/lip_results.md)). A
-converted checkpoint loads through the same configs as LeWM
-(`core.world_model.checkpoint=<converted_pldm>`), and everything in Sections
-1–2 applies unchanged.
+**PLDM** cells use the authors' pretrained PLDM checkpoint converted 1:1 into
+the LeWM key layout (both are vit_hf tiny/patch14/224; 303/303 keys map with
+identical shapes, validated to ~2e-6 agreement — see
+[docs/lip/lip_results.md](../lip/lip_results.md)). The converted cube
+checkpoint is tracked in-tree at `assets/core/world_model/pldm_cube`, and the
+converter is a maintained tool for other PLDM exports:
+
+```bash
+pixi run tool tool=convert_pldm src=<authors_pldm.pt> dst=<out.pt>
+```
+
+Pair the converted weights with a LeWM-target `config.json` (copy the one in
+`assets/core/world_model/pldm_cube/`). Everything in Sections 1–2 then applies
+unchanged with `wm=assets/core/world_model/pldm_cube` / `model=pldm`.
 
 **Caveat on Reacher data**: the public reacher h5 pads every episode's
 terminal step with NaN actions. Any normalization must use `nanmean`/`nanstd`

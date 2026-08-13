@@ -15,10 +15,9 @@ from omegaconf import OmegaConf
 from torch import nn
 
 from rlp.core.policy import NoMovePolicy
-from rlp.core.value import LatentGoalCost, MetricCost
+from rlp.core.value import LatentGoalCost
 from rlp.core.value.protocols import TensorInfo
 from rlp.core.world_model import checkpoint as checkpoint_module
-from rlp.core.world_model.statewm import StateWM
 from rlp.environment.world import _resize_images_like_env
 
 
@@ -90,35 +89,6 @@ def test_checkpoint_loader_preserves_remote_or_missing_names(monkeypatch: pytest
     checkpoint_module.load_pretrained("missing-checkpoint.pt")
 
     assert captured == ["owner/model", "missing-checkpoint.pt"]
-
-
-def test_state_world_model_derives_from_stable_worldmodel_lewm() -> None:
-    from stable_worldmodel.wm import LeWM
-
-    model = StateWM(state_dim=2, action_dim=2, latent_dim=8, hidden_dim=16)
-    assert isinstance(model, LeWM)
-
-    info = {
-        "state": torch.randn(2, 3, 2, 2),
-        "goal_state": torch.randn(2, 1, 1, 2),
-    }
-    costs = model.get_cost(info, torch.randn(2, 3, 5, 2))
-    assert costs.shape == (2, 3)
-    assert "pixels" not in info
-
-    class EuclideanMetric(nn.Module):
-        def cost(self, start: torch.Tensor, goal: torch.Tensor) -> torch.Tensor:
-            return (start - goal).square().sum(dim=-1)
-
-    metric_info = {
-        "state": torch.randn(2, 3, 2, 2),
-        "goal_state": torch.randn(2, 1, 1, 2),
-    }
-    metric_costs = MetricCost(model, EuclideanMetric()).get_cost(
-        metric_info,
-        torch.randn(2, 3, 5, 2),
-    )
-    assert metric_costs.shape == (2, 3)
 
 
 def test_latent_goal_cost_broadcasts_candidates_and_caches_goal() -> None:

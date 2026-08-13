@@ -21,7 +21,8 @@ unrolls at K=8 versus 9000 forward for the repo's CEM defaults (300 samples x
 Measured wall-clock (H200, fp32): 30.7 ms/decision with graphed=true vs CEM's
 218.6 ms graphed / 241.9 ms eager (see docs/lip/README_lip.md).
 
-Trainers: ``rlp/train/lip.py`` and ``rlp/train/lip_dino.py``.
+Trainer: ``rlp/train/lip_ac.py`` (see ``rlp/train/rlp.py`` for the composed
+replication pipeline).
 """
 
 import time

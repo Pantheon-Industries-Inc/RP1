@@ -3,11 +3,6 @@
 The expensive encoder runs once here; the three metric learners then train on
 the cheap cached latents.
 
-Example (state WM)::
-
-    pixi run tool tool=cache_latents wm=statewm_tworoom \
-        dataset=tworoom_expert.lance out=caches/tworoom_state.pt
-
 Example (pixel LeWM)::
 
     pixi run tool tool=cache_latents wm=quentinll/lewm-cube \
@@ -22,7 +17,7 @@ import stable_worldmodel as swm
 from omegaconf import DictConfig
 
 from rlp.config import dispatch, run_hydra
-from rlp.core.world_model.runtime import build_featurizer, is_statewm, load_wm, pick_device
+from rlp.core.world_model.runtime import build_featurizer, load_wm, pick_device
 from rlp.data import encode_dataset
 from rlp.data.protocols import Array, RowBatch
 from rlp.logging import logger
@@ -37,11 +32,6 @@ def _run(cfg: DictConfig) -> None:
 
     dataset = swm.data.load_dataset(args.dataset)
     state_key: str | None = str(args.state_key) if args.state_key else None
-    if state_key is None and is_statewm(wm):
-        candidate = getattr(wm, "obs_key", None)
-        if not isinstance(candidate, str):
-            raise TypeError("StateWM obs_key must be a string")
-        state_key = candidate
 
     if args.max_rows is not None:
         full = dataset

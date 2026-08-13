@@ -31,17 +31,12 @@ def pick_device(name: str = "auto") -> str:
     return "cpu"
 
 
-def is_statewm(wm: object) -> bool:
-    return type(wm).__name__ == "StateWM"
-
-
 def build_featurizer(
     wm: nn.Module, device: str = "cpu", img_size: int = 224, train_res: int | None = None
 ) -> Callable[[RowBatch], torch.Tensor]:
     """Return ``featurizer(rows) -> (B, D)`` latents for caching.
 
-    Dispatches on world-model type: low-dim ``StateWM`` encodes ``obs_key``
-    directly; pixel WMs (LeWM) decode + ImageNet-normalise images first.
+    Pixel WMs (LeWM/PLDM layout) decode + ImageNet-normalise images first.
 
     ``train_res``: bottleneck images through the checkpoint's native training
     resolution before the final resize (e.g. 64 for OGBench play retrains,
@@ -53,18 +48,7 @@ def build_featurizer(
         raise TypeError(f"{type(wm).__name__} does not expose encode()")
     encoder = cast(_EncodableWorldModel, wm)
 
-    if is_statewm(wm):
-        obs_key = encoder.obs_key
-
-        @torch.no_grad()
-        def state_featurize(rows: RowBatch) -> torch.Tensor:
-            s = torch.as_tensor(np.asarray(rows[obs_key]).astype(np.float32))
-            s = s.reshape(s.shape[0], -1).to(device)
-            return encoder.encode({obs_key: s.unsqueeze(1)})["emb"][:, 0]
-
-        return state_featurize
-
-    # pixel world model (LeWM / DINO-WM): decode images and ImageNet-normalise
+    # pixel world model: decode images and ImageNet-normalise
     from io import BytesIO
 
     from PIL import Image
