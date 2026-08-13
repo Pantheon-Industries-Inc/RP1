@@ -170,8 +170,8 @@ the actual checkpoint. For a private GitHub repository, configure an SSH key
 or GitHub credential first; GitHub CLI is optional and is not used by RLP.
 
 ```bash
-git clone https://github.com/armin-sommer/Value_Metric_LeWM.git
-cd Value_Metric_LeWM
+git clone https://github.com/armin-sommer/RLP_original.git
+cd RLP_original
 
 git lfs pull
 git lfs fsck
