@@ -88,9 +88,10 @@ run: |
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
     echo "===== EVAL $label seed=$seed ====="
+    # episode_range 8000:10000 and h25 (goal_offset 25 / budget 50) are the
+    # shipped config defaults; the run exercises them rather than overriding.
     pixi run eval model=$BASE runtime.seed=$seed \
-      evaluation.episode_range=8000:10000 evaluation.num_episodes=$EVAL_N \
-      evaluation.goal_offset_steps=25 evaluation.budget=50 \
+      evaluation.num_episodes=$EVAL_N \
       "$@"
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
