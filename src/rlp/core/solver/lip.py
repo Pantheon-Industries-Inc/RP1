@@ -101,7 +101,31 @@ _LIP_PROBE_N = 0
 
 __all__ = [
     "LIPSolver",
+    "unwrap_encoder",
 ]
+
+
+def unwrap_encoder(model: torch.nn.Module) -> torch.nn.Module:
+    """Peel planning-cost wrappers off ``model`` until an encoder WM appears.
+
+    The eval driver hands the solver a cost stack — ``MetricCost`` holds its
+    inner model at ``.base`` and ``LatentGoalCost`` at ``.model``, and for
+    LeWM/PLDM the two nest (``MetricCost.base`` is a ``LatentGoalCost``). LIP
+    needs the raw world model underneath (``encode``/latent rollout).
+    """
+    candidate: torch.nn.Module = model
+    for _ in range(4):
+        if callable(getattr(candidate, "encode", None)):
+            return candidate
+        inner = getattr(candidate, "base", None)
+        if inner is None:
+            inner = getattr(candidate, "model", None)
+        if not isinstance(inner, torch.nn.Module):
+            break
+        candidate = inner
+    if not callable(getattr(candidate, "encode", None)):
+        raise TypeError(f"{type(model).__name__} does not wrap an encoder world model")
+    return candidate
 
 
 class LIPSolver(CEMSolver):
@@ -256,10 +280,7 @@ class LIPSolver(CEMSolver):
         return int(ah if ah else self._config.horizon)
 
     def _base(self) -> torch.nn.Module:
-        candidate = getattr(self.model, "base", self.model)
-        if not isinstance(candidate, torch.nn.Module):
-            raise TypeError("solver model base must be torch.nn.Module")
-        return candidate
+        return unwrap_encoder(self.model)
 
     def _value_init(
         self,

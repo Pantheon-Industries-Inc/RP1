@@ -68,3 +68,26 @@ def test_policy_keeps_real_history_and_updates_deadline_on_replan() -> None:
     assert torch.equal(solver.calls[0]["info"]["_align_remaining"], torch.tensor([3]))
     assert torch.equal(solver.calls[1]["info"]["_align_remaining"], torch.tensor([2]))
     assert solver.calls[1]["init_action"] is not None
+
+
+def test_unwrap_encoder_peels_cost_wrappers() -> None:
+    import torch
+    from torch import nn
+
+    from rlp.core.solver.lip import unwrap_encoder
+    from rlp.core.value.stable_worldmodel import LatentGoalCost
+
+    class WM(nn.Module):
+        def encode(self, info: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+            return info
+
+    wm = WM()
+    assert unwrap_encoder(wm) is wm
+    assert unwrap_encoder(LatentGoalCost(wm)) is wm
+
+    class OuterCost(nn.Module):  # MetricCost-shaped: inner stack at .base
+        def __init__(self, base: nn.Module) -> None:
+            super().__init__()
+            self.base = base
+
+    assert unwrap_encoder(OuterCost(LatentGoalCost(wm))) is wm
