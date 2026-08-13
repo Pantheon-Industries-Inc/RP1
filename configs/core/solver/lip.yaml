@@ -10,6 +10,8 @@ actor_path: ???
 restarts: 1
 restart_noise: 0.5
 robust_m: 0
-reuse_trajectory: false
+reuse_trajectory: true  # 9-unroll reuse, bit-exact (default since 2026-08-12)
+graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
 record_probes: false
 probe_directory: ${run.artifacts}/probes
+value_path: null  # override the value recorded in the actor checkpoint

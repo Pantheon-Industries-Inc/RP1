@@ -39,7 +39,7 @@ def test_every_public_job_config_composes(config_name: str) -> None:
 
 @pytest.mark.parametrize(
     "config_name",
-    ["eval/lewm", "eval/pusht", "eval/reacher", "eval/tworoom_pixels", "eval/tworoom_state"],
+    ["eval/lewm", "eval/reacher", "eval/tworoom_pixels"],
 )
 def test_every_default_eval_config_composes(config_name: str) -> None:
     with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
@@ -48,7 +48,7 @@ def test_every_default_eval_config_composes(config_name: str) -> None:
     assert not OmegaConf.missing_keys(config)
 
 
-@pytest.mark.parametrize("config_name", ["train/lewm", "train/prejepa", "train/pipeline"])
+@pytest.mark.parametrize("config_name", ["train/lewm"])
 def test_every_train_config_composes(config_name: str) -> None:
     with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
         config = compose(config_name=config_name)
@@ -64,9 +64,9 @@ def test_config_root_can_be_overridden(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 def test_run_hydra_composes_the_selected_model(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["rlp", "model=prejepa", "runtime.seed=7"])
+    monkeypatch.setattr(sys, "argv", ["rlp", "model=lewm", "runtime.seed=7"])
     config = run_hydra(lambda cfg: cfg, config_name="train/lewm", selector=("model", "train"))
-    assert config.core.world_model.name == "prejepa"
+    assert config.core.world_model.name == "lewm"
     assert config.runtime.seed == 7
     run_directory = Path(config.run.directory)
     assert run_directory.parent.parent == tmp_path / "logs"
@@ -90,7 +90,7 @@ def test_run_hydra_composes_the_selected_tool(monkeypatch: pytest.MonkeyPatch, t
 
 def test_run_hydra_records_validation_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["rlp", "model=state"])
+    monkeypatch.setattr(sys, "argv", ["rlp", "model=metric"])
     with pytest.raises(SystemExit) as failure:
         run_hydra(dispatch, config_name="train/lewm", selector=("model", "train"))
 
@@ -121,14 +121,13 @@ def test_run_hydra_records_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch, t
     assert "Run interrupted" in (run_directory / "run.log").read_text()
 
 
-def test_pipeline_data_and_caches_default_outside_checkout(
+def test_pipeline_caches_default_outside_checkout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("RLP_DATA_HOME", str(tmp_path))
     with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
-        config = compose(config_name="train/pipeline")
-    assert config.data_directory == str(tmp_path / "datasets")
+        config = compose(config_name="train/rlp")
     assert config.cache_directory == str(tmp_path / "caches")
 
 

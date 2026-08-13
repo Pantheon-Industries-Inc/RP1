@@ -205,3 +205,6 @@ pyrightconfig.json
 *.tar.gz
 *.tar.zst
 *.zip
+
+# macOS
+.DS_Store

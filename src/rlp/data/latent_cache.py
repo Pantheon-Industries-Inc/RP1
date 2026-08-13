@@ -13,6 +13,7 @@ and the pixel LeWM checkpoint.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +58,27 @@ class LatentCache:
             out[int(e)] = rows[np.argsort(st[rows])]
         return out
 
+    def windowed(self, frames: int, lag: int = 1) -> LatentCache:
+        """Return a cache whose latent rows concatenate causal frame windows.
+
+        Missing history at an episode start is left-padded with that episode's
+        first row, matching the planner-side window convention.
+        """
+        if frames < 1 or lag < 1:
+            raise ValueError("frames and lag must be positive")
+        if frames == 1:
+            return self
+        output = torch.empty((len(self.z), self.latent_dim * frames), dtype=torch.float32)
+        offsets = np.arange(frames - 1, -1, -1) * lag
+        for rows in self.episodes().values():
+            positions = np.arange(len(rows))[:, None] - offsets[None]
+            positions = np.maximum(positions, 0)
+            source = torch.as_tensor(rows[positions], dtype=torch.long)
+            output[torch.as_tensor(rows, dtype=torch.long)] = self.z[source].flatten(start_dim=1).float()
+        metadata = dict(self.meta or {})
+        metadata.update(window_frames=frames, window_lag=lag, source_latent_dim=self.latent_dim)
+        return type(self)(output, self.episode_idx, self.step_idx, self.state, metadata)
+
     def save(self, path: str | Path) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,8 +95,15 @@ class LatentCache:
         logger.success(f"Saved latent cache ({len(self.z)} rows, dim={self.latent_dim}) to {path}")
 
     @classmethod
-    def load(cls, path: str | Path) -> LatentCache:
-        d = torch.load(path, map_location="cpu", weights_only=False)
+    def load(cls, path: str | Path, *, mmap: bool | None = None) -> LatentCache:
+        """Load a cache, optionally mapping tensor storage instead of copying it.
+
+        ``mmap=None`` follows ``RLP_CACHE_MMAP``. Callers can explicitly opt
+        out for small caches or filesystems where mapping is undesirable.
+        """
+        if mmap is None:
+            mmap = os.environ.get("RLP_CACHE_MMAP") == "1"
+        d = torch.load(path, map_location="cpu", weights_only=False, mmap=mmap)
         return cls(
             z=d["z"].float(),
             episode_idx=d["episode_idx"].long(),

@@ -15,7 +15,6 @@ from rlp.core.value import MetricCost
 from rlp.core.value.protocols import TensorInfo
 from rlp.core.value.samplers import PairBatch, TransitionBatch
 from rlp.core.world_model import load_pretrained
-from rlp.core.world_model.hwm import HWM, HWMCheckpoint, load_hwm
 
 
 def _metric_cost_contract(cost: MetricCost, info: TensorInfo, actions: torch.Tensor) -> None:
@@ -46,4 +45,3 @@ def _hydra_dispatch_contract(config: DictConfig) -> None:
 
 def _checkpoint_contract(path: str) -> None:
     assert_type(load_pretrained(path), nn.Module)
-    assert_type(load_hwm(path), tuple[HWM, HWMCheckpoint])

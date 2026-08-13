@@ -4,24 +4,20 @@ A planning algorithm learned purely by optimizing against a frozen value
 function through a frozen world model. No behavior cloning, no policy
 gradient. See `rlp/core/solver/lip.py` for the method.
 
+> LIP is the paper's **RLP** planner. For the maintained end-to-end
+> replication commands (including the composed `model=rlp` pipeline), see
+> [docs/replication/REPLICATION_RLP.md](../replication/REPLICATION_RLP.md);
+> some commands below predate the current config keys.
+
 ## Pipeline
 
 ```bash
-# 1. Build a latent cache of the play dataset (block-subsampled, frameskip 5)
-#    (LeWM: pooled emb; DINO/PreJEPA: pooled 384-d pixel patches)
-
-# 2. Train the value (frozen teacher): offline TD, quasimetric head
-pixi run train model=metric cache=<cache.pt> learner=td \
-  core.value.head=quasimetric expectile=0.03 n_step=5 out=<value.pt>
-
-# 3. Train the planner (pathwise through the frozen WM, HER goals)
-pixi run train model=lip cache=<cache.pt> h5=<play.h5> \
-  wm=<wm_ckpt> value=<value.pt> core.planner.iterations=4 lr=3e-4 out=<lip.pt>
-#    (PreJEPA world models: train_lip_dino.py, patch-space rollouts)
+# Steps 1-3 in one command: latent caches -> offline TD value -> planner
+pixi run train model=rlp wm=<wm_ckpt> dataset=<play.lance> name=<tag>
 
 # 4. Evaluate (pure learned planner, no sampling)
-pixi run eval model=lewm core.world_model.checkpoint=<wm_ckpt> \
-  core/solver=lip core.solver.actor_path=<lip.pt> runtime.seed=42
+pixi run eval model=lewm core/solver=lip \
+  core.solver.actor_path=<run>/checkpoints/planner.pt runtime.seed=42
 ```
 
 ## Benchmarks (OGBench visual cube, val planning eval, n=50/eval)

@@ -19,7 +19,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
 from rlp.config import dispatch, run_hydra
-from rlp.core.value import learners, save_metric
+from rlp.core.value import build_metric, learners, save_metric
 from rlp.core.value.learners.contrastive import ContrastiveConfig
 from rlp.core.value.learners.regression import RegressionConfig
 from rlp.core.value.learners.td import TDConfig
@@ -29,17 +29,24 @@ from rlp.logging import logger
 
 
 def _run(cfg: DictConfig) -> None:
-    args = OmegaConf.merge(cfg, cfg.core.value)
+    # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
+    # the value-head keys and derived aliases can be merged in.
+    args = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg, resolve=True)), cfg.core.value)
     args.embed_dim = args.embedding_dim
     args.rep_dim = args.representation_dim
 
     device = pick_device(args.device)
-    cache = LatentCache.load(args.cache)
+    cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap)).windowed(
+        int(args.window_frames), int(args.window_lag)
+    )
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 
     learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
 
-    if args.learner == "regression":
+    module: nn.Module
+    if args.learner == "l2":
+        module = build_metric("l2", cache.latent_dim, {})
+    elif args.learner == "regression":
         scale = args.scale
         if scale is None:  # default scale ~ horizon so targets aren't dwarfed
             import numpy as np
@@ -56,7 +63,7 @@ def _run(cfg: DictConfig) -> None:
             shuffle_labels=(args.labels == "shuffled"),
             seed=args.seed,
         )
-        module: nn.Module = learners.regression.fit(cache, regression_cfg, device)
+        module = learners.regression.fit(cache, regression_cfg, device)
     elif args.learner == "td":
         td_cfg = TDConfig(
             head=args.head,

@@ -1,0 +1,716 @@
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from collections.abc import Callable
+
+import numpy as np
+import torch
+from loguru import logger as logging
+from torchvision import tv_tensors
+
+import stable_worldmodel as swm
+from stable_worldmodel.solver import Solver
+from stable_worldmodel.protocols import Actionable, Transformable
+
+
+@dataclass(frozen=True)
+class PlanConfig:
+    """Configuration for the MPC planning loop.
+
+    Attributes:
+        horizon: Planning horizon in number of steps.
+        receding_horizon: Number of steps to execute before re-planning.
+        history_len: Number of past observations to consider.
+        action_block: Number of times each action is repeated (frameskip).
+        warm_start: Whether to use the previous plan to initialize the next one.
+    """
+
+    horizon: int
+    receding_horizon: int
+    history_len: int = 1
+    action_block: int = 1
+    warm_start: bool = True
+    # Step at which the episode is graded (held-at-end). When set, the policy
+    # commits the whole plan once fewer than plan_len steps remain, so a
+    # terminal-cost planner's final plan ends exactly on the graded step. None
+    # reproduces the previous behaviour exactly.
+    deadline: int | None = None
+    # commit the WHOLE plan once <=plan_len steps remain. Separate from
+    # deadline so I3 (argmin-over-prefix readout) can be tested alone:
+    # committing raises keep_horizon to horizon, which makes
+    # chunks_remaining == T and silently disables I3.
+    commit_at_deadline: bool = False
+
+    @property
+    def plan_len(self) -> int:
+        """Total plan length in environment steps."""
+        return self.horizon * self.action_block
+
+
+class BasePolicy:
+    """Base class for agent policies.
+
+    Attributes:
+        env: The environment the policy is associated with.
+        type: A string identifier for the policy type.
+    """
+
+    env: Any
+    type: str
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the base policy.
+
+        Args:
+            **kwargs: Additional configuration parameters.
+        """
+        self.env = None
+        self.type = 'base'
+        for arg, value in kwargs.items():
+            setattr(self, arg, value)
+
+    def get_action(self, obs: Any, **kwargs: Any) -> np.ndarray:
+        """Get action from the policy given the observation.
+
+        Args:
+            obs: The current observation from the environment.
+            **kwargs: Additional parameters for action selection.
+
+        Returns:
+            Selected action as a numpy array.
+
+        Raises:
+            NotImplementedError: If not implemented by a subclass.
+        """
+        raise NotImplementedError
+
+    def set_env(self, env: Any) -> None:
+        """Associate this policy with an environment.
+
+        Args:
+            env: The environment to associate.
+        """
+        self.env = env
+
+    def _prepare_info(self, info_dict: dict) -> dict[str, torch.Tensor]:
+        """Pre-process and transform observations.
+
+        Applies preprocessing (via `self.process`) and transformations (via `self.transform`)
+        to observation data. Used by subclasses like FeedForwardPolicy and WorldModelPolicy.
+        Returns a new dict; the input is not mutated.
+
+        Args:
+            info_dict: Raw observation dictionary from the environment.
+
+        Returns:
+            A dictionary of processed tensors.
+
+        Raises:
+            ValueError: If an expected numpy array is missing for processing.
+        """
+        out = {}
+        for k, v in info_dict.items():
+            is_numpy = isinstance(v, (np.ndarray | np.generic))
+
+            if hasattr(self, 'process') and k in self.process:
+                if not is_numpy:
+                    raise ValueError(
+                        f"Expected numpy array for key '{k}' in process, got {type(v)}"
+                    )
+
+                # flatten extra dimensions if needed
+                shape = v.shape
+                if len(shape) > 2:
+                    v = v.reshape(-1, *shape[2:])
+
+                # process and reshape back
+                v = self.process[k].transform(v)
+                v = v.reshape(shape)
+
+            # collapse env and time dimensions for transform (e, t, ...) -> (e * t, ...)
+            # then restore after transform
+            if hasattr(self, 'transform') and k in self.transform:
+                shape = None
+                if is_numpy or torch.is_tensor(v):
+                    if v.ndim > 2:
+                        shape = v.shape
+                        v = v.reshape(-1, *shape[2:])
+                if k.startswith('pixels') or k.startswith('goal'):
+                    # permute channel first for transform
+                    if is_numpy:
+                        v = np.transpose(v, (0, 3, 1, 2))
+                    else:
+                        v = v.permute(0, 3, 1, 2)
+                v = torch.stack(
+                    [self.transform[k](tv_tensors.Image(x)) for x in v]
+                )
+                is_numpy = isinstance(v, (np.ndarray | np.generic))
+
+                if shape is not None:
+                    v = v.reshape(*shape[:2], *v.shape[1:])
+
+            if is_numpy and v.dtype.kind not in 'USO':
+                v = torch.from_numpy(v)
+
+            out[k] = v
+
+        return out
+
+
+class RandomPolicy(BasePolicy):
+    """Policy that samples random actions from the action space."""
+
+    def __init__(self, seed: int | None = None, **kwargs: Any) -> None:
+        """Initialize the random policy.
+
+        Args:
+            seed: Optional random seed for the action space.
+            **kwargs: Additional configuration parameters.
+        """
+        super().__init__(**kwargs)
+        self.type = 'random'
+        self.seed = seed
+
+    def get_action(self, obs: Any, **kwargs: Any) -> np.ndarray:
+        """Get a random action from the environment's action space.
+
+        Args:
+            obs: The current observation (ignored).
+            **kwargs: Additional parameters (ignored).
+
+        Returns:
+            A randomly sampled action.
+        """
+        return self.env.action_space.sample()
+
+    def set_seed(self, seed: int) -> None:
+        """Set the random seed for action sampling.
+
+        Args:
+            seed: The seed value.
+        """
+        if self.env is not None:
+            self.env.action_space.seed(seed)
+
+
+class NoMovePolicy(BasePolicy):
+    """Null-action baseline: emit the zero action every step (the agent does
+    nothing). This is the honest planning floor — success reflects only the
+    fraction of tasks already solved at the start state / holdable without
+    acting. Used as the 0-point against which planners are scored."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.type = 'nomove'
+
+    def get_action(self, obs: Any, **kwargs: Any) -> np.ndarray:
+        return np.zeros_like(self.env.action_space.sample())
+
+
+class ExpertPolicy(BasePolicy):
+    """Policy using expert demonstrations or heuristics."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize the expert policy.
+
+        Args:
+            **kwargs: Additional configuration parameters.
+        """
+        super().__init__(**kwargs)
+        self.type = 'expert'
+
+    def get_action(
+        self, obs: Any, goal_obs: Any, **kwargs: Any
+    ) -> np.ndarray | None:
+        """Get action from the expert policy.
+
+        Args:
+            obs: The current observation.
+            goal_obs: The goal observation.
+            **kwargs: Additional parameters.
+
+        Returns:
+            The expert action, or None if not available.
+        """
+        # Implement expert policy logic here
+        pass
+
+
+class FeedForwardPolicy(BasePolicy):
+    """Feed-Forward Policy using a neural network model.
+
+    Actions are computed via a single forward pass through the model.
+    Useful for imitation learning policies like Goal-Conditioned Behavioral Cloning (GCBC).
+
+    Attributes:
+        model: Neural network model implementing the Actionable protocol.
+        process: Dictionary of data preprocessors for specific keys.
+        transform: Dictionary of tensor transformations (e.g., image transforms).
+    """
+
+    def __init__(
+        self,
+        model: Actionable,
+        process: dict[str, Transformable] | None = None,
+        transform: dict[str, Callable[[torch.Tensor], torch.Tensor]]
+        | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the feed-forward policy.
+
+        Args:
+            model: Neural network model with a `get_action` method.
+            process: Dictionary of data preprocessors for specific keys.
+            transform: Dictionary of tensor transformations (e.g., image transforms).
+            **kwargs: Additional configuration parameters.
+        """
+        super().__init__(**kwargs)
+        self.type = 'feed_forward'
+        self.model = model.eval()
+        self.process = process or {}
+        self.transform = transform or {}
+
+    def get_action(self, info_dict: dict, **kwargs: Any) -> np.ndarray:
+        """Get action via a forward pass through the neural network model.
+
+        Args:
+            info_dict: Current state information containing at minimum a 'goal' key.
+            **kwargs: Additional parameters (unused).
+
+        Returns:
+            The selected action as a numpy array.
+
+        Raises:
+            AssertionError: If environment not set or 'goal' not in info_dict.
+        """
+        assert hasattr(self, 'env'), 'Environment not set for the policy'
+        assert 'goal' in info_dict, "'goal' must be provided in info_dict"
+
+        # Prepare the info dict (transforms and normalizes inputs)
+        info_dict = self._prepare_info(info_dict)
+
+        # Add goal_pixels key for GCBC model
+        if 'goal' in info_dict:
+            info_dict['goal_pixels'] = info_dict['goal']
+
+        # Move all tensors to the model's device
+        device = next(self.model.parameters()).device
+        for k, v in info_dict.items():
+            if torch.is_tensor(v):
+                info_dict[k] = v.to(device)
+
+        # Get action from model
+        with torch.no_grad():
+            action = self.model.get_action(info_dict)
+
+        # Convert to numpy
+        if torch.is_tensor(action):
+            action = action.cpu().detach().numpy()
+
+        # post-process action
+        if 'action' in self.process:
+            action = self.process['action'].inverse_transform(action)
+
+        return action
+
+
+class WorldModelPolicy(BasePolicy):
+    """Policy using a world model and planning solver for action selection."""
+
+    def __init__(
+        self,
+        solver: Solver,
+        config: PlanConfig,
+        process: dict[str, Transformable] | None = None,
+        transform: dict[str, Callable[[torch.Tensor], torch.Tensor]]
+        | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Initialize the world model policy.
+
+        Args:
+            solver: The planning solver to use.
+            config: MPC planning configuration.
+            process: Dictionary of data preprocessors for specific keys.
+            transform: Dictionary of tensor transformations (e.g., image transforms).
+            **kwargs: Additional configuration parameters.
+        """
+        super().__init__(**kwargs)
+
+        self.type = 'world_model'
+        self.cfg = config
+        self.solver = solver
+        self.process = process or {}
+        self.transform = transform or {}
+        self._action_buffer: list[deque[torch.Tensor]] | None = None
+        self._next_init: torch.Tensor | None = None
+        # real defaults are set in set_env; these keep attribute access safe
+        self._hist_len = 1
+        self._hist_stats = [0, 0]
+        self._hist_announced = False
+
+    @property
+    def flatten_receding_horizon(self) -> int:
+        """Receding horizon in environment steps (with frameskip)."""
+        return self.cfg.receding_horizon * self.cfg.action_block
+
+    def set_env(self, env: Any) -> None:
+        """Configure the policy and solver for the given environment.
+
+        Args:
+            env: The environment to associate with the policy.
+        """
+        self.env = env
+        n_envs = getattr(env, 'num_envs', 1)
+        self.solver.configure(
+            action_space=env.action_space, n_envs=n_envs, config=self.cfg
+        )
+        self._action_buffer = [
+            # plan_len, not flatten_receding_horizon: a deadline-aligned final
+            # plan commits up to the whole horizon, and a short maxlen would
+            # silently discard its leading steps.
+            deque(maxlen=self.cfg.plan_len) for _ in range(n_envs)
+        ]
+        # Real conditioning history for the world model. `plan_config` has a
+        # `history_len` field but nothing ever populated it, so at eval the WM
+        # saw ONE frame padded into 3 identical copies with zero action history
+        # -- while it was trained on 3 real frameskip-5 frames plus real
+        # actions. Frames are captured every `action_block` primitive steps so
+        # the spacing matches training, not every replan (which is
+        # `receding_horizon * action_block` steps apart).
+        hist_len = max(int(getattr(self.cfg, 'history_len', 1) or 1), 1)
+        self._hist_len = hist_len
+        self._frame_hist = [deque(maxlen=hist_len) for _ in range(n_envs)]
+        self._proprio_hist = [deque(maxlen=hist_len) for _ in range(n_envs)]
+        # executed primitive actions, enough to rebuild the last hist_len-1 blocks
+        self._prim_hist = [
+            deque(maxlen=max(hist_len - 1, 1) * self.cfg.action_block)
+            for _ in range(n_envs)
+        ]
+        self._step_ct = np.zeros(n_envs, dtype=np.int64)
+        # [replans seen, replans with a GENUINELY full history]. Printed at the
+        # end of a run: if the second number is ~0 the experiment silently did
+        # nothing and any "no effect" conclusion would be worthless.
+        self._hist_stats = [0, 0]
+
+        assert isinstance(self.solver, Solver), (
+            'Solver must implement the Solver protocol'
+        )
+
+    def get_action(self, info_dict: dict, **kwargs: Any) -> np.ndarray:
+        """Get action via planning with the world model.
+
+        Args:
+            info_dict: Current state information from the environment.
+            **kwargs: Additional parameters for planning.
+
+        Returns:
+            The selected action(s) as a numpy array.
+        """
+        assert hasattr(self, 'env'), 'Environment not set for the policy'
+
+        info_dict = self._prepare_info(info_dict)
+        n_envs = self.env.num_envs
+
+        needs_flush = info_dict.pop('_needs_flush', None)
+        if needs_flush is not None:
+            for i in range(n_envs):
+                if needs_flush[i]:
+                    self._action_buffer[i].clear()
+                    self._frame_hist[i].clear()
+                    self._proprio_hist[i].clear()
+                    self._prim_hist[i].clear()
+                    self._step_ct[i] = 0
+                    if self._next_init is not None:
+                        self._next_init[i] = 0
+
+        # Capture at frameskip spacing so the stacked history matches what the
+        # WM was trained on. The current frame is appended before planning, so
+        # it is always the most recent entry.
+        if self._hist_len > 1:
+            px_now = info_dict.get('pixels')
+            pro_now = info_dict.get('proprio')
+            for i in range(n_envs):
+                if self._step_ct[i] % self.cfg.action_block != 0:
+                    continue
+                if torch.is_tensor(px_now):
+                    self._frame_hist[i].append(px_now[i, -1])
+                if torch.is_tensor(pro_now):
+                    self._proprio_hist[i].append(pro_now[i, -1])
+
+        terminated = info_dict.get('terminated')
+        dead = (
+            np.asarray(terminated, dtype=bool)
+            if terminated is not None
+            else np.zeros(n_envs, dtype=bool)
+        )
+
+        replan_idx = [
+            i
+            for i in range(n_envs)
+            if len(self._action_buffer[i]) == 0 and not dead[i]
+        ]
+
+        if replan_idx:
+            idx_tensor = torch.as_tensor(replan_idx, dtype=torch.long)
+            sliced = {}
+            for k, v in info_dict.items():
+                if torch.is_tensor(v):
+                    sliced[k] = v[idx_tensor]
+                elif isinstance(v, np.ndarray):
+                    sliced[k] = v[replan_idx]
+                elif isinstance(v, list):
+                    sliced[k] = [v[i] for i in replan_idx]
+                else:
+                    sliced[k] = v
+
+            # Stack the real history for the envs that are replanning. Padding
+            # is PER ENV, by repeating that env's oldest available frame -- the
+            # same thing the legacy path did, so a short buffer is never worse,
+            # only less informative. Doing this globally (emit nothing unless
+            # every env is full) would let a single terminating env disable the
+            # feature for the whole rest of the run and fake a null result.
+            # Solvers that do not know these keys ignore them, so CEM/MPPI/Adam
+            # are byte-identical to before.
+            if self._hist_len > 1:
+                n_full = 0
+
+                def _stack(buf: deque, want: int) -> torch.Tensor:
+                    items = list(buf)
+                    if not items:
+                        return None
+                    while len(items) < want:
+                        items.insert(0, items[0])
+                    return torch.stack(items)
+
+                frames = [_stack(self._frame_hist[i], self._hist_len) for i in replan_idx]
+                if all(f is not None for f in frames):
+                    sliced['pixels_hist'] = torch.stack(frames)
+                    n_full = sum(
+                        len(self._frame_hist[i]) == self._hist_len for i in replan_idx
+                    )
+                pro = [_stack(self._proprio_hist[i], self._hist_len) for i in replan_idx]
+                if all(p is not None for p in pro):
+                    sliced['proprio_hist'] = torch.stack(pro)
+
+                block = self.cfg.action_block
+                n_blocks = self._hist_len - 1
+                acts = []
+                for i in replan_idx:
+                    items = list(self._prim_hist[i])
+                    want = n_blocks * block
+                    if len(items) < want:  # start of episode: no actions yet
+                        pad = torch.zeros_like(items[0]) if items else None
+                        if pad is None:
+                            acts.append(None)
+                            continue
+                        items = [pad] * (want - len(items)) + items
+                    acts.append(torch.stack(items[-want:]).reshape(n_blocks, -1))
+                if all(a is not None for a in acts):
+                    sliced['action_hist'] = torch.stack(acts)
+
+                self._hist_stats[0] += len(replan_idx)
+                self._hist_stats[1] += n_full
+                if n_full and not self._hist_announced:
+                    self._hist_announced = True
+                    print(
+                        f'[history] real {self._hist_len}-frame conditioning '
+                        f'engaged: pixels_hist '
+                        f'{tuple(sliced["pixels_hist"].shape)}, action_hist '
+                        f'{tuple(sliced["action_hist"].shape) if "action_hist" in sliced else None}'
+                    )
+                if self._hist_stats[0] and self._hist_stats[0] % 200 == 0:
+                    frac = self._hist_stats[1] / self._hist_stats[0]
+                    print(
+                        f'[history] {self._hist_stats[1]}/{self._hist_stats[0]} '
+                        f'replans had a full history ({frac:.0%})'
+                    )
+
+            sliced_init = (
+                self._next_init[idx_tensor]
+                if self._next_init is not None
+                else None
+            )
+
+            # I3: publish chunks-remaining so the cost can cap its prefix
+            # search at the deadline. None (no deadline) keeps the terminal readout.
+            _dl = getattr(self.cfg, "deadline", None)
+            # Published on BOTH the solver and its cost model. Sampling solvers
+            # reach the cost through ``model.get_cost`` (_MetricCost owns the
+            # readout there), but LIPSolver never calls get_cost on its
+            # refinement path -- it scores with the checkpoint-embedded value in
+            # LIPSolver._V -- so the attribute has to reach the solver itself.
+            # Publishing only to the model left I3 dead in every RLP cell, and
+            # a dead I3 returns the unaligned baseline verbatim.
+            _cr_i3 = None
+            if _dl:
+                _st = int(max(self._step_ct[i] for i in replan_idx))
+                _cr_i3 = max(1, (int(_dl) - _st) // self.cfg.action_block)
+            for _tgt in (self.solver, getattr(self.solver, "model", None)):
+                if _tgt is not None:
+                    _tgt.i3_chunks_remaining = _cr_i3
+
+            outputs = self.solver(sliced, init_action=sliced_init)
+
+            actions = outputs['actions']
+            keep_horizon = self.cfg.receding_horizon
+            # Deadline alignment: with a terminal cost, the last plan must end on
+            # the graded step, otherwise it optimises a state beyond the episode
+            # and only its first block is ever executed.
+            _dl = getattr(self.cfg, 'deadline', None)
+            if _dl and getattr(self.cfg, "commit_at_deadline", False):
+                _rem = int(_dl) - int(max(self._step_ct[i] for i in replan_idx))
+                if 0 < _rem <= self.cfg.plan_len:
+                    keep_horizon = self.cfg.horizon
+                    if not getattr(self, '_dl_announced', False):
+                        print(f'[deadline] {_rem} steps left <= plan_len '
+                              f'{self.cfg.plan_len}: committing the full plan so '
+                              f'its terminal lands on step {_dl}', flush=True)
+                        self._dl_announced = True
+            plan = actions[:, :keep_horizon]
+            rest = actions[:, keep_horizon:]
+
+            if self.cfg.warm_start and rest.shape[1] > 0:
+                if self._next_init is None:
+                    self._next_init = torch.zeros(
+                        n_envs, rest.shape[1], rest.shape[2], dtype=rest.dtype
+                    )
+                self._next_init[idx_tensor] = rest
+            elif not self.cfg.warm_start:
+                self._next_init = None
+
+            # keep_horizon can exceed receding_horizon on the final,
+            # deadline-aligned plan, so the flattened length must follow it.
+            plan = plan.reshape(
+                len(replan_idx), keep_horizon * self.cfg.action_block, -1
+            )
+
+            for row, env_i in enumerate(replan_idx):
+                self._action_buffer[env_i].extend(plan[row])
+
+        single_shape = self.env.single_action_space.shape
+        is_discrete = 'Discrete' in type(self.env.single_action_space).__name__
+
+        action = torch.full(
+            (n_envs, *single_shape),
+            fill_value=0 if is_discrete else float('nan'),
+            dtype=torch.long if is_discrete else torch.float32,
+        )
+
+        for i in range(n_envs):
+            if not dead[i]:
+                action[i] = self._action_buffer[i].popleft()
+                if self._hist_len > 1:
+                    self._prim_hist[i].append(action[i].clone())
+                self._step_ct[i] += 1
+
+        action = action.reshape(*self.env.action_space.shape)
+        action = action.numpy()
+
+        if 'action' in self.process:
+            action = self.process['action'].inverse_transform(action)
+
+        return action
+
+
+def _load_model_with_attribute(run_name, attribute_name, cache_dir=None):
+    """Helper function to load a model checkpoint and find a module with the specified attribute.
+
+    Args:
+        run_name: Path or name of the model run
+        attribute_name: Name of the attribute to look for in the module (e.g., 'get_action', 'get_cost')
+        cache_dir: Optional cache directory path
+
+    Returns:
+        The module with the specified attribute
+
+    Raises:
+        RuntimeError: If no module with the specified attribute is found
+    """
+    if Path(run_name).exists():
+        run_path = Path(run_name)
+    else:
+        run_path = Path(
+            cache_dir
+            or swm.data.utils.get_cache_dir(sub_folder='checkpoints'),
+            run_name,
+        )
+
+    if run_path.is_dir():
+        ckpt_files = list(run_path.glob('*_object.ckpt'))
+        ckpt_files.sort(key=lambda x: x.stat().st_ctime, reverse=True)
+        path = ckpt_files[0]
+        logging.info(f'Loading model from checkpoint: {path}')
+    else:
+        path = Path(f'{run_path}_object.ckpt')
+        assert path.exists(), (
+            f'Checkpoint path does not exist: {path}. Launch pretraining first.'
+        )
+
+    spt_module = torch.load(path, weights_only=False, map_location='cpu')
+
+    def scan_module(module):
+        if hasattr(module, attribute_name):
+            if isinstance(module, torch.nn.Module):
+                module = module.eval()
+            return module
+        for child in module.children():
+            result = scan_module(child)
+            if result is not None:
+                return result
+        return None
+
+    result = scan_module(spt_module)
+    if result is not None:
+        return result
+
+    raise RuntimeError(
+        f"No module with '{attribute_name}' found in the loaded world model."
+    )
+
+
+def AutoActionableModel(
+    run_name: str, cache_dir: str | Path | None = None
+) -> torch.nn.Module:
+    """Load a model checkpoint and return the module with a `get_action` method.
+
+    Automatically scans the checkpoint for a module implementing the Actionable
+    protocol (i.e., has a `get_action` method).
+
+    Args:
+        run_name: Path or name of the model run/checkpoint.
+        cache_dir: Optional cache directory path. Defaults to STABLEWM_HOME.
+
+    Returns:
+        The module with a `get_action` method, set to eval mode.
+
+    Raises:
+        RuntimeError: If no module with `get_action` is found in the checkpoint.
+    """
+    return _load_model_with_attribute(run_name, 'get_action', cache_dir)
+
+
+def AutoCostModel(
+    run_name: str, cache_dir: str | Path | None = None
+) -> torch.nn.Module:
+    """Load a model checkpoint and return the module with a `get_cost` method.
+
+    Automatically scans the checkpoint for a module implementing a cost function
+    (i.e., has a `get_cost` method) for use with planning solvers.
+
+    Args:
+        run_name: Path or name of the model run/checkpoint.
+        cache_dir: Optional cache directory path. Defaults to STABLEWM_HOME.
+
+    Returns:
+        The module with a `get_cost` method, set to eval mode.
+
+    Raises:
+        RuntimeError: If no module with `get_cost` is found in the checkpoint.
+    """
+    return _load_model_with_attribute(run_name, 'get_cost', cache_dir)
+
+
+# Alias for backward compatibility and type hinting
+Policy = BasePolicy

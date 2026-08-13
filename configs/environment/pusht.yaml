@@ -1,4 +1,0 @@
-# @package environment
-env_name: rlp/PushT-v1
-record_path: null
-num_envs: ${evaluation.num_episodes}

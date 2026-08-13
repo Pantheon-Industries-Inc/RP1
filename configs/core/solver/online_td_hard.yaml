@@ -1,7 +1,0 @@
-# @package core.solver
-horizon: 10
-receding_horizon: 8
-action_block: 5
-num_samples: 60
-cem_steps: 5
-topk: 5

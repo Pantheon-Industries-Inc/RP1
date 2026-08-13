@@ -3,11 +3,6 @@
 The expensive encoder runs once here; the three metric learners then train on
 the cheap cached latents.
 
-Example (state WM)::
-
-    pixi run tool tool=cache_latents wm=statewm_tworoom \
-        dataset=tworoom_expert.lance out=caches/tworoom_state.pt
-
 Example (pixel LeWM)::
 
     pixi run tool tool=cache_latents wm=quentinll/lewm-cube \
@@ -22,8 +17,9 @@ import stable_worldmodel as swm
 from omegaconf import DictConfig
 
 from rlp.config import dispatch, run_hydra
-from rlp.core.world_model.runtime import build_featurizer, is_statewm, load_wm, pick_device
+from rlp.core.world_model.runtime import build_featurizer, load_wm, pick_device
 from rlp.data import encode_dataset
+from rlp.data.latent_cache import _episode_col
 from rlp.data.protocols import Array, RowBatch
 from rlp.logging import logger
 
@@ -37,20 +33,26 @@ def _run(cfg: DictConfig) -> None:
 
     dataset = swm.data.load_dataset(args.dataset)
     state_key: str | None = str(args.state_key) if args.state_key else None
-    if state_key is None and is_statewm(wm):
-        candidate = getattr(wm, "obs_key", None)
-        if not isinstance(candidate, str):
-            raise TypeError("StateWM obs_key must be a string")
-        state_key = candidate
 
-    if args.max_rows is not None:
+    max_rows: int | None = int(args.max_rows) if args.max_rows is not None else None
+    if args.max_episodes is not None:
+        # Restrict to the first N episodes (the paper's train split): episode
+        # rows are stored contiguously, so this is a row prefix.
+        episodes = _episode_col(dataset).reshape(-1).astype(np.int64)
+        in_split = int(np.count_nonzero(episodes < int(args.max_episodes)))
+        if not np.array_equal(np.flatnonzero(episodes < int(args.max_episodes)), np.arange(in_split)):
+            raise ValueError("episodes are not stored contiguously; cannot apply max_episodes as a prefix")
+        max_rows = in_split if max_rows is None else min(max_rows, in_split)
+
+    if max_rows is not None:
         full = dataset
+        prefix = max_rows
 
         class _Sub:
             column_names = full.column_names
 
             def get_col_data(self, c: str) -> Array:
-                return np.asarray(full.get_col_data(c)[: args.max_rows])
+                return np.asarray(full.get_col_data(c)[:prefix])
 
             def get_row_data(self, i: list[int]) -> RowBatch:
                 return {str(key): np.asarray(value) for key, value in full.get_row_data(i).items()}

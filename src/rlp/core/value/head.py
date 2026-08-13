@@ -19,6 +19,8 @@ so that :class:`rlp.core.value.cost.MetricCost` can use any learner
 
 from __future__ import annotations
 
+from typing import cast
+
 import torch
 from torch import nn
 
@@ -105,7 +107,6 @@ class PairwiseMetricHead(nn.Module):
             out = 0.5 * (out + self._raw(z_j, z_i))
         return out
 
-    @torch.no_grad()
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         """Terminal cost (lower == more reachable). For regression this is the
         predicted temporal distance directly."""
@@ -165,9 +166,32 @@ class QuasimetricHead(nn.Module):
         d_asym = torch.relu(ej[..., s:] - ei[..., s:]).max(dim=-1).values
         return torch.as_tensor(d_sym + d_asym)
 
-    @torch.no_grad()
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         return self.forward(z_pred, z_goal)
+
+
+class L2WindowCost(nn.Module):
+    """Parameter-free L2 cost on concatenated latent frames.
+
+    ``latent_dim`` is the complete per-side width. A three-frame control for a
+    192-dimensional world model therefore declares ``latent_dim=576``.
+    """
+
+    def __init__(self, latent_dim: int) -> None:
+        super().__init__()
+        self.latent_dim = int(latent_dim)
+
+    def pretrained_config(self) -> dict[str, object]:
+        return {
+            "_target_": f"{type(self).__module__}.{type(self).__name__}",
+            "latent_dim": self.latent_dim,
+        }
+
+    def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
+        return cast(torch.Tensor, torch.linalg.vector_norm(z_pred - z_goal, dim=-1))
+
+    def forward(self, z_i: torch.Tensor, z_j: torch.Tensor) -> torch.Tensor:
+        return self.cost(z_i, z_j)
 
 
 def _interval_union_length(starts: torch.Tensor, ends: torch.Tensor) -> torch.Tensor:
@@ -235,9 +259,8 @@ class IQEHead(nn.Module):
         aggregate = alpha * component_cost.amax(-1) + (1 - alpha) * component_cost.mean(-1)
         return torch.as_tensor(self.log_scale.exp() * aggregate)
 
-    @torch.no_grad()
     def cost(self, z_pred: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
         return self.forward(z_pred, z_goal)
 
 
-__all__ = ["IQEHead", "PairwiseMetricHead", "QuasimetricHead", "pair_features"]
+__all__ = ["IQEHead", "L2WindowCost", "PairwiseMetricHead", "QuasimetricHead", "pair_features"]

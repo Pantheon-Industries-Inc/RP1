@@ -1,0 +1,920 @@
+# TwoRoom held-out split rerun (2026-08-13) -- patched copy of the canonical
+# eval-sweep harness (configs/rlp_grid_sweep.yaml @ origin/eval-sweep).
+# Patch surface, all gated on SPLIT=1: tworoom fs1 cache filtered to episodes
+# 0:8000 before TD/actor training; the full-pool td_canon teachers are NOT
+# copied in (three TD teachers retrain on the filtered cache); evals pass
+# +eval.ep_range=8000:10000. INCLUDE_WINNERS=1 adds the paper App C.1 winner
+# configs. Launch (fresh CACHE_VERSION so full-pool caches cannot be reused):
+#
+#   sky jobs launch scripts/sky/tworoom_split_rerun.yaml -n rlp-tw-split-lejepa --priority p1 \
+#     --env ENVNAME=tworoom --env BASE=lejepa --env GRID=terminal_search --env SPLIT=1 \
+#     --env INCLUDE_WINNERS=1 --env CACHE_VERSION=twins-split-v1 \
+#     --env ONLYCFG="terminal_a1.8_m0.1_l1e-4 terminal_a2.6_m0.3_l1e-3" ... -y
+#
+# Canonical TwoRoom/OGBench RLP grid-sweep configuration.
+#
+# Every objective here is train-side and needs nothing at deploy: no episode
+# budget, no chunks-remaining, no readout. The `deadline` and `min`/I3 readouts
+# are deliberately absent because they require privileged information.
+#
+#   sky jobs launch -n g-tw-lejepa sky/grid_sweep.yaml --env ENVNAME=tworoom --env BASE=lejepa --priority 2 ...
+#   sky jobs launch -n g-cu-lewm   sky/grid_sweep.yaml --env ENVNAME=cube    --env BASE=lewm   --priority 2 ...
+#
+# DESIGN. A 3x3x3 factorial on the three axes asked for -- amax, mean-weight
+# (intermediate refinement-iterate weighting), actor-lr -- at the settled
+# randhorizon centre, plus one-factor probes off that centre for align-weight and
+# warm-frac. 30 configs. Hyperparameters are swept per ENVIRONMENT and shared
+# across both bases of that environment, so the winner is whatever holds for
+# lejepa AND pldm (or lewm AND pldm on cube) -- never per-base.
+#
+# 30 configs do not fit on 8 GPUs, so a mkdir-based slot allocator keeps exactly
+# 8 in flight and starts the next as each finishes. Actors are uploaded as wandb
+# artifacts because managed-job clusters are torn down on completion and are not
+# reachable via `sky status` -- anything on node-local disk is lost.
+
+name: rh1-grid
+
+envs:
+  SPLIT: "0"               # 1 = held-out protocol for tworoom too: cache filtered
+                           #     to episodes 0:8000, TD teachers retrained on the
+                           #     filtered cache (no full-pool canons), eval draws
+                           #     ep_range 8000:10000
+  GRID: axes               # axes   = 3x3x3 amax/mean-weight/lr + probes
+                           # interp = align-weight interpolation curve + arrival alignment
+                           # tworoom_refine = 2 targeted actor settings for PLDM/DINO
+                           # telescoping = six tel-exact configs + fixed terminal control
+                           # measurements = latent/value x CEM/Adam/MPPI, then exit
+  ENVNAME: tworoom         # tworoom | cube
+  BASE: lejepa             # tworoom: lejepa|pldm   cube: lewm|pldm
+  STEPS: "8000"
+  TRAIN_SEEDS: "0 1 2"     # every config trained at every seed -- no select-then-retrain phase
+  EVAL_SEEDS: "42 43 44"   # every actor evaluated on every task seed
+  SMOKE: "0"               # 1 = 60 steps, 1 config, 1 seed, 1 eval cell: proves the path
+  MAXPAR: "4"
+  ACTOR_ONLY: "0"          # full actor+critic training; actor-only is an explicit ablation
+  REUSE_ONLY: "0"          # 1 = missing final actor is fatal; never retrain
+  ACTOR_IMPORT_TAG: ""      # reuse-only repair: copy final actors from this persistent tag
+  STAGED: "0"              # Cube only: seed-0 screen, top-3 seeds 1/2
+  STAGE_TOPK: "3"
+  SHARD_INDEX: "0"
+  SHARD_COUNT: "1"
+  CACHE_VERSION: twins-cache-v1
+  RH: "5"                  # established deployment: execute each full H=5 plan
+  OFFSETS: ""              # resolved below: both environments 25/100
+  MAX_DELTA: "12"          # fs5 goal-range cap; terminal replication overrides per row
+  FULLCACHE: "0"           # dinowm tworoom: 1 = full 284 GB cache + fresh teacher
+  BATCH: "128"             # actor batch; cube deployed recipe uses 256; dinowm K=8 needs 8 (memory)
+  INCLUDE_WINNERS: "0"     # 1 = add the paper App C.1 per-cell winner configs
+  ONLYCFG: ""              # restrict the grid to one config-name prefix
+  PLANNERS: "cem adam mppi" # GRID=planners: sampling/gradient arms, base fixed
+  PLANNER_COSTS: ""         # optional explicit subset: latent | value | "latent value"
+  PLANNER_EVAL_SEEDS: "42 43 44"
+  PRE_MEASUREMENT_SMOKE: "0" # tiny on-protocol path check before full planner cells
+  CELL_TIMEOUT: "21600"     # planner-cell timeout; slow DINO MPPI retries use 64800
+  WANDB_PROJECT: RLP
+  WANDB_ENTITY: armin-sommer
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: tworoom-refine-20260809
+
+secrets:
+  WANDB_API_KEY: null
+  GIT_TOKEN: null          # fine-grained PAT, Contents:Read-only on this repo
+
+resources:
+  accelerators: H200:4
+  cpus: 80
+  memory: 920
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  /checkpoints: checkpoints
+
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        nodeSelector:
+          pantheon.inc/raid0: "enabled"
+        volumes:
+          - name: raid0
+            hostPath:
+              path: /mnt/raid0
+              type: Directory
+        containers:
+          - volumeMounts:
+              - mountPath: /mnt/raid0
+                name: raid0
+
+file_mounts:
+  /tmp/codex-overlays/train_lip_ac.py: ./scripts/sky/overlays/train_lip_ac.py
+  /tmp/codex-overlays/latent_cache.py: ./scripts/sky/overlays/latent_cache.py
+  /tmp/codex-overlays/lip.py: ./scripts/sky/overlays/lip.py
+  /tmp/cube_staged.sh: ./scripts/sky/overlays/cube_staged.sh
+
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq
+  sudo apt-get install -yqq git git-lfs zstd util-linux libegl1 libgl1 libglew-dev libosmesa6 patchelf >/dev/null 2>&1 || true
+
+  # ---- code + assets by clone. The token is passed as a --secret so it is not in
+  # the YAML or the job record; it is scrubbed from the remote URL immediately
+  # after fetch so it does not persist in .git/config on the node.
+  cd ~
+  if [ ! -d repo ]; then
+    git clone -q --depth 1 --branch eval-sweep \
+      "https://x-access-token:${GIT_TOKEN}@github.com/armin-sommer/Value_Metric_LeWM.git" repo
+  fi
+  cd ~/repo
+  git remote set-url origin https://github.com/armin-sommer/Value_Metric_LeWM.git
+  git lfs install --local >/dev/null 2>&1 || true
+  git config lfs.url "https://x-access-token:${GIT_TOKEN}@github.com/armin-sommer/Value_Metric_LeWM.git/info/lfs"
+  if [ "$ENVNAME" = tworoom ]; then
+    TDCANON_GLOB=td_canon_${BASE}_e0.1_n50_s*.pt
+    [ "$BASE" = dinowm ] && TDCANON_GLOB=td_canon_dinowm_r200000_e0.1_n50_s*.pt
+    git lfs pull -I "tworoom_matrix_20260727/checkpoints/${BASE}_tworoom/**" \
+                  -I "tworoom_matrix_20260727/metrics/${TDCANON_GLOB}" 2>&1 | tail -1
+  else
+    git lfs pull -I "stable-worldmodel/checkpoints/**" 2>&1 | tail -1
+  fi
+  git config --unset lfs.url || true
+  echo "[repo] $(git rev-parse --short HEAD) on $(git rev-parse --abbrev-ref HEAD)"
+
+  # cube eval imports stable_worldmodel.envs.ogbench (dm_control, ogbench) and
+  # stable_worldmodel.envs.utils (pygame, pymunk, shapely). This is the FULL
+  # transitive set: envs/__init__.py registers entry points lazily, so no other
+  # env family's imports fire. Missing any of these = every cell scores None.
+  EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="gymnasium-robotics mujoco dm_control ogbench pygame pymunk shapely"
+  pip install -q -e "$HOME/repo/stable-worldmodel[train,format]" \
+    opencv-python-headless hdf5plugin hf_transfer wandb $EXTRA 2>&1 | tail -2
+  cp /tmp/codex-overlays/train_lip_ac.py "$HOME/repo/stable-worldmodel/scripts/plan/train_lip_ac.py"
+  cp /tmp/codex-overlays/latent_cache.py "$HOME/repo/stable-worldmodel/stable_worldmodel/trm/latent_cache.py"
+  cp /tmp/codex-overlays/lip.py "$HOME/repo/stable-worldmodel/stable_worldmodel/solver/lip.py"
+
+  python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
+
+  WANDB_ROOT=/mnt/raid0/rlp-wandb/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}
+  mkdir -p "$WANDB_ROOT"/{runs,artifacts,cache}
+  export WANDB_DIR="$WANDB_ROOT/runs"
+  export WANDB_ARTIFACT_DIR="$WANDB_ROOT/artifacts"
+  export WANDB_CACHE_DIR="$WANDB_ROOT/cache"
+
+  # wandb proven BEFORE training: train_lip_ac wraps init in try/except so a
+  # silent auth failure would be indistinguishable from success.
+  python3 -c "
+  import os, wandb
+  k = os.environ.get('WANDB_API_KEY', ''); assert k, 'WANDB_API_KEY not set'
+  wandb.login(key=k, relogin=True)
+  r = wandb.init(project=os.environ['WANDB_PROJECT'], entity=os.environ['WANDB_ENTITY'],
+                 name='grid-probe-' + os.environ['ENVNAME'] + '-' + os.environ['BASE'],
+                 job_type='probe', reinit=True)
+  r.log({'probe': 1}); u = r.get_url(); r.finish(); print('[wandb] verified ->', u)
+  "
+
+  SCRATCH=/mnt/raid0/rlp-runs/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}
+  CACHE_ROOT=/mnt/raid0/rlp-cache/${CACHE_VERSION}-${ENVNAME}-${BASE}
+  mkdir -p "$SCRATCH" "$CACHE_ROOT" "$CACHE_ROOT/hf"
+  chmod 777 "$SCRATCH" "$CACHE_ROOT"
+  for d in gh gm gc gd; do
+    mkdir -p "$CACHE_ROOT/$d"
+    [ ! -e "$HOME/$d" ] || { echo "refusing to replace existing $HOME/$d"; exit 1; }
+    ln -s "$CACHE_ROOT/$d" "$HOME/$d"
+  done
+  for d in gl ga; do
+    mkdir -p "$SCRATCH/$d"
+    [ ! -e "$HOME/$d" ] || { echo "refusing to replace existing $HOME/$d"; exit 1; }
+    ln -s "$SCRATCH/$d" "$HOME/$d"
+  done
+  export HF_HOME="$CACHE_ROOT/hf"
+  mkdir -p ~/gh/checkpoints ~/gm ~/gl ~/gc ~/gd ~/ga
+  exec 9>"$CACHE_ROOT/build.lock"
+  flock 9
+  echo "[cache] lock acquired: $CACHE_ROOT"
+  A=~/repo/tworoom_matrix_20260727
+  if [ "$ENVNAME" = tworoom ]; then
+    cp -r $A/checkpoints/${BASE}_tworoom ~/gh/checkpoints/ 2>/dev/null || true
+    if [ "${FULLCACHE:-0}" != 1 ] && [ "${SPLIT:-0}" != 1 ]; then
+      for TS in 0 1 2; do
+        SRC=$A/metrics/td_canon_${BASE}_e0.1_n50_s${TS}.pt
+        [ "$BASE" = dinowm ] && SRC=$A/metrics/td_canon_dinowm_r200000_e0.1_n50_s${TS}.pt
+        cp "$SRC" ~/gm/td_grid_s${TS}.pt
+      done
+    fi
+  else
+    # cube: LeWM = v2WM, PLDM = PLDM_OgBench, both LFS-tracked in the repo.
+    # One .pt per dir -- the loader refuses an ambiguous checkpoint directory.
+    C=~/repo/stable-worldmodel/checkpoints
+    if [ "$BASE" = lewm ]; then SRC=$C/ogbench_cube_single_v2WM; DST=lewm_cube
+    else                        SRC=$C/PLDM_OgBench;             DST=pldm_cube; fi
+    mkdir -p ~/gh/checkpoints/$DST
+    cp "$SRC"/*.pt ~/gh/checkpoints/$DST/ 2>/dev/null || true
+    cp "$SRC"/config.json ~/gh/checkpoints/$DST/ 2>/dev/null || true
+  fi
+  find ~/gh ~/gm -name '._*' -delete 2>/dev/null || true
+  if [ "$ENVNAME" = tworoom ]; then CK=~/gh/checkpoints/${BASE}_tworoom
+  else CK=~/gh/checkpoints/${BASE}_cube; fi
+  PROFILE=tworoom-lewm
+  [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] && PROFILE=tworoom-pldm
+  [ "$ENVNAME" = cube ] && PROFILE=ogbench-lewm
+  [ "$ENVNAME" = cube ] && [ "$BASE" = pldm ] && PROFILE=ogbench-pldm
+  [ -d "$CK" ] || { echo "missing expected WM directory: $CK" >&2; exit 1; }
+  find "$CK" -maxdepth 1 -type f -name '*.pt' | grep -q . \
+    || { echo "no checkpoint .pt in expected WM directory: $CK" >&2; exit 1; }
+  echo "[assets] wm=$(basename "$CK") | $(ls ~/gm/ 2>/dev/null | tr '\n' ' ')"
+
+  # ---- dataset, fetched on the node (never uploaded)
+  if [ "$ENVNAME" = tworoom ]; then
+    REPO=quentinll/lewm-tworooms; FILE=tworoom.tar.zst
+  else
+    REPO=quentinll/lewm-cube;     FILE=cube_single_expert.tar.zst
+  fi
+  if ! ls ~/gd/*.h5 >/dev/null 2>&1; then
+    cd ~/gd
+    HF_HUB_ENABLE_HF_TRANSFER=1 python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$REPO','$FILE',repo_type='dataset',local_dir='.')"
+    tar --use-compress-program=unzstd -xf "$FILE" && rm -f "$FILE"
+  fi
+  python3 -c "
+  import hdf5plugin, h5py, glob, os
+  f = sorted(glob.glob(os.path.expanduser('~/gd/*.h5')))[0]
+  h = h5py.File(f, 'r')
+  print('[dataset]', os.path.basename(f), h['action'].shape[0], 'frames',
+        '| %.1f GB' % (os.path.getsize(f) / 1e9))
+  h.close()
+  "
+
+  # ---- caches: one build shared by all 30 configs
+  cd ~/repo/stable-worldmodel
+  export STABLEWM_HOME=~/gh PYTHONPATH=$PWD
+  export HDF5_PLUGIN_PATH=$(python3 -c 'import hdf5plugin; print(hdf5plugin.PLUGIN_PATH)')
+  [ "$ENVNAME" = cube ] && export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MUJOCO_EGL_DEVICE_ID=0
+  H5=$(ls ~/gd/*.h5 | head -1)
+  if [ "$ENVNAME" = tworoom ]; then CK=~/gh/checkpoints/${BASE}_tworoom
+  else CK=~/gh/checkpoints/${BASE}_cube; fi
+  PROFILE=tworoom-lewm
+  [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] && PROFILE=tworoom-pldm
+  [ "$ENVNAME" = cube ] && PROFILE=ogbench-lewm
+  [ "$ENVNAME" = cube ] && [ "$BASE" = pldm ] && PROFILE=ogbench-pldm
+  SK=""; [ "$ENVNAME" = tworoom ] && SK="--state-key pos_agent"
+  [ "$ENVNAME" = cube ] && SK="--state-key privileged_block_0_pos"
+  # dinowm tworoom latents are 77,224-d. The banked protocol capped the fs1
+  # cache at 200,000 rows (58 GB) = a contiguous PREFIX, episodes 0-2,170 only
+  # -- i.e. the DINO critic and actors saw ~22% of the data that lejepa/pldm
+  # saw. That cap was a pod-era memory constraint, not a design choice: these
+  # nodes carry ~1.9 TB RAM and ~1.4 TB local disk, and the full cache is
+  # 920,809 x 77,224 x 4 B = 284 GB. FULLCACHE=1 removes it and trains the TD
+  # teacher fresh on all episodes instead of copying the capped canon, so the
+  # DINO column stops being handicapped relative to the twins.
+  MR=""
+  if [ "$BASE" = dinowm ] && [ "${FULLCACHE:-0}" != 1 ]; then MR="--max-rows 200000"; fi
+  if [ ! -f ~/gc/fs5.pt ]; then
+    CUDA_VISIBLE_DEVICES=0 python3 scripts/trm/cache_latents.py --wm "$CK" \
+      --dataset "$H5" --out ~/gc/fs1.pt $SK $MR --batch-size 256 > ~/gl/cache_fs1.log 2>&1
+    if [ "$ENVNAME" = cube ] || [ "${SPLIT:-0}" = 1 ]; then
+      # held-out protocol (Dyna/DATA_SPLIT_POLICY.md): critic and actor train on
+      # episodes 0:8000 only; eval draws 8000:10000. The banked 90.00 (LeWM) and
+      # PLDM numbers are held-out -- an unfiltered sweep would not be comparable.
+      # SPLIT=1 extends the same protocol to tworoom (2026-08-13 rerun).
+      python3 ~/repo/Dyna/dyna_harness/filter_cache_eprange.py \
+        ~/gc/fs1.pt ~/gc/fs1tr.pt --lo 0 --hi 8000 > ~/gl/cache_filter.log 2>&1
+      mv ~/gc/fs1tr.pt ~/gc/fs1.pt
+    fi
+    python3 scripts/trm/subsample_cache.py --in ~/gc/fs1.pt --out ~/gc/fs5.pt \
+      --frameskip 5 > ~/gl/cache_fs5.log 2>&1
+  fi
+  ls -la ~/gc/ | awk 'NR>1{printf "  %.2f GB  %s\n", $5/1e9, $9}'
+
+  # ---- TD critic to warm-start the co-trained value from. Cube uses the
+  # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
+  TDFLAGS="--expectile 0.1 --steps 6000"
+  [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma 0.98 --steps 12000"
+  if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
+    TDSEEDS="0"
+    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="0 1 2"
+    for TDS in $TDSEEDS; do
+      CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
+        --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step 50 \
+        --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
+        > ~/gl/td_critic_s${TDS}.log 2>&1
+    done
+  fi
+  python3 - <<'PY'
+  import glob, os, torch
+  required = [glob.glob(os.path.expanduser("~/gc/fs1.pt")),
+              glob.glob(os.path.expanduser("~/gc/fs5.pt")),
+              glob.glob(os.path.expanduser("~/gm/td_*.pt"))]
+  assert all(x and os.path.getsize(x[0]) > 1024 for x in required), required
+  if os.environ["ENVNAME"] == "tworoom":
+      critics = [os.path.expanduser(f"~/gm/td_grid_s{s}.pt") for s in range(3)]
+      assert all(os.path.getsize(p) > 1024 for p in critics), critics
+  c = torch.load(required[1][0], map_location="cpu", weights_only=False, mmap=True)
+  assert len(c["z"]) > 0
+  print("[cache] validated shared twin cache and critic", flush=True)
+  PY
+  printf 'version=%s\nready_at=%s\n' "$CACHE_VERSION" "$(date -u +%FT%TZ)" \
+    > "$CACHE_ROOT/READY.tmp.$$"
+  mv "$CACHE_ROOT/READY.tmp.$$" "$CACHE_ROOT/READY"
+  flock -u 9
+  echo "[cache] ready: $CACHE_ROOT"
+  echo "[critic] $(ls ~/gm/td_*.pt | head -1)"
+  echo "[setup] $ENVNAME/$BASE ready"
+
+run: |
+  set -uo pipefail
+  # node + physical GPU identity, so an XID alert (which names only a node
+  # and a PCI address) can be tied to a job by grep instead of by hand.
+  echo "[node] $(hostname) | gpus: $(nvidia-smi --query-gpu=index,uuid --format=csv,noheader 2>/dev/null | tr '\n' ' ' || echo unavailable)"
+  if [ "${STAGED:-0}" = 1 ]; then
+    [ "${ENVNAME}" = cube ] || { echo "STAGED=1 requires ENVNAME=cube"; exit 2; }
+    bash /tmp/cube_staged.sh
+    exit $?
+  fi
+  cd ~/repo/stable-worldmodel
+  export STABLEWM_HOME=~/gh PYTHONPATH=$PWD \
+    HF_HOME=/mnt/raid0/rlp-cache/${CACHE_VERSION}-${ENVNAME}-${BASE}/hf TQDM_DISABLE=1
+  export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  export HDF5_PLUGIN_PATH=$(python3 -c 'import hdf5plugin; print(hdf5plugin.PLUGIN_PATH)')
+  [ "$ENVNAME" = cube ] && export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
+  H5=$(ls ~/gd/*.h5 | head -1)
+  if [ "$ENVNAME" = tworoom ]; then CK=~/gh/checkpoints/${BASE}_tworoom
+  else CK=~/gh/checkpoints/${BASE}_cube; fi
+  [ -d "$CK" ] || { echo "missing expected WM directory: $CK" >&2; exit 1; }
+  PROFILE=tworoom-lewm
+  [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] && PROFILE=tworoom-pldm
+  [ "$ENVNAME" = cube ] && PROFILE=ogbench-lewm
+  [ "$ENVNAME" = cube ] && [ "$BASE" = pldm ] && PROFILE=ogbench-pldm
+  CRIT=$(ls ~/gm/td_*.pt | head -1)
+  if [ -z "${OFFSETS:-}" ]; then
+    OFFSETS="25 100"
+  fi
+  export OFFSETS
+  PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
+  DRV=$PERSIST/grid_driver.log; SLOT=~/gl/slots; FAILDIR=$PERSIST/failures
+  mkdir -p "$SLOT" ~/ga "$PERSIST/actors" "$PERSIST/values" "$PERSIST/logs" \
+    "$PERSIST/results" "$FAILDIR"
+  # A corrected evaluation must not append into a log containing invalid cells.
+  # ACTOR_IMPORT_TAG copies only final actors into a fresh provenance tag; the
+  # new tag then owns clean logs and can be collected without mixing attempts.
+  if [ -n "${ACTOR_IMPORT_TAG:-}" ]; then
+    [ "${REUSE_ONLY:-0}" = 1 ] \
+      || { echo "ACTOR_IMPORT_TAG requires REUSE_ONLY=1" >&2; exit 2; }
+    case "$ACTOR_IMPORT_TAG" in
+      *[!A-Za-z0-9._-]*) echo "unsafe ACTOR_IMPORT_TAG: $ACTOR_IMPORT_TAG" >&2; exit 2;;
+    esac
+    IMPORT_ROOT=/checkpoints/${PANTHEON_USER}/${ACTOR_IMPORT_TAG}
+    [ -d "$IMPORT_ROOT/actors" ] \
+      || { echo "missing actor import directory: $IMPORT_ROOT/actors" >&2; exit 2; }
+    cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
+    printf 'source_tag=%s\nmode=final-actor-copy\n' "$ACTOR_IMPORT_TAG" \
+      > "$PERSIST/actor_import.txt"
+  fi
+  # EXPERIMENT_TAG reuse is intentional for managed-job recovery and priority
+  # relaunches.  Failure sentinels describe only the current attempt; retaining
+  # them after a corrected relaunch would make a fully successful grid exit 1.
+  # Actor/value checkpoints and append-only logs are deliberately preserved.
+  find "$FAILDIR" -maxdepth 1 -type f -delete
+
+  # OGBench/MuJoCo EGL evaluation is not concurrency-safe on a node: two
+  # simultaneous evaluations silently depress success, and evaluation during
+  # actor training can crash.  All of our cube actor cells therefore share a
+  # node-global readers/writer lock. Training takes a shared lock; evaluation
+  # takes the exclusive lock, which both drains training and serializes evals.
+  CUBE_WORK_LOCK=/mnt/raid0/rlp-cube-train-eval.lock
+  cube_train_lock() {
+    [ "$ENVNAME" != cube ] && return 0
+    exec 7>"$CUBE_WORK_LOCK"
+    flock -s 7
+  }
+  cube_eval_lock() {
+    [ "$ENVNAME" != cube ] && return 0
+    exec 7>"$CUBE_WORK_LOCK"
+    flock -x 7
+  }
+  cube_work_unlock() {
+    [ "$ENVNAME" != cube ] && return 0
+    flock -u 7
+    exec 7>&-
+  }
+
+  # 3x3x3 on the axes asked for, at the randhorizon centre, plus one-factor
+  # probes off it. Fields: name amax mean_weight actor_lr align_weight warm_frac
+  CFG=()
+  for AM in 1.8 2.2 2.8; do
+    for MW in 0.0 0.1 0.3; do
+      for LR in 1e-4 3e-4 1e-3; do
+        CFG+=("a${AM}_m${MW}_l${LR} $AM $MW $LR 0.3 0.25")
+      done
+    done
+  done
+  # off-centre probes (centre = amax 2.2, mean-weight 0.1, lr 3e-4)
+  CFG+=("probe_aw010 2.2 0.1 3e-4 0.1 0.25")
+  CFG+=("probe_aw060 2.2 0.1 3e-4 0.6 0.25")
+  CFG+=("probe_warm000 2.2 0.1 3e-4 0.3 0.00")
+  # ---- GRID=interp: the align-weight interpolation curve.
+  # w=0 is the pure terminal objective (the only one that reaches the ceiling);
+  # w -> large is pure prefix (invariant to truncation but a lower ceiling). If the
+  # curve bends favourably at SMALL w you keep the ceiling and buy the invariance,
+  # which is why the grid is dense below 0.3. Run for prefix AND randhorizon: the
+  # first is the targeted term, the second averages over all truncation points.
+  # Plus the arrival-alignment arm (--align-from-value): score the chunk the CRITIC
+  # expects arrival on, r = clamp(ceil(V(z0,zg)/block), 1, H). Clock-free -- it
+  # reads only the critic's distance estimate, never remaining time. Never run.
+  if [ "${GRID:-axes}" = interp ]; then
+    CFG=()
+    for W in 0.00 0.05 0.10 0.30 1.00; do
+      CFG+=("prefix_w${W} 2.2 0.1 3e-4 $W 0.25 prefix off")
+      CFG+=("randh_w${W}  2.2 0.1 3e-4 $W 0.25 randhorizon off")
+    done
+    # arrival alignment, at the terminal objective and at the reacher-settled 0.3
+    CFG+=("afv_terminal 2.2 0.1 3e-4 0.00 0.25 randhorizon on")
+    CFG+=("afv_randh030 2.2 0.1 3e-4 0.30 0.25 randhorizon on")
+    # and the same two without the closed-loop term, to keep the axes separable
+    CFG+=("afv_terminal_nowarm 2.2 0.1 3e-4 0.00 -    randhorizon on")
+    CFG+=("afv_randh030_nowarm 2.2 0.1 3e-4 0.30 -    randhorizon on")
+  fi
+  # ---- GRID=openloop: plain LIPv4 for open-loop deploy (launch with RH=5).
+  # GRID=cube_all uses the same actor grid, after first re-running both the
+  # native-latent and freshly-trained-value planner matrices on this pod.
+  # GRID=cube_measurements runs those two planner matrices and then exits, so
+  # an 8-GPU all-in-one job can be split into independently scheduled shards.
+  # Terminal objective only (align-weight 0) and NO closed-loop warm term --
+  # alignment and warm exist to survive rh=1 truncation, which open loop does
+  # not have. 3x3x3 amax/mean-weight/actor-lr grid, shared across bases.
+  # amax is ENV-specific: tworoom's canonical is 2.2 with 2.8 the PLDM-sweep
+  # winner; cube's plateau is 1.4-2.2 with settled default 1.6 and a hard
+  # falloff past 2.6 (Dyna/RESULTS_amax_sweep.md -- which also asks for the
+  # 1.6 optimum to be re-checked under egl; this grid does exactly that).
+  if [ "${GRID:-axes}" = openloop ] || [ "${GRID:-axes}" = cube_all ]; then
+    CFG=()
+    if [ "$ENVNAME" = cube ]; then
+      # amax is CLOSED per base (RESULTS_TABLE_20260802 axes table: LeWM 1.6,
+      # PLDM 4.5, every alternative worse on both) -- fix it and sweep the
+      # still-open axes around the deployed recipe.
+      AMFIX=1.6; [ "$BASE" = pldm ] && AMFIX=4.5
+      for MW in 0.0 0.1 0.3; do
+        for LR in 1e-4 3e-4 1e-3; do
+          CFG+=("olr_a${AMFIX}_m${MW}_l${LR} $AMFIX $MW $LR 0.00 - randhorizon off")
+        done
+      done
+    else
+      for AM in 1.8 2.2 2.8; do
+        for MW in 0.0 0.1 0.3; do
+          for LR in 1e-4 3e-4 1e-3; do
+            CFG+=("ol_a${AM}_m${MW}_l${LR} $AM $MW $LR 0.00 - randhorizon off")
+          done
+        done
+      done
+    fi
+  fi
+  # Two targeted action-scale interpolations around each base's current
+  # all-draw optimum. The fixed mean weight, LR, data, TD teacher, training
+  # recipe and evaluation protocol remain identical to the existing sweep.
+  if [ "${GRID:-axes}" = tworoom_refine ]; then
+    CFG=()
+    if [ "$ENVNAME" != tworoom ]; then
+      echo "GRID=tworoom_refine requires ENVNAME=tworoom" >&2; exit 2
+    elif [ "$BASE" = dinowm ]; then
+      CFG+=("ref_a1.6_m0.3_l3e-4 1.6 0.3 3e-4 0.00 - randhorizon off")
+      CFG+=("ref_a2.0_m0.3_l3e-4 2.0 0.3 3e-4 0.00 - randhorizon off")
+    elif [ "$BASE" = pldm ]; then
+      CFG+=("ref_a2.4_m0.3_l3e-4 2.4 0.3 3e-4 0.00 - randhorizon off")
+      CFG+=("ref_a2.6_m0.3_l3e-4 2.6 0.3 3e-4 0.00 - randhorizon off")
+    else
+      echo "GRID=tworoom_refine supports BASE=pldm|dinowm" >&2; exit 2
+    fi
+  fi
+  # Compact campaign requested for the temporal objective: search only the
+  # stop-gradient telescoping form and retain one fixed terminal replication.
+  # Rows add field 9 = temporal objective.
+  if [ "${GRID:-axes}" = telescoping ] || [ "${GRID:-axes}" = telescoping_all ]; then
+    CFG=()
+    MW=0.1
+    if [ "$ENVNAME" = cube ]; then
+      if [ "$BASE" = pldm ]; then AMS="3.5 4.5 5.5"; CONTROL=4.5
+      else AMS="1.2 1.6 2.0"; CONTROL=1.6; fi
+    else
+      if [ "$BASE" = pldm ]; then AMS="2.4 2.8 3.2"; CONTROL=2.8
+      else AMS="1.8 2.2 2.6"; CONTROL=2.2; fi
+    fi
+    for AM in $AMS; do
+      for LR in 1e-4 3e-4; do
+        CFG+=("telex_a${AM}_l${LR} $AM $MW $LR 0.00 - terminal off tel-exact")
+      done
+    done
+    CFG+=("terminal_control_a${CONTROL} ${CONTROL} $MW 3e-4 0.00 - terminal off terminal")
+  fi
+  # Standard RLP hyperparameter search. The rollout objective is the historical
+  # terminal teacher value; only amax, refinement mean-weight, and actor LR vary.
+  # TwoRoom uses horizon-matched actors via MAX_DELTA/OFFSETS from the launcher.
+  # Cube carries both h25 and h100 rows in each base job.
+  if [ "${GRID:-axes}" = terminal_search ]; then
+    CFG=()
+    if [ "$ENVNAME" = tworoom ]; then
+      if [ "$BASE" = pldm ]; then AMS="2.4 2.8 3.2"
+      else AMS="1.8 2.2 2.6"; fi
+      for AM in $AMS; do
+        for MW in 0.1 0.3; do
+          for LR in 1e-4 3e-4; do
+            CFG+=("terminal_a${AM}_m${MW}_l${LR} $AM $MW $LR 0.00 - terminal off terminal")
+          done
+        done
+      done
+      # Optional, evidence-driven PLDM confirmation cells. These are not part
+      # of the default 12-cell grid: the 2026-08-11 exhaustive W&B audit found
+      # complete three-actor-seed standard-objective results outside the live
+      # axes. A dedicated capacity-gated launcher sets this flag and ONLYCFG;
+      # ordinary launches remain unchanged.
+      if [ "${INCLUDE_WINNERS:-0}" = 1 ]; then
+        # Paper App C.1 per-cell winners (held-out rerun 2026-08-13).
+        # LeWM h25 winner terminal_a1.8_m0.1_l1e-4 is already in the grid.
+        if [ "$BASE" = pldm ]; then
+          CFG+=("terminal_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal")
+          CFG+=("terminal_a2.8_m0.3_l1e-3 2.8 0.3 1e-3 0.00 - terminal off terminal")
+        else
+          CFG+=("terminal_a2.6_m0.3_l1e-3 2.6 0.3 1e-3 0.00 - terminal off terminal")
+        fi
+      fi
+      if [ "$BASE" = pldm ] && [ "${INCLUDE_PLDHIST:-0}" = 1 ]; then
+        CFG+=("terminal_a2.2_m0.1_l3e-4 2.2 0.1 3e-4 0.00 - terminal off terminal")
+        CFG+=("terminal_a1.8_m0.3_l1e-3 1.8 0.3 1e-3 0.00 - terminal off terminal")
+        CFG+=("terminal_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal")
+        CFG+=("terminal_a2.8_m0.3_l1e-3 2.8 0.3 1e-3 0.00 - terminal off terminal")
+      fi
+    else
+      if [ "$BASE" = pldm ]; then AMS="3.5 4.5 5.5"
+      else AMS="1.2 1.6 2.0"; fi
+      for MDH in "10:25" "20:100"; do
+        MD=${MDH%%:*}; EH=${MDH##*:}
+        for AM in $AMS; do
+          for MW in 0.1 0.3; do
+            for LR in 1e-4 3e-4; do
+              CFG+=("terminal_h${EH}_a${AM}_m${MW}_l${LR} $AM $MW $LR 0.00 - terminal off terminal $MD $EH")
+            done
+          done
+        done
+      done
+    fi
+  fi
+  # Exact OGBench terminal replication plus a horizon-matched training arm.
+  # The only intentional training difference is the fs5 goal-range cap:
+  # max_delta=10 reaches 50 primitive steps (the historical h25 recipe), while
+  # max_delta=20 reaches 100 primitive steps for the h100-trained actor.
+  if [ "${GRID:-axes}" = terminal_replication ]; then
+    [ "$ENVNAME" = cube ] || { echo "terminal_replication requires cube" >&2; exit 2; }
+    CFG=(); AM=1.6; [ "$BASE" = pldm ] && AM=4.5
+    CFG+=("terminal_h25_a${AM} ${AM} 0.1 3e-4 0.00 - terminal off terminal 10 25")
+    CFG+=("terminal_h100_a${AM} ${AM} 0.1 3e-4 0.00 - terminal off terminal 20 100")
+  fi
+  # Cube trains the banked deployed recipe (RECIPE_lewm_lipv4_expand3.md +
+  # RESULTS_TABLE_20260802 winner bundle): batch 256 comes via the BATCH env,
+  # steps 6000 via STEPS. Defaults reproduce the tworoom-banked recipe, so
+  # tworoom passes nothing here.
+  RECIPE=""
+  [ "$ENVNAME" = cube ] && RECIPE="--gamma 0.98 --replay-prob 0.5 --expand-weight 1.0 --freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
+  FROZEN_ARGS=""
+  if [ "${ACTOR_ONLY:-0}" = 1 ]; then
+    # Keep each environment's established actor-only recipe. TwoRoom's
+    # replication has no replay and gamma=1; Cube uses replay=.5/gamma=.98.
+    ACTOR_GAMMA=1.0; ACTOR_REPLAY=0
+    [ "$ENVNAME" = cube ] && { ACTOR_GAMMA=0.98; ACTOR_REPLAY=0.5; }
+    RECIPE="--gamma ${ACTOR_GAMMA} --replay-prob ${ACTOR_REPLAY} --expand-weight 0"
+    FROZEN_ARGS="--actor-only --reuse-refinement-rollouts --cache-device auto"
+  fi
+  # ONLYCFG: restrict any grid to configs matching one of the space-separated
+  # name prefixes (e.g. ONLYCFG="ol_a2.2_m0.1_l1e-3 ol_a2.2_m0.3_l3e-4")
+  if [ -n "${ONLYCFG:-}" ]; then
+    NEW=()
+    for row in "${CFG[@]}"; do
+      for pat in ${ONLYCFG}; do
+        case "$row" in ${pat}*) NEW+=("$row"); break;; esac
+      done
+    done
+    CFG=("${NEW[@]}")
+  fi
+  echo "[grid] GRID=${GRID:-axes} $ENVNAME/$BASE -> ${#CFG[@]} configs, ${MAXPAR} in flight"
+
+  # mkdir-based slot allocator: exactly MAXPAR runs at a time, next starts as one
+  # finishes. Modulo alone would idle GPUs whenever runs finish out of order.
+  acquire() { local s; while :; do
+      for s in $(seq 0 $((MAXPAR - 1))); do
+        mkdir "$SLOT/$s" 2>/dev/null && { echo "$s"; return; }
+      done; sleep 15; done; }
+
+  # GRID=planners: BASE HELD FIXED (same WM, same TD teacher, same data
+  # mixture -- td_grid_s0.pt, the very checkpoint the LIP actors warm-start
+  # from) and ONLY the planner varies. Gives the value-metric row of the cube
+  # table: value+CEM / value+Adam / value+MPPI, directly comparable to the LIP
+  # cells because the cost is literally the same object.
+  # n = EVAL_SEEDS draws at the single seed-0 teacher, matching the LIP arm's
+  # critic; the tworoom job carries 3 critic seeds only because 3 canons exist.
+  # GRID=pwm: reactive-policy baseline, ZERO world-model rollouts at deploy --
+  # the compute floor of the table (RLP ~17 rollouts/step, sampling planners
+  # 3k-9k queries, PWM 0). Trained against the SAME td_grid_s0 teacher the RLP
+  # actors warm-start from and budget-matched on steps, so the contrast is
+  # refinement-vs-amortisation at fixed cost, not a different objective.
+  if [ "${GRID}" = pwm ]; then
+    export VBASE_PY="${ENVNAME}_${BASE}_pwm"
+    SUMP=~/gl/pwm.csv; touch "$SUMP"
+    AM=1.6; [ "$BASE" = pldm ] && AM=4.5      # per-base, matching the RLP arm
+    ADIM=25; [ "$ENVNAME" = tworoom ] && ADIM=10   # action block: 5 steps x (5-d cube | 2-d tworoom)
+    EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="++bf16=true +eval.ep_range=8000:10000"
+    # dinowm needs the action column cached or the eval silently returns
+    # ~30 instead of ~99 -- it does not error (cost two full tvp runs)
+    K2CP=""; [ "$BASE" = dinowm ] && K2CP="dataset.keys_to_cache=[action]"
+    for SEED in ${TRAIN_SEEDS}; do
+      OUTP=~/ga/pwm_${ENVNAME}_${BASE}_s${SEED}.pt
+      if [ ! -f "$OUTP" ]; then
+        CUDA_VISIBLE_DEVICES=0 MUJOCO_EGL_DEVICE_ID=0 timeout 28800 \
+        python3 scripts/plan/train_pwm_ac.py \
+          --cache ~/gc/fs5.pt --cache-td ~/gc/fs1.pt --wm "$CK" --init-value "$CRIT" \
+          --terminal --horizon 5 --gamma 0.98 --amax $AM \
+          --a-dim $ADIM \
+          --width 512 --layers 3 --actor-lr 5e-4 --actor-lr-final 5e-5 \
+          --steps ${STEPS} --seed ${SEED} \
+          --out "$OUTP" --out-value ~/gm/pwm_${BASE}_s${SEED}_value.pt \
+          > ~/gl/pwm_train_s${SEED}.log 2>&1 \
+          || { echo "[pwm-train-fail] s${SEED}:"; tail -25 ~/gl/pwm_train_s${SEED}.log | sed 's/^/  | /'; }
+      fi
+      [ -f "$OUTP" ] || continue
+      for O in ${OFFSETS}; do for D in ${EVAL_SEEDS}; do
+        NMP="${ENVNAME}_${BASE}_pwm_s${SEED}_h${O}_e${D}"
+        grep -q "^${NMP}," "$SUMP" 2>/dev/null && continue
+        G=$(acquire)
+        (
+          CUDA_VISIBLE_DEVICES=$G MUJOCO_EGL_DEVICE_ID=$G timeout 21600 \
+          python3 scripts/plan/eval_wm.py --config-name "$ENVNAME" \
+            policy="$CK" eval.dataset_name="$H5" dataset.stats="$H5" seed=$D \
+            eval.goal_offset_steps=$O eval.eval_budget=$((O * 2)) \
+            plan_config.receding_horizon=${RH} \
+            solver=pwm solver.batch_size=10 "solver.actor_path=$OUTP" $EXTRA $K2CP \
+            output.filename="${NMP}.txt" > ~/gl/pw_${NMP}.log 2>&1
+          SR=$(grep -oE "success_rate[^0-9]*[0-9.]+" ~/gl/pw_${NMP}.log | tail -1 | grep -oE "[0-9.]+$")
+          [ -z "$SR" ] && { echo "[cell-fail] ${NMP}:"
+            tail -25 ~/gl/pw_${NMP}.log | sed 's/^/  | /'; } >&2
+          echo "${NMP},${SR:-FAIL}" >> "$SUMP"
+          echo "[cell] ${NMP} = ${SR:-FAIL}"
+          rmdir "$SLOT/$G" 2>/dev/null
+        ) &
+      done; done
+    done
+    wait
+    python3 - <<'PY'
+  import collections, os, statistics, wandb
+  rows = {}
+  for ln in open(os.path.expanduser("~/gl/pwm.csv")):
+      k, _, v = ln.strip().partition(",")
+      if v and v != "FAIL":
+          rows[k] = float(v)
+  base = os.environ["VBASE_PY"]
+  agg = collections.defaultdict(list)
+  for k, v in rows.items():
+      agg[k.split("_")[-2]].append(v)          # h<offset>
+  r = wandb.init(project=os.environ["WANDB_PROJECT"], entity=os.environ["WANDB_ENTITY"],
+                 name=f"pwm_{base}", job_type="pwm", config={"base": base}, reinit=True)
+  print(f"\n=== PWM (reactive, 0 rollouts), {base} ===")
+  for h, vs in sorted(agg.items()):
+      m = sum(vs) / len(vs)
+      sd = statistics.stdev(vs) if len(vs) > 1 else 0.0
+      print(f"  {h}: {m:5.1f} +- {sd:4.1f} (n={len(vs)})")
+      r.summary[f"eval/{h}_mean"] = m; r.summary[f"eval/{h}_sd"] = sd
+      r.summary[f"eval/{h}_n"] = len(vs)
+  for k, v in rows.items():
+      r.summary[f"cell/{k}"] = v
+  r.finish(); print("[wandb] logged")
+  PY
+    echo "[pwm] complete"; exit 0
+  fi
+  if [ "${GRID}" = planners ] || [ "${GRID}" = latent_planners ] || \
+     [ "${GRID}" = measurements ] || [ "${GRID}" = telescoping_all ] || [ "${GRID}" = cube_all ] || \
+     [ "${GRID}" = cube_measurements ]; then
+    export VBASE_PY="${ENVNAME}_${BASE}"
+    COSTS=${PLANNER_COSTS:-value}
+    [ "${GRID}" = latent_planners ] && COSTS=latent
+    [ "${GRID}" = cube_all ] && COSTS=${PLANNER_COSTS:-"latent value"}
+    [ "${GRID}" = cube_measurements ] && COSTS=${PLANNER_COSTS:-"latent value"}
+    [ "${GRID}" = measurements ] && COSTS=${PLANNER_COSTS:-"latent value"}
+    [ "${GRID}" = telescoping_all ] && COSTS=${PLANNER_COSTS:-"latent value"}
+
+    # Fail fast on the exact asset/config/metric path before committing to a
+    # full 18-cell matrix. The smoke uses the requested task horizon and data
+    # split, but only two CEM candidates and one optimizer step.  Its 25-step
+    # simulator budget is the minimum valid planning horizon (5 macro steps ×
+    # action block 5); it is a path check, never a reported result.
+    if [ "${PRE_MEASUREMENT_SMOKE:-0}" = 1 ]; then
+      SMOFF=""; for _o in ${OFFSETS}; do SMOFF=$_o; break; done
+      [ -n "$SMOFF" ] || { echo "measurement smoke: no offset" >&2; exit 2; }
+      for SCOST in ${COSTS}; do
+        SMLOG=$PERSIST/logs/smoke_${ENVNAME}_${BASE}_${SCOST}_cem_h${SMOFF}.log
+        SMFLAG=(); [ "$SCOST" = value ] && SMFLAG=("+metric=$CRIT")
+        SMEXTRA=""; [ "$ENVNAME" = cube ] && SMEXTRA="++bf16=true +eval.ep_range=8000:10000"
+        cube_eval_lock
+        CUDA_VISIBLE_DEVICES=0 MUJOCO_EGL_DEVICE_ID=0 timeout 1800 \
+          python3 scripts/plan/eval_wm.py --config-name "$ENVNAME" \
+            policy="$CK" eval.dataset_name="$H5" dataset.stats="$H5" seed=42 \
+            eval.goal_offset_steps=$SMOFF eval.eval_budget=25 \
+            plan_config.receding_horizon=${RH} solver=cem solver.batch_size=1 \
+            solver.num_samples=2 solver.n_steps=1 solver.topk=1 \
+            "${SMFLAG[@]}" $SMEXTRA \
+            output.filename="smoke_${ENVNAME}_${BASE}_${SCOST}_h${SMOFF}.txt" \
+            > "$SMLOG" 2>&1
+        SMRC=$?
+        cube_work_unlock
+        [ $SMRC -eq 0 ] || { echo "[measurement-smoke-fail] $SCOST rc=$SMRC" >&2; tail -80 "$SMLOG" >&2; exit 1; }
+        grep -qE "success_rate[^0-9]*[0-9.]" "$SMLOG" \
+          || { echo "[measurement-smoke-fail] $SCOST missing success" >&2; tail -80 "$SMLOG" >&2; exit 1; }
+        if [ "$SCOST" = value ]; then
+          grep -q "metric-hook" "$SMLOG" \
+            || { echo "[measurement-smoke-fail] value metric hook absent" >&2; tail -80 "$SMLOG" >&2; exit 1; }
+        fi
+        echo "[measurement-smoke-ok] $ENVNAME/$BASE $SCOST h$SMOFF"
+      done
+    fi
+
+    for VCOST_PY in ${COSTS}; do
+    export VCOST_PY
+    export SUMP_PY=$PERSIST/results/${VCOST_PY}_planners.csv
+    SUMP=$SUMP_PY; touch "$SUMP"
+    EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="++bf16=true +eval.ep_range=8000:10000"
+    # dinowm needs the action column cached or the eval silently returns
+    # ~30 instead of ~99 -- it does not error (cost two full tvp runs)
+    K2CW=""; [ "$BASE" = dinowm ] && K2CW="dataset.keys_to_cache=[action]"
+
+    PDRAWS=${EVAL_SEEDS}
+    [ "${GRID}" = telescoping_all ] && PDRAWS=${PLANNER_EVAL_SEEDS}
+    for P in ${PLANNERS:-cem adam mppi}; do
+    for O in ${OFFSETS}; do
+    for D in ${PDRAWS}; do
+      NMP="${ENVNAME}_${BASE}_${VCOST_PY}_${P}_h${O}_e${D}"
+      grep -Eq "^${NMP},[0-9]" "$SUMP" 2>/dev/null && continue
+      G=$(acquire)
+      (
+        BS=10; [ "$P" = adam ] && BS=1     # backward graph: chunk environments
+        MFLAG=(); [ "$VCOST_PY" = value ] && MFLAG=("+metric=$CRIT")
+        cube_eval_lock
+        CUDA_VISIBLE_DEVICES=$G MUJOCO_EGL_DEVICE_ID=$G \
+        timeout ${CELL_TIMEOUT} python3 scripts/plan/eval_wm.py --config-name "$ENVNAME" \
+          policy="$CK" eval.dataset_name="$H5" dataset.stats="$H5" seed=$D \
+          eval.goal_offset_steps=$O eval.eval_budget=$((O * 2)) \
+          plan_config.receding_horizon=${RH} \
+          solver=$P solver.batch_size=$BS "${MFLAG[@]}" $EXTRA $K2CW \
+          output.filename="${NMP}.txt" > ~/gl/pl_${NMP}.log 2>&1
+        RC=$?
+        cube_work_unlock
+        SR=$(grep -oE "success_rate[^0-9]*[0-9.]+" ~/gl/pl_${NMP}.log | tail -1 | grep -oE "[0-9.]+$")
+        [ $RC -ne 0 ] && SR=""
+        [ -z "$SR" ] && { echo "[cell-fail] ${NMP}:"
+          tail -25 ~/gl/pl_${NMP}.log | sed 's/^/  | /'; } >&2
+        if [ "$VCOST_PY" = value ]; then
+          grep -q "metric-hook" ~/gl/pl_${NMP}.log \
+            || { echo "[cell-fail] ${NMP}: metric hook never fired" >&2; SR=""; }
+        fi
+        if [ -z "$SR" ]; then
+          touch "$FAILDIR/planner_${NMP}"
+        else
+          rm -f "$FAILDIR/planner_${NMP}"
+        fi
+        echo "${NMP},${SR:-FAIL}" >> "$SUMP"
+        echo "[cell] ${NMP} = ${SR:-FAIL}"
+        rmdir "$SLOT/$G" 2>/dev/null
+      ) &
+    done; done; done
+    wait
+    python3 - <<'PY'
+  import collections, os, statistics, wandb
+  rows = {}
+  for ln in open(os.path.expanduser(os.environ["SUMP_PY"])):
+      k, _, v = ln.strip().partition(",")
+      if v and v != "FAIL":
+          rows[k] = float(v)
+  base = os.environ["VBASE_PY"]
+  cost = os.environ["VCOST_PY"]
+  agg = collections.defaultdict(list)
+  for k, v in rows.items():
+      parts = k.split("_")
+      agg[(parts[-3], parts[-2])].append(v)      # planner, h<offset>
+  r = wandb.init(project=os.environ["WANDB_PROJECT"], entity=os.environ["WANDB_ENTITY"],
+                 name=f"{cost}planners_{base}", job_type=f"{cost}_planners",
+                 config={"base": base, "cost": cost,
+                         "critic": "td_grid_s0 (g98s12k)" if cost == "value" else "none"}, reinit=True)
+  print(f"\n=== {cost} x planner, {base} ===")
+  for (planner, h), vs in sorted(agg.items()):
+      m = sum(vs) / len(vs)
+      sd = statistics.stdev(vs) if len(vs) > 1 else 0.0
+      print(f"  {cost}+{planner:5s} {h}: {m:5.1f} +- {sd:4.1f} (n={len(vs)})")
+      r.summary[f"eval/{planner}_{h}_mean"] = m
+      r.summary[f"eval/{planner}_{h}_sd"] = sd
+      r.summary[f"eval/{planner}_{h}_n"] = len(vs)
+  for k, v in rows.items():
+      r.summary[f"cell/{k}"] = v
+  art = wandb.Artifact(f"{cost}planners_{base}_cells", type="results")
+  art.add_file(os.path.expanduser(os.environ["SUMP_PY"]))
+  r.log_artifact(art); r.finish()
+  print("[wandb] logged")
+  PY
+    echo "[${VCOST_PY}-planners] complete"
+    done
+    if find "$FAILDIR" -maxdepth 1 -type f -name 'planner_*' -print -quit | grep -q .; then
+      echo "[measurements] hard failure: $(find "$FAILDIR" -maxdepth 1 -type f -name 'planner_*' | wc -l) cells" >&2
+      exit 1
+    fi
+    [ "${GRID}" = cube_all ] || [ "${GRID}" = telescoping_all ] || exit 0
+  fi
+
+  # SMOKE=1 collapses the grid to one config / one seed / tiny step count. It
+  # exercises the exact code path -- cache, critic, train, artifact, eval, wandb --
+  # so a wrong flag fails in minutes instead of after a 46 GB download.
+  if [ "${SMOKE:-0}" = 1 ]; then
+    CFG=("${CFG[0]}"); TRAIN_SEEDS="0"; EVAL_SEEDS="42"; STEPS=60
+    echo "[smoke] one config, 60 steps: ${CFG[0]}"
+  fi
+
+  for SEED in ${TRAIN_SEEDS}; do
+  for row in "${CFG[@]}"; do
+    set -- $row; NM=$1; AM=$2; MW=$3; LR=$4; AW=$5; WF=$6; MODE=${7:-randhorizon}; AFV=${8:-off}; TOBJ=${9:-terminal}; MD=${10:-$MAX_DELTA}; EOFF=${11:-$OFFSETS}
+    OUT=$PERSIST/actors/g_${ENVNAME}_${BASE}_${NM}_s${SEED}.pt
+    S=$(acquire)
+    (
+      if [ ! -f "$OUT" ]; then
+        if [ "${REUSE_ONLY:-0}" = 1 ]; then
+          echo "[reuse-only] missing final actor: $OUT" >&2
+          touch "$FAILDIR/train_${NM}_s${SEED}"
+        else
+          LRF=$(python3 -c "print('%g' % (float('$LR') / 10))")
+          TRAIN_CRIT="$CRIT"
+          [ "$ENVNAME" = tworoom ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
+          AFVFLAG=""; [ "$AFV" = on ] && AFVFLAG="--align-from-value"
+          # warm-frac "-" means drop the closed-loop term entirely
+          if [ "$WF" = "-" ]; then WARMFLAG=""; else WARMFLAG="--train-warm --warm-state-frac $WF"; fi
+          cube_train_lock
+          CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
+          python3 scripts/plan/train_lip_ac.py \
+          --h5 "$H5" --wm "$CK" --cache ~/gc/fs5.pt --cache-td ~/gc/fs1.pt \
+          --init-value "$TRAIN_CRIT" \
+          --recipe-profile "$PROFILE" \
+          --arch v4 --horizon 5 --iters 8 --max-delta "$MD" \
+          --amax $AM --mean-weight $MW --actor-lr $LR --actor-lr-final $LRF \
+          --temporal-objective "$TOBJ" \
+          --align-mode $MODE --align-weight $AW \
+          ${AFVFLAG} ${WARMFLAG} ${RECIPE} ${FROZEN_ARGS} \
+          --steps ${STEPS} --batch ${BATCH} --n-step 50 --seed ${SEED} \
+          --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
+          --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
+          --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
+          > $PERSIST/logs/g_${NM}_s${SEED}_train.log 2>&1 \
+            || { touch "$FAILDIR/train_${NM}_s${SEED}";
+                 echo "[train-fail] ${NM} s${SEED}:" >&2;
+                 tail -80 $PERSIST/logs/g_${NM}_s${SEED}_train.log | sed 's/^/  | /' >&2; }
+          cube_work_unlock
+        fi
+      else
+        echo "GRID $ENVNAME $BASE $NM s$SEED: REUSED persistent actor" >> "$DRV"
+      fi
+      if [ -f "$OUT" ]; then
+        echo "GRID $ENVNAME $BASE $NM s$SEED: OK" >> "$DRV"
+        # evaluate in the SAME slot: the actor lives on node-local disk and this
+        # cluster is torn down at job end, so eval cannot be a later job.
+        AFVEVAL=""; [ "$AFV" = on ] && AFVEVAL="--align-from-value"
+        WARMEVAL=""; [ "$WF" != "-" ] && WARMEVAL="--warm-start"
+        # cube: banked eval protocol -- bf16 and the held-out episode range
+        EXTRAEVAL=""; [ "$ENVNAME" = cube ] && EXTRAEVAL="--override ++bf16=true +eval.ep_range=8000:10000"
+        [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && EXTRAEVAL="--override +eval.ep_range=8000:10000"
+        K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
+        cube_eval_lock
+        CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
+        python3 scripts/plan/eval_log.py --actor "$OUT" \
+          --env-config "$ENVNAME" --h5 "$H5" --policy "$CK" \
+          --rh ${RH} --seeds ${EVAL_SEEDS} --offsets ${EOFF} \
+          $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir ~/gl --tag rh${RH} \
+          2>&1 | tee -a $PERSIST/logs/g_${NM}_s${SEED}_eval.log | tail -200
+        cube_work_unlock
+        # tail -200, not -25: a failed cell dumps its log tail + full hydra
+        # traceback to stdout, and -25 truncated exactly the error line (the
+        # node-local logs are unrecoverable after teardown, so stdout is all
+        # we ever get back)
+        # OK requires the summary marker AND at least one real score: the cube
+        # smoke "passed" with every cell null, and the old mis-quoted pattern
+        # ("'summary'") never matched at all, so EVAL always read FAIL.
+        if grep -q '\[summary\]' $PERSIST/logs/g_${NM}_s${SEED}_eval.log 2>/dev/null \
+           && ! grep -q '_all": null' $PERSIST/logs/g_${NM}_s${SEED}_eval.log 2>/dev/null; then
+          echo "EVAL $ENVNAME $BASE $NM s$SEED: OK" >> "$DRV"
+        else
+          echo "EVAL $ENVNAME $BASE $NM s$SEED: FAIL" >> "$DRV"
+          touch "$FAILDIR/eval_${NM}_s${SEED}"
+        fi
+      else
+        echo "GRID $ENVNAME $BASE $NM s$SEED: FAIL" >> "$DRV"
+        touch "$FAILDIR/train_${NM}_s${SEED}"
+      fi
+      rmdir "$SLOT/$S" 2>/dev/null
+    ) &
+    echo "launched $NM seed $SEED (amax $AM, mean-w $MW, lr $LR, align-w $AW, warm $WF, afv $AFV) slot $S"
+  done
+  done
+  wait
+  echo "[grid] $ENVNAME/$BASE complete"; sort "$DRV" | uniq -c
+  if find "$FAILDIR" -type f -print -quit | grep -q .; then
+    echo "[grid] hard failure: $(find "$FAILDIR" -type f | wc -l) failed cells" >&2
+    exit 1
+  fi

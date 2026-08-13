@@ -1,0 +1,14 @@
+# @package _global_
+# Reacher evaluation with a world-model planner (LeWM/PLDM checkpoint layout).
+# The Reacher checkpoints are environment-specific and not shipped in-tree, so
+# the checkpoint must be supplied explicitly:
+#   pixi run eval model=reacher_lewm core.world_model.checkpoint=<ckpt> \
+#       core/solver=lip core.solver.actor_path=<planner.pt>
+defaults:
+  - reacher
+  - /core/world_model: lewm
+  - override /core/policy: world_model
+  - _self_
+core:
+  world_model:
+    checkpoint: ???

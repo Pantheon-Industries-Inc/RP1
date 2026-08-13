@@ -1,9 +1,11 @@
+from .cem import CEMSolver
 from .gradient import GradientSolver
-from .hlip import HLIPSolver
 from .lip import LIPSolver
+from .mppi import MPPISolver
 
 __all__ = [
+    "CEMSolver",
     "GradientSolver",
-    "HLIPSolver",
     "LIPSolver",
+    "MPPISolver",
 ]
