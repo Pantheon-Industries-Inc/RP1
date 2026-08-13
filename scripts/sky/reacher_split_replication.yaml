@@ -273,6 +273,9 @@ setup: |
 
 run: |
   set -uo pipefail
+  # pod_src_20260804's LIPSolver predates the graphed kwarg; pass it only when enabled
+  GRAPHED_FLAG=""
+  [ "${GRAPHED_MODE:-false}" != false ] && GRAPHED_FLAG="+solver.graphed=${GRAPHED_MODE}"
   # node + physical GPU identity, so an XID alert (which names only a node
   # and a PCI address) can be tied to a job by grep instead of by hand.
   echo "[node] $(hostname) | gpus: $(nvidia-smi --query-gpu=index,uuid --format=csv,noheader 2>/dev/null | tr '\n' ' ' || echo unavailable)"
@@ -863,7 +866,7 @@ run: |
               policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
               +eval.ep_range=8000:10000 seed=$es \
               eval.goal_offset_steps=25 eval.eval_budget=50 \
-              solver=lip solver.actor_path="$ck" solver.rollout_compat=false "+solver.graphed=${GRAPHED_MODE:-false}" \
+              solver=lip solver.actor_path="$ck" solver.rollout_compat=false $GRAPHED_FLAG \
               solver.batch_size=10 output.filename=${nm}.txt \
               > /workspace/logs/ev_${nm}.log 2>&1
             local h05 h10
@@ -890,7 +893,7 @@ run: |
                 eval.goal_offset_steps=25 eval.eval_budget=50 \
                 +eval.success_threshold=$tau +eval.terminate_on_success=true \
                 plan_config.receding_horizon=5 \
-                solver=lip solver.actor_path="$ck" solver.rollout_compat=false "+solver.graphed=${GRAPHED_MODE:-false}" \
+                solver=lip solver.actor_path="$ck" solver.rollout_compat=false $GRAPHED_FLAG \
                 solver.batch_size=10 output.filename=${nm}_tau${tautag}.txt \
                 > /workspace/logs/ev_${nm}_tau${tautag}.log 2>&1
               score=$(grep -E "LATCHED-first-hit tau=${tau}rad" \

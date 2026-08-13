@@ -220,14 +220,18 @@ def decorate(ax, panel, style: str) -> None:
         spine.set_linewidth(0.8)
 
 
-def draw(panels, style: str, out: Path, dpi: int) -> None:
-    """One combined strip, labels baked in."""
+def draw(panels, style: str, out: Path, dpi: int, wspace: float = 0.06) -> None:
+    """One combined strip, labels baked in.
+
+    A wider ``wspace`` makes the strip wider without making the panels taller,
+    so at a fixed ``\\linewidth`` the figure renders shorter on the page.
+    """
     fig, axes = plt.subplots(1, len(panels), figsize=(3 * len(panels), 3.4))
     for ax, (_, label, panel) in zip(axes, panels, strict=True):
         decorate(ax, panel, style)
-        ax.set_title(label, fontsize=13, family="serif", y=-0.16)
+        ax.set_title(label, fontsize=13, family="serif", y=-0.14)
 
-    fig.subplots_adjust(wspace=0.06, left=0.01, right=0.99, top=0.99, bottom=0.09)
+    fig.subplots_adjust(wspace=wspace, left=0.01, right=0.99, top=0.99, bottom=0.09)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=dpi, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -257,16 +261,19 @@ def main() -> None:
         action="store_true",
         help="also write one unlabelled file per panel, for LaTeX subfigures",
     )
+    parser.add_argument("--wspace", type=float, default=0.45, help="gap between panels, in panel widths")
     args = parser.parse_args()
 
     # Render the scenes once: the envs resample some variations on every
     # construction, so rebuilding per style would give each option a different
     # layout and make them impossible to compare.
-    panels = [(label, fn()) for label, fn in PANELS]
+    panels = [(slug, label, fn()) for slug, label, fn in PANELS]
 
     styles = ("ghost", "star", "inset") if args.style == "all" else (args.style,)
     for style in styles:
-        draw(panels, style, args.outdir / f"environments_{style}.png", args.dpi)
+        draw(panels, style, args.outdir / f"environments_{style}.png", args.dpi, args.wspace)
+        if args.split:
+            draw_split(panels, style, args.outdir / f"panels_{style}", args.dpi)
 
 
 if __name__ == "__main__":
