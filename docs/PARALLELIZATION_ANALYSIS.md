@@ -49,6 +49,42 @@ independent things are all true and all fixable, and they are not in the same su
 
 ---
 
+## 0.5 Update 2026-08-12/13 — the launch-bound diagnosis, cashed
+
+Fixes #3 and #17 of §7 have landed in the LIPv4 (kind `lip4`) solve path; measured on an
+architecture-matched benchmark, job 4840, 1×H200, fp32, B=1:
+
+| LIPv4 decision | ms/decision | vs eager |
+|---|---|---|
+| eager, duplicate rollout (the audited path) | 272.6 | 1.0× |
+| **CUDA-graphed** (`core.solver.graphed=true`) | **29.3** | **9.3×** |
+
+- **Trajectory reuse (#3) is now the solver default** (`core.solver.reuse_trajectory=true`,
+  since 2026-08-12): the gradient unroll's trajectory doubles as the actor features, so one
+  decision costs **9 forward + 8 backward unrolls** instead of 17 fwd + 8 bwd. Bit-exact:
+  `reuse_trajectory="verify"` logs `max_difference == 0` per iteration, and end-task parity
+  held on the reacher winners (jobs 4927/4930 — 3 of 4 report cells identical, the fourth
+  differs by a single episode in 450). `reuse_trajectory=false` reproduces pre-2026-08-12 evals.
+- **CUDA graphs (#17) are implemented opt-in** (`rlp/core/solver/graphed.py`,
+  `core.solver.graphed = false | true | "verify"`): the per-iteration score computation
+  (WM unroll → trajectory value, forward AND backward) is graph-captured once per batch size
+  and replayed per refinement iteration. Final-plan deviation vs the eager path: **5.96e-8**
+  (one float32 ulp — identical to the trajectory-reuse deviation, i.e. capture itself adds
+  zero). Capture costs seconds, once per (batch, horizon, action_dim); shrinking eval batches
+  must be padded by the caller or left on the eager path (the #12 constraint, handled at the
+  capture boundary). Covered by `tests/core/test_graphed_refinement.py`.
+- **Planner-vs-planner, same benchmark** (H200, fp32): LIPv4 graphed **30.7 ms/decision** vs
+  CEM 218.6 ms graphed / 241.9 ms eager — the ~530× rollout advantage now cashes at **~7.1×**
+  wall-clock at B=1 instead of the ~1× this audit measured, and the gap widens with batch
+  (the samplers' 9,000 rollouts scale with controllers; LIP's 9 do not).
+
+The remaining §7 items on the LIP path (#7, #8, #9, #10) are subsumed for *inference* by the
+graph capture (a replayed graph has no per-kernel launch or sync cost) but still stand for
+*training* (`rlp/train/lip_ac.py`), which reuses the scoring rollout
+(`reuse_refinement_rollouts=true`, same 2026-08-12 default) but is not graph-captured.
+
+---
+
 ## 1. Three regimes, three different bottlenecks
 
 Do not optimize "LIP". Optimize one of these; they share code but nothing else.
@@ -566,7 +602,7 @@ Ordered by (wall-clock won) ÷ (effort). "Free" = no numerics change.
 |---|---|---|---|---|
 | 1 | **Set `MUJOCO_EGL_DEVICE_ID=$gpu`** next to `CUDA_VISIBLE_DEVICES`; retest 3-way collection | `main:Dyna/dyna_harness/collect_r1.sh:27`, all cube Dyna scripts | unblocks 3× on **the** longest stage (~45% of a round) | **confirmed root cause**; historical fix in `main:Dyna/dyna_harness/collect_r1_fixed.sh` |
 | 2 | Un-latch `PAR`, stop pinning retries to GPU 0, drop the batch barrier | `main:Dyna/dyna_harness/collect_r1.sh:57,59,64` | one abort currently costs the whole run's parallelism | low; historical fix in `main:Dyna/dyna_harness/collect_r1_fixed.sh` |
-| 3 | Reuse `traj.detach()` instead of re-rolling | `rlp/core/solver/lip.py:255` | **−47% of LIP forward rollout** | **free**, exact; patch in `rlp/tools/patch/patch_lip_reuse_traj.py` |
+| 3 | ~~Reuse `traj.detach()` instead of re-rolling~~ **DONE 2026-08-12** — solver default, bit-exact (§0.5) | `rlp/core/solver/lip.py` | **−47% of LIP forward rollout** | **free**, exact |
 | 4 | `batch_size: 1` → `>= num_envs` for CEM/GD/MPPI/iCEM | `config/solver/cem.yaml:3` | 50× fewer sequential solves per replan | **free**, one line, proven at `rlp/train/trm_pipeline/eval_hard.py:94` |
 | 5 | Wire in 4-way sharded cache build | `main:Dyna/dyna_harness/dyna_r1_ladder.sh:55-64` | **[measured]** 22 m → 6 m 19 s, 22% of the ladder | script was broken; **fixed + validated**, see §9 |
 | 6 | Generalize the historical N-way eval worker; run gate arms + mix builds concurrently | `main:Dyna/dyna_harness/run_evals_b.sh:81-101` | ~30 m → ~8 m ladder; 3 idle GPUs recovered | gated on #1 |
@@ -580,7 +616,7 @@ Ordered by (wall-clock won) ÷ (effort). "Free" = no numerics change.
 | 14 | Parallelize env stepping + rendering in-process | `world/env_pool.py:134` | attacks the 48 ms/env-step directly | medium; needs #1 first |
 | 15 | Weighted sampler instead of 25× row duplication | `rlp/tools/data/build_dyna_mix.py:66-68` | deletes ~20 GB of writes per round | medium |
 | 16 | Activation-checkpoint the rollout; raise B | `train_lip_ac.py:612`; pattern at `rlp/core/world_model/dinowm/tokens.py:167-175` | frees ~2 GB → larger batch ≈ free throughput | low |
-| 17 | CUDA-graph the K×H unroll | `rlp/core/solver/lip.py:249-269`, `train_lip_ac.py:588` | the big one once #10/#12 land | medium |
+| 17 | ~~CUDA-graph the K×H unroll~~ **DONE (inference) 2026-08-12** — opt-in `core.solver.graphed`, 272.6→29.3 ms/decision, 5.96e-8 deviation (§0.5); training unroll still eager | `rlp/core/solver/graphed.py` | **[measured]** 9.3× per decision | landed; per-batch capture handles #12 |
 | 18 | Vectorize samplers; `argsort`-based `episodes()`; DataLoader + pinned memory; vectorize the remap | `rlp/core/value/samplers.py`, `rlp/data/latent_cache.py:53`, `rlp/tools/data/build_dyna_mix.py:36-43` | ~37M Python RNG calls → 0 | **free** |
 | 19 | Drop the collection→fine-tune poll from `sleep 300` to `sleep 15` | `main:Dyna/dyna_harness/dyna_r1_finetune.sh:26` | up to 5 min/round | **free** |
 | 20 | RoPE / time-invariant positions → KV-cache the window | `wm/lewm/module.py:269,291` | ~3× rollout transformer FLOPs | **high — changes numerics, needs a retrain** |
