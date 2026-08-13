@@ -14,10 +14,12 @@ actor checkpoint (written by the training scripts):
   normalized action units and denormalized (stats stored in the checkpoint)
   before execution.
 
-At plan time one refinement pass costs ~2 WM rollouts per iteration
-(~16-20 rollout-equivalents total at K=8) versus ~9000 for the repo's CEM
-defaults (300 samples x 30 iterations) — a ~450x compute reduction at equal
-or better success rate (see docs/lip/README_lip.md for benchmarks).
+At plan time one refinement pass costs 1 differentiated WM unroll per
+iteration (trajectory reuse, default since 2026-08-12): 9 forward + 8 backward
+unrolls at K=8 versus 9000 forward for the repo's CEM defaults (300 samples x
+30 iterations) — a ~360x compute reduction at equal or better success rate.
+Measured wall-clock (H200, fp32): 30.7 ms/decision with graphed=true vs CEM's
+218.6 ms graphed / 241.9 ms eager (see docs/lip/README_lip.md).
 
 Trainers: ``rlp/train/lip.py`` and ``rlp/train/lip_dino.py``.
 """
@@ -87,7 +89,6 @@ class LIPCheckpoint(TypedDict):
     use_grad: NotRequired[bool]
     amu5: NotRequired[torch.Tensor]
     ast5: NotRequired[torch.Tensor]
-    hwm: NotRequired[str]
     temporal_objective: NotRequired[str]
 
 
@@ -127,7 +128,8 @@ class LIPSolver(CEMSolver):
         init_mode: str = "zero",
         init_samples: int = 64,
         init_scale: float = 1.5,
-        reuse_trajectory: bool | str = False,
+        reuse_trajectory: bool | str = True,
+        graphed: bool | str = False,
         record_probes: bool = False,
         probe_directory: str | None = None,
         **kwargs: Any,
@@ -149,7 +151,21 @@ class LIPSolver(CEMSolver):
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
+        # Default TRUE since 2026-08-12: the gradient unroll's trajectory is
+        # reused as the actor features (9 fwd + 8 bwd instead of 17 fwd +
+        # 8 bwd). The discarded unroll was a bit-exact duplicate — verified by
+        # reuse_trajectory="verify" (max_difference == 0 per iteration) and by
+        # end-task parity on the reacher winners (jobs 4927/4930: 3 of 4
+        # report cells identical, 1 differs by a single episode in 450).
+        # Pass reuse_trajectory=false to reproduce pre-2026-08-12 evals.
         self.reuse_trajectory = reuse_trajectory
+        # Opt-in CUDA-graphed inference (see solver/graphed.py). False = the
+        # untouched eager path; True = graph-captured refinement (implies
+        # trajectory reuse); "verify" = graphed, plus an eager recomputation
+        # each iteration with the max deviation logged. Lazily initialised on
+        # first solve so construction stays checkpoint-only.
+        self.graphed = graphed
+        self._graphed_refinement: Any = None
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
             self.probe_directory.mkdir(parents=True, exist_ok=True)
@@ -284,6 +300,29 @@ class LIPSolver(CEMSolver):
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
     # ------------------------------------------------------------------ lip
+    def _graphed_for(self, wm: Any, z_hist: torch.Tensor, a_hist: torch.Tensor, z_goal: torch.Tensor) -> Any:
+        """Lazily build the CUDA-graphed refinement and stage this decision.
+
+        Kept out of ``__init__`` so solver construction never touches CUDA
+        graphs; the first solve pays a one-time capture per batch size.
+        """
+        if self._graphed_refinement is None:
+            from .graphed import GraphedRefinement
+
+            if self.reuse_trajectory:
+                logger.info("graphed LIP inference already reuses the gradient unroll; reuse_trajectory is redundant")
+            self._graphed_refinement = GraphedRefinement(
+                wm,
+                self.lip_value,
+                self.temporal_objective,
+                self.horizon,
+                self.action_dim,
+                z_hist.shape[-1],
+                self.device,
+            )
+        self._graphed_refinement.bind(z_hist, a_hist, z_goal)
+        return self._graphed_refinement
+
     def _proposal_lip(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
         wm = cast(EncoderWorldModel, self._base())
         with torch.no_grad():
@@ -330,24 +369,45 @@ class LIPSolver(CEMSolver):
         if self.init_mode == "value" and R == 1:
             A = self._value_init(wm, z_hist, a_hist, zg)
         s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
+        graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []
         for k_it in range(self.lip_iters):
-            with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
-                A_in = A.detach().requires_grad_(True)
-                traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                score = trajectory_value(self.lip_value, traj, zg_r, z0_r, self.temporal_objective)
-                (gA,) = torch.autograd.grad(score.sum(), A_in)
+            if graphed_ref is not None:
+                # one forward-graph + one backward-graph replay; the gradient
+                # unroll's trajectory doubles as the actor features (reuse)
+                E_graphed, traj_f, gA = graphed_ref.step(A)
+                if self.graphed == "verify":
+                    with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
+                        A_ref = A.detach().requires_grad_(True)
+                        traj_ref = rollout_traj(wm, zh_r, a_hist, A_ref)
+                        score_ref = trajectory_value(self.lip_value, traj_ref, zg_r, z0_r, self.temporal_objective)
+                        (gA_ref,) = torch.autograd.grad(score_ref.sum(), A_ref)
+                    logger.info(
+                        f"Graphed verification iteration={k_it} "
+                        f"gradient={float((gA - gA_ref).abs().max()):.3e} "
+                        f"score={float((E_graphed - score_ref.detach()).abs().max()):.3e} "
+                        f"trajectory={float((traj_f - traj_ref.detach()).abs().max()):.3e}"
+                    )
+            else:
+                with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
+                    A_in = A.detach().requires_grad_(True)
+                    traj = rollout_traj(wm, zh_r, a_hist, A_in)
+                    score = trajectory_value(self.lip_value, traj, zg_r, z0_r, self.temporal_objective)
+                    (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
-                reuse = self.reuse_trajectory
-                if reuse == "verify":
-                    traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                    difference = (traj_f - traj.detach()).abs().max().item()
-                    logger.info(f"Reuse verification iteration={k_it} max_difference={difference:.3e}")
-                elif reuse and reuse != "0":
-                    traj_f = traj.detach()
+                if graphed_ref is not None:
+                    E = E_graphed
                 else:
-                    traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                E = trajectory_value(self.lip_value, traj_f, zg_r, z0_r, self.temporal_objective)
+                    reuse = self.reuse_trajectory
+                    if reuse == "verify":
+                        traj_f = rollout_traj(wm, zh_r, a_hist, A)
+                        difference = (traj_f - traj.detach()).abs().max().item()
+                        logger.info(f"Reuse verification iteration={k_it} max_difference={difference:.3e}")
+                    elif reuse and reuse != "0":
+                        traj_f = traj.detach()
+                    else:
+                        traj_f = rollout_traj(wm, zh_r, a_hist, A)
+                    E = trajectory_value(self.lip_value, traj_f, zg_r, z0_r, self.temporal_objective)
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
@@ -382,6 +442,9 @@ class LIPSolver(CEMSolver):
                         self.lip_value, perturbed, zg_c, zh_c[:, -1], self.temporal_objective
                     )
                 Ef = (scores / self.robust_m).view(B, R * C)
+            elif graphed_ref is not None and C == 1:
+                # selection unroll through the same captured graph (shape matches)
+                Ef = graphed_ref.score(cf).view(B, R * C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
                 Ef = trajectory_value(

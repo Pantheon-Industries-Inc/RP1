@@ -29,6 +29,13 @@ travels. Low expectile makes this a one-sided (optimistic) bound absorber:
 good plans tighten d, bad plans barely raise it. Off by default: it lets the
 pair co-exploit WM errors, so compare against expand-weight 0 before trusting.
 
+``expand_traj`` additionally reuses the actor's final refinement rollout as H
+single-block backups  d(z_t,zg) <- fs + d_bar(z_{t+1},zg)  along the imagined
+path (consecutive latents are one fs-step action block apart). The rollout is
+already computed for the actor loss, so this densifies the critic's expansion
+signal H-fold per actor batch without any extra world-model queries. Same
+co-exploitation caveat as the endpoint term; requires ``expand_weight > 0``.
+
 Outputs are written to the run's ``checkpoints/`` directory. The planner
 checkpoint records the value-checkpoint path, so ``rlp.eval.world_model`` with
 ``solver=lip`` works unchanged and the same value can be CEM-evaluated for an
@@ -65,6 +72,8 @@ from rlp.logging import logger
 
 from .utils import cosine_interpolate
 
+# (z0, imagined trajectory (B, H, D), zg) — the endpoint backup uses traj[:, -1];
+# expand_traj additionally consumes every consecutive pair along the trajectory.
 type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
@@ -241,9 +250,12 @@ def _run(cfg: DictConfig) -> None:
     n_plan = a.horizon * fs  # plan length in primitive steps
     if a.gamma >= 1.0:
         plan_cost, plan_disc = float(n_plan), 1.0
+        block_cost, block_disc = float(fs), 1.0
     else:
         plan_disc = a.gamma**n_plan
         plan_cost = (1.0 - plan_disc) / (1.0 - a.gamma)
+        block_disc = a.gamma**fs
+        block_cost = (1.0 - block_disc) / (1.0 - a.gamma)
 
     def critic_step(expand: ExpandBatch | None = None, tau: float | None = None, lr: float | None = None) -> float:
         if td_sampler is None or c_opt is None:
@@ -269,10 +281,20 @@ def _run(cfg: DictConfig) -> None:
             tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
         loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau, a.huber_beta)
         if expand is not None:  # value expansion on planner rollouts
-            z0e, zTe, zge = expand
+            z0e, traje, zge = expand
             with torch.no_grad():
-                tgt_e = plan_cost + plan_disc * teacher_fn(zTe, zge)
-            loss = loss + a.expand_weight * _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
+                tgt_e = plan_cost + plan_disc * teacher_fn(traje[:, -1], zge)
+            loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
+            if a.expand_traj:
+                # single-block backups along the reused refinement rollout:
+                # consecutive imagined latents are one fs-step block apart
+                Be, He, De = traje.shape
+                src = torch.cat([z0e.unsqueeze(1), traje[:, :-1]], dim=1).reshape(-1, De)
+                zg_rep = zge.repeat_interleave(He, dim=0)
+                with torch.no_grad():
+                    tgt_t = block_cost + block_disc * teacher_fn(traje.reshape(-1, De), zg_rep)
+                loss_e = loss_e + _expectile_loss(critic_fn(src, zg_rep) - tgt_t, tau, a.huber_beta)
+            loss = loss + a.expand_weight * loss_e
         c_opt.zero_grad(set_to_none=True)
         loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature here.
         c_opt.step()
@@ -431,9 +453,9 @@ def _run(cfg: DictConfig) -> None:
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
         a_opt.step()
-        if zT is None:
+        if zT is None or tr is None:
             raise RuntimeError("actor produced no terminal latent")
-        expand = (z0.detach(), zT.detach(), zg.detach())
+        expand = (z0.detach(), tr.detach(), zg.detach())
         return float(e_path[0].item()), float(e_path[-1].item()), expand
 
     # ------------------------------------------------------------ schedule

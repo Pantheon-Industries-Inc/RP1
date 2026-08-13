@@ -1,5 +1,0 @@
-# @package data
-path: tworoom.h5
-stats: ${data.path}
-cache_dir: null
-keys_to_cache: [action, proprio]

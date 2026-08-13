@@ -38,8 +38,9 @@ ema_tau: 0.005
 freeze_critic_frac: 0.8
 actor_only: false
 temporal_objective: terminal
-reuse_refinement_rollouts: false
+reuse_refinement_rollouts: true  # reuse the scoring rollout as the next gradient rollout (default since 2026-08-12)
 expand_weight: 0.0
+expand_traj: false  # reuse the actor's final rollout as per-block TD backups (needs expand_weight > 0)
 replay_prob: 0.0
 seed: 0
 action_stats_pin: null
