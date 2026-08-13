@@ -67,6 +67,9 @@ envs:
   PLANNER_DEADLINE: ""        # graded environment step; e.g. 50
   SUCCESS_THRESHOLDS: "0.1 0.05" # separate first-hit simulator passes
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
+  INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
+  REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
+  VALUE_EXPECTILE: "0.03"   # paper init value artifact used 0.05 (window3_*_e005)
   VALUE_FRAMES: "3"           # frames in the window value/critic; 1 = single-frame ablation
   PRE_MEASUREMENT_SMOKE: "0" # tiny exact-protocol gate before the reporting cells
   CELL_TIMEOUT: "21600"
@@ -263,7 +266,7 @@ setup: |
   W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_std.pt
   WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
   [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
-    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-3} --expectile 0.03 --gamma 0.98 \
+    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-3} --expectile ${VALUE_EXPECTILE:-0.03} --gamma 0.98 \
     --n-step 50 --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
   [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
   echo "[setup] reacher/${BASE} ready"
@@ -316,7 +319,7 @@ run: |
   # winner (m0.3, 3e-4).
   AMS="1.4 1.6 1.8 2.0 2.2 2.4 2.6"; COMBOS="0.3:1e-4 0.3:3e-4"
   [ "$BASE" = pldm ] && { AMS="1.2 1.4 1.6 1.8 2.0 2.2 2.4"; COMBOS="0.1:3e-4 0.3:3e-4"; }
-  SEL="50 51"; REP="42 43 44"
+  SEL="50 51"; REP="${REPORT_DRAWS:-42 43 44}"
   [ "${SELECTION_ONLY:-0}" = 1 ] && REP=""
   [ "${REPORT_ONLY:-0}" = 1 ] && SEL=""
   # Planner arms have no hyperparameter/checkpoint selection; measure only the
@@ -386,6 +389,11 @@ run: |
     # paper App C.3 winners use expand 0 everywhere on Reacher; honor an
     # explicit EXPAND override (2026-08-13 split replication)
     [ -n "${EXPAND:-}" ] && BEST_EXPAND=$EXPAND
+    if [ "${INCLUDE_PAPER:-0}" = 1 ]; then
+      # the checkpoint-verified recipe behind the paper's reacher numbers
+      # (reacher/HYPERS_20260802.md): LeWM a2.2/m0.3/lr1e-4, PLDM a1.8/m0.5/lr3e-4
+      CFG+=("rs_latched_terminal_a2.2_m0.3_l1e-4 2.2 0.3 1e-4 ${BEST_EXPAND} 0.5 terminal")
+    fi
     for AM in $AMS; do
       for MW in 0.1 0.3 0.5; do
         for LR in 1e-4 3e-4; do
