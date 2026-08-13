@@ -43,6 +43,19 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
 
     def task(cfg: DictConfig) -> None:
         rlp_pipeline._stage(cfg, 1, "subsample", "tools/subsample_cache", inp=str(inp), out=str(out), frameskip=2)
+        rlp_pipeline._stage(
+            cfg,
+            2,
+            "value",
+            "train/metric",
+            cache=str(inp),
+            learner="td",
+            steps=2,
+            batch_size=8,
+            n_step=2,
+            device="cpu",
+            **{"output.checkpoint": "value_td"},
+        )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["rlp", "wm=unused", "dataset=unused"])
@@ -50,3 +63,5 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
 
     sub = LatentCache.load(str(out))
     assert len(sub.z) == 10  # every 2nd frame of two 10-step episodes
+    runs = sorted((tmp_path / "logs").rglob("checkpoints/value_td"))
+    assert runs, "value stage saved no checkpoint"

@@ -78,7 +78,11 @@ type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 def _run(cfg: DictConfig) -> None:
-    a = OmegaConf.merge(cfg, cfg.core.planner, cfg.core.value)
+    # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
+    # the planner/value-group keys and derived aliases can be merged in.
+    a = OmegaConf.merge(
+        OmegaConf.create(OmegaConf.to_container(cfg, resolve=True)), cfg.core.planner, cfg.core.value
+    )
     if not isinstance(a, DictConfig):
         raise TypeError("merged planner/value configuration must be a mapping")
     a.embed_dim = a.embedding_dim

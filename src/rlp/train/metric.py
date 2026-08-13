@@ -29,7 +29,9 @@ from rlp.logging import logger
 
 
 def _run(cfg: DictConfig) -> None:
-    args = OmegaConf.merge(cfg, cfg.core.value)
+    # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
+    # the value-head keys and derived aliases can be merged in.
+    args = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg, resolve=True)), cfg.core.value)
     args.embed_dim = args.embedding_dim
     args.rep_dim = args.representation_dim
 

@@ -61,7 +61,9 @@ def validate_config(cfg: DictConfig) -> None:
             raise ValueError(f"Unsupported core.policy.kind: {core.policy.kind}")
         if core.policy.kind == "world_model" and not core.policy.checkpoint:
             raise ValueError("core.policy.checkpoint is required for a world-model policy")
-    if core is not None and "value" in core:
+    # Deploy-side value configs carry a `kind`; train-side value groups (the
+    # metric head architecture) do not and need no kind validation.
+    if core is not None and "value" in core and "kind" in core.value:
         if core.value.kind not in {"latent", "metric"}:
             raise ValueError(f"Unsupported core.value.kind: {core.value.kind}")
         if core.value.kind == "metric" and not core.value.checkpoints:
