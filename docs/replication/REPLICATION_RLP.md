@@ -155,11 +155,12 @@ The historical campaign harness for step 1–2 lives in git history on `main`
 The split differs per environment; the configs encode the protocol each
 table's numbers were actually produced under:
 
-- **Cube** (current generation: corrected replication + Dyna rows): value and
-  planner train on episodes 0–7999 (`train_episodes=8000`), eval tasks draw
-  from 8000–9999 (`evaluation.episode_range="8000:10000"`, pinned in the cube
-  eval roots). The pre-correction h25 row-(c) actors predate the split and are
-  upper bounds.
+- **Cube** (all quoted RLP rows, from the 2026-08-05/06 open-loop sweep
+  onward): value and planner train on episodes 0–7999 (`train_episodes=8000`,
+  a 1,608,000-row cache), eval tasks draw from 8000–9999
+  (`evaluation.episode_range="8000:10000"`, pinned in the cube eval roots).
+  Only the July 2026 Dyna-era measurements predate the split; none of those
+  are quoted in the paper's tables.
 - **Reacher**: same held-out split, pinned in `configs/eval/reacher.yaml`.
 - **TwoRoom**: the shipped numbers follow the original LeWM/DINO-WM contract —
   training and evaluation share the full 10k-episode pool (no split). All
