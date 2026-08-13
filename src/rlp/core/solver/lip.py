@@ -145,6 +145,7 @@ class LIPSolver(CEMSolver):
         self,
         *args: Any,
         actor_path: str = "",
+        value_path: str | None = None,
         lam: float = 1.0,
         restarts: int = 1,
         restart_noise: float = 0.5,
@@ -265,7 +266,16 @@ class LIPSolver(CEMSolver):
         self.temporal_objective = ck.get("temporal_objective", "terminal")
         if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
             raise ValueError(f"unsupported temporal objective: {self.temporal_objective}")
-        value_module = load_metric(ck["value"], device=self.device)
+        value_reference = value_path or ck["value"]
+        if value_path is None and not Path(value_reference).exists():
+            # The training run records an absolute value path; when evaluating
+            # on another machine, fall back to the sibling directory the
+            # checkpoints were copied out with (planner.pt next to value_ac).
+            sibling = Path(actor_path).resolve().parent / Path(value_reference).name
+            if sibling.exists():
+                logger.info(f"LIP value fallback: {value_reference} missing, using sibling {sibling}")
+                value_reference = str(sibling)
+        value_module = load_metric(value_reference, device=self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
         if self.kind == "lip_dino":
