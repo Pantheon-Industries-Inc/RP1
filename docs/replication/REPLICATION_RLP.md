@@ -57,6 +57,12 @@ The eval driver is `rlp.eval.world_model`; each invocation is one
 `goal_offset_steps=100 budget=200` (h100). Reporting protocol: seeds 42/43/44,
 50 episodes each, selection on 50/51 only (never report those).
 
+All environments — **including Reacher** — run open loop: the full 5-chunk
+plan (25 primitive steps) executes before replanning
+(`planning.receding_horizon=5`, the default). The paper appendix's shared
+protocol note claiming Reacher replans every chunk is an error in the
+appendix, not the protocol.
+
 ```bash
 # RLP (9 rollouts/decision)
 pixi run eval model=lewm core/solver=lip core.solver.actor_path=<planner.pt>

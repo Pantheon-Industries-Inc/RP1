@@ -7,6 +7,11 @@ defaults:
   - /core/solver: cem
   - /core/value: latent
   - _self_
+planning:
+  # Open loop, like every other environment: the full 5-chunk plan (25
+  # primitive steps) executes before replanning. The paper appendix's
+  # "replanning every chunk" for Reacher is WRONG — do not set this to 1.
+  receding_horizon: 5
 evaluation:
   callables:
     - method: set_state
