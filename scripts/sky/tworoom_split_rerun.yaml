@@ -108,10 +108,10 @@ config:
                 name: raid0
 
 file_mounts:
-  /tmp/codex-overlays/train_lip_ac.py: ./stable-worldmodel/scripts/plan/train_lip_ac.py
-  /tmp/codex-overlays/latent_cache.py: ./stable-worldmodel/stable_worldmodel/trm/latent_cache.py
-  /tmp/codex-overlays/lip.py: ./stable-worldmodel/stable_worldmodel/solver/lip.py
-  /tmp/cube_staged.sh: ./tworoom_matrix_20260727/sky/cube_staged.sh
+  /tmp/codex-overlays/train_lip_ac.py: ./scripts/sky/overlays/train_lip_ac.py
+  /tmp/codex-overlays/latent_cache.py: ./scripts/sky/overlays/latent_cache.py
+  /tmp/codex-overlays/lip.py: ./scripts/sky/overlays/lip.py
+  /tmp/cube_staged.sh: ./scripts/sky/overlays/cube_staged.sh
 
 
 setup: |
