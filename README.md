@@ -8,7 +8,13 @@ with a learned search procedure — 9 world-model rollouts per decision instead
 of 3,000–9,000.
 
 Naming note: the paper's **RLP** planner is called **LIP** (Learned Iterative
-Planner) throughout the code and checkpoints; they are the same method.
+Planner) throughout the code and checkpoints; they are the same method. The
+specific refiner architecture the paper presents is generation 4 — configs
+say `architecture: v4` (`configs/core/planner/lip.yaml`), checkpoints record
+`kind: lip4`, and campaign records call it **LIPv4**. All of these name the
+paper's residual plan refiner (Eq. 10); earlier generations (`lip`…`lip3`)
+remain loadable by the solver for old checkpoints but are not the paper's
+method.
 
 ## Start here
 
