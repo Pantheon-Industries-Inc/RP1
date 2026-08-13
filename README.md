@@ -26,7 +26,7 @@ method.
   — bit-level replication of the tracked OGBench Cube LeWM base.
 - [`docs/lip/README_lip.md`](docs/lip/README_lip.md) — method notes and recipe
   lessons; [`docs/campaigns/`](docs/campaigns/) — dated experiment records.
-- [`PARALLELIZATION_ANALYSIS.md`](PARALLELIZATION_ANALYSIS.md) — historical
+- [`docs/PARALLELIZATION_ANALYSIS.md`](docs/PARALLELIZATION_ANALYSIS.md) — historical
   serialization/throughput audit (some citations target pre-refactor paths).
 
 ## Replicating RLP: LeWM and PLDM
