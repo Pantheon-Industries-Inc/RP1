@@ -185,39 +185,46 @@ def make_tworoom(seed=7):
 
 # --------------------------------------------------------------------------- figure
 
-PANELS = (("Reacher", make_reacher), ("OGBench Cube", make_cube), ("TwoRoom", make_tworoom))
+PANELS = (
+    ("reacher", "Reacher", make_reacher),
+    ("cube", "OGBench Cube", make_cube),
+    ("tworoom", "TwoRoom", make_tworoom),
+)
+
+
+def decorate(ax, panel, style: str) -> None:
+    """Draw one env frame plus its goal annotation into an axes."""
+    ax.imshow(panel["ghost"] if style == "ghost" else panel["frame"])
+
+    if style == "ghost" and "ring" in panel:
+        ax.add_patch(Circle(panel["goal_px"], panel["ring"], fill=False, edgecolor=RING_COLOR, linewidth=2.6))
+
+    if style == "star":
+        x, y = panel["goal_px"]
+        ax.plot(x, y, marker="*", markersize=26, color=GOAL_COLOR, markeredgecolor=GOAL_EDGE, markeredgewidth=1.1)
+
+    if style == "inset":
+        inset = ax.inset_axes([0.66, 0.66, 0.32, 0.32])
+        inset.imshow(panel["goal_frame"])
+        inset.set_xticks([])
+        inset.set_yticks([])
+        for spine in inset.spines.values():
+            spine.set_edgecolor(GOAL_COLOR)
+            spine.set_linewidth(1.8)
+        inset.set_xlabel("goal", fontsize=8, family="serif", labelpad=2)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_edgecolor("0.6")
+        spine.set_linewidth(0.8)
 
 
 def draw(panels, style: str, out: Path, dpi: int) -> None:
+    """One combined strip, labels baked in."""
     fig, axes = plt.subplots(1, len(panels), figsize=(3 * len(panels), 3.4))
-    for ax, (label, panel) in zip(axes, panels, strict=True):
-        image = panel["ghost"] if style == "ghost" else panel["frame"]
-        ax.imshow(image)
-
-        if style == "ghost" and "ring" in panel:
-            ax.add_patch(
-                Circle(panel["goal_px"], panel["ring"], fill=False, edgecolor=RING_COLOR, linewidth=2.6)
-            )
-
-        if style == "star":
-            x, y = panel["goal_px"]
-            ax.plot(x, y, marker="*", markersize=26, color=GOAL_COLOR, markeredgecolor=GOAL_EDGE, markeredgewidth=1.1)
-
-        if style == "inset":
-            inset = ax.inset_axes([0.66, 0.66, 0.32, 0.32])
-            inset.imshow(panel["goal_frame"])
-            inset.set_xticks([])
-            inset.set_yticks([])
-            for spine in inset.spines.values():
-                spine.set_edgecolor(GOAL_COLOR)
-                spine.set_linewidth(1.8)
-            inset.set_xlabel("goal", fontsize=8, family="serif", labelpad=2)
-
-        ax.set_xticks([])
-        ax.set_yticks([])
-        for spine in ax.spines.values():
-            spine.set_edgecolor("0.6")
-            spine.set_linewidth(0.8)
+    for ax, (_, label, panel) in zip(axes, panels, strict=True):
+        decorate(ax, panel, style)
         ax.set_title(label, fontsize=13, family="serif", y=-0.16)
 
     fig.subplots_adjust(wspace=0.06, left=0.01, right=0.99, top=0.99, bottom=0.09)
@@ -227,11 +234,29 @@ def draw(panels, style: str, out: Path, dpi: int) -> None:
     print(f"wrote {out}")
 
 
+def draw_split(panels, style: str, outdir: Path, dpi: int) -> None:
+    """One file per panel, unlabelled, for \\subcaptionbox in LaTeX."""
+    outdir.mkdir(parents=True, exist_ok=True)
+    for slug, _, panel in panels:
+        fig, ax = plt.subplots(figsize=(3, 3))
+        decorate(ax, panel, style)
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        out = outdir / f"env_{slug}.png"
+        fig.savefig(out, dpi=dpi, bbox_inches="tight", pad_inches=0.01, facecolor="white")
+        plt.close(fig)
+        print(f"wrote {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--style", choices=("ghost", "star", "inset", "all"), default="all")
     parser.add_argument("--outdir", type=Path, default=Path("docs/figures"))
     parser.add_argument("--dpi", type=int, default=300)
+    parser.add_argument(
+        "--split",
+        action="store_true",
+        help="also write one unlabelled file per panel, for LaTeX subfigures",
+    )
     args = parser.parse_args()
 
     # Render the scenes once: the envs resample some variations on every

@@ -17,7 +17,10 @@ envs:
   AMAX: "1.6"           # 1.6 for lewm, 4.5 for pldm (paper Tab. C.4)
   EVAL_SEEDS: "42 43 44"
   SMOKE: "0"            # 1 = tiny steps/episodes end-to-end path check
-  SEED: "0"             # actor/value training seed
+  SEED: "0"             # actor/value training seed. NOTE: reportable numbers
+                        # average THREE actor seeds (0,1,2) — launch one job per
+                        # seed with CACHE_TAG pointing at the shared caches; a
+                        # single seed is a smoke check, not a replication.
   CACHE_TAG: ""         # reuse another experiment's caches (default: own tag)
   EVAL_CONDS: "rlp cem_latent noop"  # eval conditions to run
   PANTHEON_USER: armin@pantheon.inc

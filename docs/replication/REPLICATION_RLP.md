@@ -170,3 +170,11 @@ table's numbers were actually produced under:
   `evaluation.episode_range="8000:10000"`.
 
 Hyperparameter selection uses eval seeds 50/51; report on 42/43/44 only.
+
+**Seed protocol — mandatory for reportable numbers.** Every quoted RLP cell
+averages over **three independent actor/critic training seeds** (`seed=0,1,2`;
+Reacher used six, 0–5) × the report eval draws. A single-seed run is a smoke
+check, not a replication: actor-seed variance on Cube alone spans several
+points (measured 2026-08-13: one LeWM actor seed gave 86.0 where the 3-seed
+quote is 89.1). Train each seed with the same command varying only `seed=`,
+then average the per-seed eval means.
