@@ -47,7 +47,7 @@ Per-environment recipe deltas (everything else is shared, see
 | Cube LeWM | `planner.amax=1.6` (default) |
 | Cube PLDM | `planner.amax=4.5` |
 | TwoRoom (both bases) | `planner.max_delta=12 planner.replay_prob=0 value.gamma=1.0 value.expectile=0.1 value.n_step=50 value.steps=6000` + per-cell `planner.amax`/`planner.mean_weight`/`planner.actor_lr` from App. C.1 |
-| Reacher | `planner.max_delta=12 planner.batch=256 planner.steps=6000` + per-cell settings from App. C.3 (Tab. reacher-rlp-hypers) |
+| Reacher | the checkpoint-verified producing recipe (`reacher/HYPERS_20260802.md`, git history): `planner.steps=1000 planner.batch=128 planner.max_delta=12 planner.expand_weight=0 planner.replay_prob=0.5`, LeWM `planner.amax=2.2 planner.mean_weight=0.3 planner.actor_lr=1e-4 planner.actor_lr_final=1e-5`, PLDM `planner.amax=1.8 planner.mean_weight=0.5 planner.actor_lr=3e-4 planner.actor_lr_final=3e-5`; init value = 3-frame window quasimetric (expectile 0.05, γ 0.98); 6 train seeds, report draws 42–47. **The paper's App C.3 table does not match these artifacts — fix the paper, not the recipe.** |
 
 ## 2. Evaluation — producing a table cell
 
