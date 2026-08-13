@@ -48,6 +48,9 @@ run: |
   set -euo pipefail
   export PATH=$HOME/.pixi/bin:$PATH
   cd ~/sky_workdir
+  # The base image presets LD_LIBRARY_PATH to system dirs whose libstdc++ is
+  # older than the pixi env's toolchain; put the env's own runtime first.
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
   export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
   export RLP_DATA_HOME=/tmp/rlp-data
   mkdir -p "$RLP_DATA_HOME"
