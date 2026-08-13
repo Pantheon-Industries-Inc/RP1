@@ -11,6 +11,7 @@ dataset: ???       # offline lance dataset of logged episodes
 name: rlp          # artifact prefix inside cache_directory
 frameskip: 5       # env steps per planned action block
 state_key: null    # optional ground-truth state column cached for diagnostics
+train_episodes: 8000  # value/planner train on episodes [0, N); eval draws the rest (paper split)
 train_res: null
 cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
 skip: ""           # comma-separated: cache,subsample,actions,value,planner

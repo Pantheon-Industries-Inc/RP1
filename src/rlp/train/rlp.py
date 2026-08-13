@@ -79,6 +79,7 @@ def _run(cfg: DictConfig) -> None:
             out=cache_fs1,
             state_key=cfg.state_key,
             train_res=cfg.train_res,
+            max_episodes=cfg.train_episodes,
             device=cfg.device,
         )
     if "subsample" not in skip:
