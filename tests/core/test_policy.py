@@ -71,7 +71,6 @@ def test_policy_keeps_real_history_and_updates_deadline_on_replan() -> None:
 
 
 def test_unwrap_encoder_peels_cost_wrappers() -> None:
-    import torch
     from torch import nn
 
     from rlp.core.solver.lip import unwrap_encoder
