@@ -37,7 +37,7 @@ pixi run train model=rlp \
 Outputs land in the run directory (`logs/<date>/<time>/checkpoints/`):
 `value_td` (offline critic), `value_ac` (co-trained teacher), `planner.pt`
 (the RLP refiner). Reusable caches go to `$RLP_DATA_HOME/caches/` and can be
-reused across recipes with e.g. `skip=cache,subsample,actions`.
+reused across recipes with e.g. `skip=[cache,subsample,actions]`.
 
 Per-environment recipe deltas (everything else is shared, see
 `configs/train/rlp.yaml`):

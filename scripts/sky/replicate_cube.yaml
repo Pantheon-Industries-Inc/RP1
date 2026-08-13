@@ -64,6 +64,7 @@ run: |
   [ -f "$CD/cube_${BASE}_fs1.pt" ] && SKIP="cache"
   [ -f "$CD/cube_${BASE}_fs5.pt" ] && SKIP="$SKIP,subsample"
   [ -f "$CD/cube_${BASE}_actions.h5" ] && SKIP="$SKIP,actions"
+  SKIP=$(echo "$SKIP" | sed 's/^,//')
 
   TRAIN_EXTRA=""
   EVAL_N=50
@@ -78,7 +79,7 @@ run: |
       wm="$PWD/assets/core/world_model/${BASE}_cube" \
       dataset="$RLP_DATA_HOME/datasets/ogb_cube_single.lance" \
       name="cube_${BASE}" cache_directory="$CD" \
-      planner.amax=$AMAX skip="$SKIP" $TRAIN_EXTRA
+      planner.amax=$AMAX "skip=[$SKIP]" $TRAIN_EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
     cp -r "$RUN/checkpoints" "$D/train_checkpoints"

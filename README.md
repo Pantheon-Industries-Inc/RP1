@@ -57,7 +57,7 @@ pixi run train model=rlp wm=assets/core/world_model/pldm_cube \
 Each run writes `checkpoints/planner.pt` (the RLP refiner), `value_td`
 (offline critic), and `value_ac` (co-trained teacher) into its
 `logs/<date>/<time>/` directory. Reusable latent caches land in
-`$RLP_DATA_HOME/caches/` (rerun with `skip=cache,subsample,actions` to iterate
+`$RLP_DATA_HOME/caches/` (rerun with `skip=[cache,subsample,actions]` to iterate
 on recipes without re-encoding).
 
 **Evaluate** the trained planner against the paper's baselines

@@ -17,7 +17,7 @@ Example (OGBench Cube on the tracked LeWM checkpoint)::
 
 Stages write reusable artifacts (caches, h5) into ``cache_directory`` and
 checkpoints into the run's ``checkpoints/`` directory. Re-runs can skip
-completed stages, e.g. ``skip=cache,subsample,actions`` to iterate on the value
+completed stages, e.g. ``skip=[cache,subsample,actions]`` to iterate on the value
 or planner recipe against existing caches. Per-stage hyperparameters are
 overridable through the ``value.*`` and ``planner.*`` subtrees; their defaults
 are the paper's OGBench Cube recipe.
@@ -25,17 +25,20 @@ are the paper's OGBench Cube recipe.
 
 from pathlib import Path
 
-from hydra import compose
+from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from rlp.config import dispatch, run_hydra
+from rlp.config import dispatch, get_config_root, run_hydra
 from rlp.logging import logger
 from rlp.run import save_stage_config
 
 
 def _stage(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
     """Compose a stage and execute it inside the pipeline's parent run."""
-    stage = compose(config_name=config_name)
+    # run_hydra closes its Hydra context after composing the root config, so
+    # each stage composes under its own context.
+    with initialize_config_dir(config_dir=str(get_config_root()), version_base=None):
+        stage = compose(config_name=config_name)
     with open_dict(stage):
         stage.run = OmegaConf.create(OmegaConf.to_container(parent.run, resolve=True))
     for key, value in values.items():
@@ -56,7 +59,11 @@ def _overrides(subtree: DictConfig) -> dict[str, object]:
 
 
 def _run(cfg: DictConfig) -> None:
-    skip = {name.strip() for name in cfg.skip.split(",") if name.strip()}
+    raw_skip = cfg.skip if isinstance(cfg.skip, str) else " ".join(cfg.skip)
+    skip = {name.strip() for name in raw_skip.replace(",", " ").split() if name.strip()}
+    unknown = skip - {"cache", "subsample", "actions", "value", "planner"}
+    if unknown:
+        raise ValueError(f"unknown skip stages: {sorted(unknown)}")
     cache_directory = Path(str(cfg.cache_directory)).expanduser()
     cache_directory.mkdir(parents=True, exist_ok=True)
     cache_fs1 = str(cache_directory / f"{cfg.name}_fs1.pt")
