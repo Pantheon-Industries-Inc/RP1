@@ -25,9 +25,18 @@ import matplotlib.pyplot as plt
 import mujoco
 import numpy as np
 import stable_worldmodel  # noqa: F401  (registers the swm/* envs)
+from matplotlib.patches import Circle
+
 RES = 512
 GOAL_COLOR = "#f5c518"
 GOAL_EDGE = "#2b2b2b"
+RING_COLOR = "#1faa4b"
+
+# `front_pixels` is what get_pixel_observation() renders, so it is the view the
+# policy sees and the one the evaluation videos are recorded from.
+VIDEO_CAMERA = "front_pixels"
+# Arm start that keeps the wrist and gripper inside that camera's tight crop.
+EE_START = np.array([0.58, 0.0, 0.20], dtype=np.float32)
 
 # Light UR5e materials so the arm is legible against the dark table.
 ARM_MATERIALS = {
@@ -100,9 +109,12 @@ def make_reacher(seed=0, goal_seed=7):
 # --------------------------------------------------------------------------- cube
 
 
-def make_cube(seed=4):
+def make_cube(seed=2):
     env = gym.make("swm/OGBCube-v0", render_mode="rgb_array", ob_type="pixels", width=RES, height=RES)
-    env.reset(seed=seed)
+    # The arm start is a reset variation, so it has to be supplied through reset
+    # options -- assigning to the space is undone by the reset itself.  This pose
+    # brings the wrist and gripper down into the camera's crop.
+    env.reset(seed=seed, options={"variation_values": {"agent.ee_start_position": EE_START}})
     unwrapped = env.unwrapped
     model, data = unwrapped._model, unwrapped._data
 
@@ -121,7 +133,7 @@ def make_cube(seed=4):
         model.geom(gid).rgba[3] = 0.35
 
     goal_pos = data.mocap_pos[unwrapped._cube_target_mocap_ids[block]].copy()
-    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "front")
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, VIDEO_CAMERA)
     goal_px = project(
         goal_pos,
         data.cam_xpos[cam].copy(),
@@ -130,7 +142,7 @@ def make_cube(seed=4):
         RES,
         RES,
     )
-    frame = np.asarray(unwrapped.render(camera="front"))
+    frame = np.asarray(unwrapped.render(camera=VIDEO_CAMERA))
 
     # Goal frame: the cube itself sitting on the target pose.
     body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "object_0")
@@ -138,7 +150,7 @@ def make_cube(seed=4):
     saved = data.qpos[adr : adr + 3].copy()
     data.qpos[adr : adr + 3] = goal_pos
     mujoco.mj_forward(model, data)
-    goal_frame = np.asarray(unwrapped.render(camera="front"))
+    goal_frame = np.asarray(unwrapped.render(camera=VIDEO_CAMERA))
     data.qpos[adr : adr + 3] = saved
     mujoco.mj_forward(model, data)
     env.close()
@@ -157,13 +169,18 @@ def make_tworoom(seed=7):
     target = unwrapped.target_position.cpu().numpy()
     goal_frame = unwrapped._render_frame(agent_pos=unwrapped.target_position).cpu().numpy().transpose(1, 2, 0)
 
-    unwrapped.variation_space["rendering"]["render_target"].set_value(1)
-    unwrapped.variation_space["target"]["color"].set_value(np.array([255, 150, 150], dtype=np.uint8))
-    ghost = np.asarray(env.render())
-    unwrapped.variation_space["rendering"]["render_target"].set_value(0)
+    radius = float(unwrapped.variation_space["agent"]["radius"].value.item())
     env.close()
 
-    return {"frame": frame, "goal_frame": goal_frame, "goal_px": (float(target[0]), float(target[1])), "ghost": ghost}
+    # A translucent dot would read as a second agent here, so TwoRoom marks its
+    # goal with an open ring instead.
+    return {
+        "frame": frame,
+        "goal_frame": goal_frame,
+        "goal_px": (float(target[0]), float(target[1])),
+        "ghost": frame,
+        "ring": 1.9 * radius,
+    }
 
 
 # --------------------------------------------------------------------------- figure
@@ -176,6 +193,11 @@ def draw(panels, style: str, out: Path, dpi: int) -> None:
     for ax, (label, panel) in zip(axes, panels, strict=True):
         image = panel["ghost"] if style == "ghost" else panel["frame"]
         ax.imshow(image)
+
+        if style == "ghost" and "ring" in panel:
+            ax.add_patch(
+                Circle(panel["goal_px"], panel["ring"], fill=False, edgecolor=RING_COLOR, linewidth=2.6)
+            )
 
         if style == "star":
             x, y = panel["goal_px"]

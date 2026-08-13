@@ -17,6 +17,9 @@ envs:
   AMAX: "1.6"           # 1.6 for lewm, 4.5 for pldm (paper Tab. C.4)
   EVAL_SEEDS: "42 43 44"
   SMOKE: "0"            # 1 = tiny steps/episodes end-to-end path check
+  SEED: "0"             # actor/value training seed
+  CACHE_TAG: ""         # reuse another experiment's caches (default: own tag)
+  EVAL_CONDS: "rlp cem_latent noop"  # eval conditions to run
   PANTHEON_USER: armin@pantheon.inc
   EXPERIMENT_TAG: rlp-repl
 
@@ -56,7 +59,7 @@ run: |
   mkdir -p "$RLP_DATA_HOME"
   D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
   mkdir -p "$D" && chmod 777 "$D"
-  CD=$D/caches && mkdir -p "$CD"
+  CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
 
   pixi run tool tool=fetch_dataset dataset=ogb_cube
 
@@ -78,7 +81,7 @@ run: |
     pixi run train model=rlp \
       wm="$PWD/assets/core/world_model/${BASE}_cube" \
       dataset="$RLP_DATA_HOME/datasets/ogb_cube_single.lance" \
-      name="cube_${BASE}" cache_directory="$CD" \
+      name="cube_${BASE}" cache_directory="$CD" seed=$SEED \
       planner.amax=$AMAX "skip=[$SKIP]" $TRAIN_EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
@@ -100,10 +103,14 @@ run: |
     cat "$out"
   }
 
-  for SEED in $EVAL_SEEDS; do
-    run_eval rlp $SEED core/solver=lip \
-      core.solver.actor_path="$D/train_checkpoints/planner.pt"
-    run_eval cem_latent $SEED core/solver=cem
-    run_eval noop $SEED core/policy=no_move
+  for ES in $EVAL_SEEDS; do
+    for COND in $EVAL_CONDS; do
+      case $COND in
+        rlp) run_eval rlp $ES core/solver=lip \
+               core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        cem_latent) run_eval cem_latent $ES core/solver=cem;;
+        noop) run_eval noop $ES core/policy=no_move;;
+      esac
+    done
   done
   echo "REPLICATION_DONE base=$BASE tag=$EXPERIMENT_TAG"
