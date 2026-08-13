@@ -1,4 +1,4 @@
-# Value_Metric_LeWM — LIP / Dyna research tree
+# RLP_original — LIP / Dyna research tree
 
 Research implementation of LIP (Learned Iterative Planner), learned value
 metrics, and Dyna-style closed-loop world-model training.
@@ -109,8 +109,8 @@ gh auth setup-git
 ```
 
 ```bash
-git clone https://github.com/armin-sommer/Value_Metric_LeWM.git
-cd Value_Metric_LeWM
+git clone https://github.com/armin-sommer/RLP_original.git
+cd RLP_original
 
 git lfs pull
 git lfs fsck
