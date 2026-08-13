@@ -6,7 +6,6 @@ import importlib.metadata
 from pathlib import Path
 from typing import Any
 
-import gymnasium as gym
 import numpy as np
 import pytest
 import stable_worldmodel
@@ -19,9 +18,7 @@ from rlp.core.policy import NoMovePolicy
 from rlp.core.value import LatentGoalCost, MetricCost
 from rlp.core.value.protocols import TensorInfo
 from rlp.core.world_model import checkpoint as checkpoint_module
-from rlp.core.world_model import hwm as hwm_module
 from rlp.core.world_model.statewm import StateWM
-from rlp.environment import register_rlp_envs
 from rlp.environment.world import _resize_images_like_env
 
 
@@ -95,16 +92,6 @@ def test_checkpoint_loader_preserves_remote_or_missing_names(monkeypatch: pytest
     assert captured == ["owner/model", "missing-checkpoint.pt"]
 
 
-def test_hwm_loader_rejects_unvalidated_payload(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    def fake_load(*args: object, **kwargs: object) -> dict[str, str]:
-        del args, kwargs
-        return {"kind": "unexpected"}
-
-    monkeypatch.setattr(torch, "load", fake_load)
-    with pytest.raises(ValueError, match="not an HWM checkpoint"):
-        hwm_module.load_hwm(tmp_path / "invalid.pt")
-
-
 def test_state_world_model_derives_from_stable_worldmodel_lewm() -> None:
     from stable_worldmodel.wm import LeWM
 
@@ -160,7 +147,7 @@ def test_latent_goal_cost_broadcasts_candidates_and_caches_goal() -> None:
     assert model.encode_calls == 1
 
 
-def test_no_move_policy_and_rlp_environment_registration() -> None:
+def test_no_move_policy_zeroes_the_action() -> None:
     class ActionSpace:
         def sample(self) -> np.ndarray:
             return np.array([1.0, -2.0], dtype=np.float32)
@@ -172,9 +159,6 @@ def test_no_move_policy_and_rlp_environment_registration() -> None:
     policy = NoMovePolicy()
     policy.set_env(Env())
     assert np.array_equal(policy.get_action({}), np.zeros(2, dtype=np.float32))
-
-    register_rlp_envs()
-    assert "rlp/PushT-v1" in gym.registry
 
 
 def test_dataset_images_are_resized_to_environment_shape() -> None:
@@ -193,5 +177,5 @@ def test_hydra_configs_compose() -> None:
     assert cfg.core.solver._target_ == "rlp.core.solver.GradientSolver"
 
     with initialize_config_dir(config_dir=str(config_root), version_base=None):
-        cfg = compose(config_name="train/lewm", overrides=["data=pusht_lewm"])
+        cfg = compose(config_name="train/lewm", overrides=["data=tworoom_lewm"])
     assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

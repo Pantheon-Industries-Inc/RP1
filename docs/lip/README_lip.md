@@ -4,6 +4,11 @@ A planning algorithm learned purely by optimizing against a frozen value
 function through a frozen world model. No behavior cloning, no policy
 gradient. See `rlp/core/solver/lip.py` for the method.
 
+> LIP is the paper's **RLP** planner. For the maintained end-to-end
+> replication commands (including the composed `model=rlp` pipeline), see
+> [docs/replication/REPLICATION_RLP.md](../replication/REPLICATION_RLP.md);
+> some commands below predate the current config keys.
+
 ## Pipeline
 
 ```bash

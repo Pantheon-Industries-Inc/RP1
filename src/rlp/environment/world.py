@@ -22,8 +22,6 @@ from stable_worldmodel.world.world import _apply_callables, _extract_init_goal
 
 from rlp.logging import logger
 
-from .pusht import register_rlp_envs
-
 
 class EvaluationResult(TypedDict):
     success_rate: float
@@ -46,7 +44,6 @@ class World(_World):
     """Stable-WM World with reproducible RLP dataset reset and recording."""
 
     def __init__(self, env_name: str, *args: Any, **kwargs: Any) -> None:
-        register_rlp_envs()
         self.record_path = kwargs.pop("record_path", None)
         super().__init__(env_name, *args, **kwargs)
 
