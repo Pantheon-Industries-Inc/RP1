@@ -97,7 +97,7 @@ complete per-table command sheet (including TwoRoom and Reacher) is in
 | `src/rlp/tools/` | Hydra-configured data preparation (dataset fetch, latent caches, action h5, TwoRoom collection) |
 | `configs/` | Hydra configuration tree mirroring the `src/rlp/` subsystems |
 | `docs/` | replication sheets, campaign records, method notes |
-| `assets/core/world_model/` | the pretrained world models: `lewm_cube/`, `pldm_cube/`, `lejepa_tworoom/`, `pldm_tworoom/` (Git LFS, ~69 MiB each; Reacher bases pending) |
+| `assets/core/world_model/` | all eight pretrained world models (Git LFS, ~69 MiB each): cube `lewm_cube/`+`pldm_cube/` and their Dyna-finetuned variants `*_cube_dyna/`, TwoRoom `lejepa_tworoom/`+`pldm_tworoom/`, Reacher `lejepa_reacher/`+`pldm_reacher/` |
 | `logs/` | generated run directories, grouped by local date and start time |
 
 ## Fresh-machine setup
