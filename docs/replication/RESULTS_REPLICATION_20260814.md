@@ -89,3 +89,29 @@ App C.3 value rows **exactly** (LeWM CEM 97.3/82.0, MPPI 74.0/42.0, Adam
 88.0/64.7; PLDM CEM 96.0/76.0): those rows are **window-1 value** planners.
 The protocol-matched window-3 value rows measured in this campaign (above)
 are uniformly stronger and are the fair comparison against window-3 RLP.
+
+## Reacher — complete window-3 table (all planners on 3-frame-window costs)
+
+Same protocol as above (held-out, first-hit rh5, draws 42–47; latent-w3 =
+3-frame window L2 via make_l2window_n; value-w3 = window quasimetric e0.05).
+Jobs 6568/6569 (latent-w3), 6376/6378 (value-w3), 6088–6092 (RLP).
+
+| planner (all window-3) | rollouts | LeWM τ=.1 / τ=.05 | PLDM τ=.1 / τ=.05 |
+|---|---|---|---|
+| latent-w3 CEM | 9,000 | 99.0 / 94.3 | 98.3 / 89.3 |
+| latent-w3 MPPI | 9,000 | 87.7 / 68.0 | 85.7 / 64.3 |
+| latent-w3 Adam | 3,000 | 97.3 / 80.0 | 96.7 / 77.3 |
+| value-w3 CEM | 9,000 | 99.3 / 89.3 | 98.3 / 84.7 |
+| value-w3 MPPI | 9,000 | 86.0 / 66.0 | 83.7 / 61.7 |
+| value-w3 Adam | 3,000 | 98.3 / 81.0 | 97.3 / 76.7 |
+| **RLP** | **9** | **99.9 / 97.1** | **99.4 / 91.2** |
+
+Reading: at matched window-3 information RLP still tops every cell, but the
+margins over the best hand-designed planner shrink to +2.8 (LeWM τ=.05, vs
+latent-w3 CEM 94.3) and +1.9 (PLDM, vs 89.3) — parity-to-narrow-win in
+success rate, at 1,000× fewer world-model queries. On Reacher the window-3
+*latent* beats the window-3 *value* under CEM (94.3 vs 89.3), consistent
+with the paper's claim that Reacher's geometry makes the latent an adequate
+surrogate; the learned-value advantage on this domain is therefore RLP's
+gradient-based refinement, not the objective. The earlier single-cell
+control (98.7/94.3) reproduces within noise.
