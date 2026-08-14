@@ -133,7 +133,15 @@ silently at 100% GPU producing NaNs. The in-tree trainers handle this
 
 ## 4. Dyna finetuning round (Tab. 3, block d)
 
-The Dyna row is a procedure, not a single entry point:
+**Evaluating row (d) is one command**: the Dyna-finetuned world models are
+tracked in-tree (`assets/core/world_model/{lewm,pldm}_cube_dyna`, the
+`dyna_wm_*` campaign artifacts' epoch-1 weights), so
+`pixi run eval model=lewm_dyna ...` / `model=pldm_dyna ...` reproduces the
+row-(d) cells with any planner. Retrain the row-(d) RLP actors against the
+finetuned base with `model=rlp wm=assets/core/world_model/lewm_cube_dyna`.
+
+*Regenerating* the finetuned world models is a procedure, not a single entry
+point:
 
 1. **Collect** on-policy episodes with the trained planner on h25 tasks from
    the training split (episodes 0–7999, no termination at goal), recording
