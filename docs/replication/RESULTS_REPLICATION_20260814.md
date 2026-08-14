@@ -115,3 +115,27 @@ with the paper's claim that Reacher's geometry makes the latent an adequate
 surrogate; the learned-value advantage on this domain is therefore RLP's
 gradient-based refinement, not the objective. The earlier single-cell
 control (98.7/94.3) reproduces within noise.
+
+## Reacher LeWM window-1 diagnostic (job 6770, 2026-08-14/15)
+
+Protocol-matched to the PLDM w1 diagnostic (mw 0.3, lr 1e-4, replay 0.5,
+6k steps, batch 128, single-frame value e0.05 for init and critic; 3 seeds ×
+draws 42–44, first-hit rh5, clean split). Arms: expand {0,1} × amax
+{1.4, 2.2 (= the base's w3-recipe value)}.
+
+| LeWM w1-RLP arm | τ=0.1 | τ=0.05 |
+|---|---|---|
+| expand 0, amax 1.4 | 96.9 | 81.8 |
+| expand 0, amax 2.2 | 98.7 | 88.7 |
+| expand 1, amax 1.4 | 29.1 | 14.7 |
+| expand 1, amax 2.2 | 41.6 | 18.2 |
+
+Revises the "w1 ceiling" reading: on LeWM, w1-RLP at the recipe amax (88.7
+@τ=0.05) clears the best w1 baselines (value+CEM 82.0, latent+CEM 80.3) by
+~+7–8 — the learned refiner contributes even at window-1 — with the windowed
+critic adding a further +8.4 to reach 97.1. On PLDM w1-RLP (82.0) only
+matches the w1 baselines. The expand×w1 collapse is much more severe on LeWM
+(29–42/15–18) than PLDM (88–90/63–64): with a single-frame critic, value
+expansion destroys the actor rather than merely capping it. July-era anchor
+(82.9, older recipe + padded 1-frame conditioning) is superseded by this
+protocol-matched grid.
