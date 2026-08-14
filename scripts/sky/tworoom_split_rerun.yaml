@@ -291,7 +291,7 @@ setup: |
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma 0.98 --steps 12000"
   if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
     TDSEEDS="0"
-    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="0 1 2"
+    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
     for TDS in $TDSEEDS; do
       CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
         --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step 50 \
