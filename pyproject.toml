@@ -29,6 +29,8 @@ dependencies = [
     "torchmetrics>=1.9",
     "torchvision==0.22.1",
     "tqdm>=4.67",
+    # tar.zst dataset archives (tworoom/reacher) in tools/data/fetch_dataset.py
+    "zstandard>=0.23",
 ]
 
 [project.optional-dependencies]

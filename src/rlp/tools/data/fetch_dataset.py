@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -47,8 +48,11 @@ def _format_bytes(size: int) -> str:
 
 
 def _dataset_files(info: DatasetInfo, spec: DatasetSpec) -> list[RepoSibling]:
-    prefix = f"{spec.remote_directory}/"
-    files = [item for item in info.siblings or [] if item.rfilename.startswith(prefix)]
+    if spec.archive_file is not None:
+        files = [item for item in info.siblings or [] if item.rfilename == spec.archive_file]
+    else:
+        prefix = f"{spec.remote_directory}/"
+        files = [item for item in info.siblings or [] if item.rfilename.startswith(prefix)]
     if not files:
         raise RuntimeError(f"{spec.repo_id}@{spec.revision} does not contain {spec.remote_directory!r}")
     return files
@@ -81,6 +85,8 @@ def _disk_free(path: Path) -> int:
 def _validate_dataset(path: Path, spec: DatasetSpec) -> tuple[int, tuple[str, ...]]:
     if not path.is_dir():
         raise RuntimeError(f"Dataset download did not create {path}")
+    if spec.kind == "h5":
+        return _validate_h5(path, spec)
     dataset = lance.dataset(path)
     columns = tuple(dataset.schema.names)
     missing = sorted(set(spec.required_columns).difference(columns))
@@ -90,6 +96,38 @@ def _validate_dataset(path: Path, spec: DatasetSpec) -> tuple[int, tuple[str, ..
     if rows <= 0:
         raise RuntimeError(f"Dataset at {path} contains no rows")
     return rows, columns
+
+
+def _validate_h5(path: Path, spec: DatasetSpec) -> tuple[int, tuple[str, ...]]:
+    import h5py
+
+    with suppress(ImportError):
+        import hdf5plugin  # noqa: F401  (registers compression filters used by some h5s)
+    candidates = sorted(path.rglob("*.h5"))
+    if not candidates:
+        raise RuntimeError(f"Dataset at {path} contains no .h5 file")
+    with h5py.File(candidates[0], "r") as handle:
+        columns = tuple(sorted(handle.keys()))
+        missing = sorted(set(spec.required_columns).difference(columns))
+        if missing:
+            raise RuntimeError(f"Dataset at {candidates[0]} is missing required keys: {', '.join(missing)}")
+        rows = int(handle[spec.required_columns[0]].shape[0]) if spec.required_columns else 0
+    if rows <= 0:
+        raise RuntimeError(f"Dataset at {candidates[0]} contains no rows")
+    return rows, columns
+
+
+def _extract_archive(archive: Path, destination: Path) -> None:
+    """Extract a ``.tar.zst`` archive into ``destination`` (flat, path-checked)."""
+    import tarfile
+
+    import zstandard
+
+    destination.mkdir(parents=True, exist_ok=True)
+    with archive.open("rb") as compressed:
+        reader = zstandard.ZstdDecompressor().stream_reader(compressed)
+        with tarfile.open(fileobj=reader, mode="r|") as tar:
+            tar.extractall(destination, filter="data")
 
 
 def _manifest_path(spec: DatasetSpec, cache_root: str | Path | None) -> Path:
@@ -176,12 +214,13 @@ def fetch_dataset(
         return None
 
     download_root.mkdir(parents=True, exist_ok=True)
+    allow = [spec.archive_file] if spec.archive_file is not None else [f"{spec.remote_directory}/**"]
     snapshot_download(
         repo_id=spec.repo_id,
         repo_type="dataset",
         revision=spec.revision,
         local_dir=download_root,
-        allow_patterns=[f"{spec.remote_directory}/**"],
+        allow_patterns=allow,
         force_download=force,
         max_workers=max_workers,
     )
@@ -189,6 +228,12 @@ def fetch_dataset(
     _, incomplete_bytes = _remaining_bytes(download_root, files)
     if incomplete_bytes:
         raise RuntimeError(f"Dataset download is incomplete: {_format_bytes(incomplete_bytes)} are missing")
+
+    if spec.archive_file is not None:
+        archive = download_root / spec.archive_file
+        logger.info(f"Extracting {archive.name} into {destination} (needs roughly the archive size again)")
+        _extract_archive(archive, destination)
+        archive.unlink()
 
     rows, columns = _validate_dataset(destination, spec)
     result = FetchResult(
