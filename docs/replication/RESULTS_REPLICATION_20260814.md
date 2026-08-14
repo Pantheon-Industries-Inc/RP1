@@ -56,3 +56,36 @@ came from a different (older) critic; the rows above use the same window-3
 e0.05 value family the RLP actors train against and are the protocol-matched
 replacements. The 3-frame-window *latent* cost (94.3 at τ=0.05) is a strong
 baseline the paper does not report.
+
+## Reacher window ablation (recovered from W&B, campaign rlp12_reacher_w1)
+
+Previously documented only as a comment in the campaign yaml; recovered
+2026-08-14 from the `rs_w1diag_*` runs (PLDM, clean split, 3 seeds × draws
+42–44, first-hit rh5). Hypers: mean-weight 0.3, actor-LR 1e-4, replay 0.5,
+max-delta 12, steps 6000, batch 128*, K=8, H=5, **window-1 value** (single
+frame) for both the init value and the co-trained critic; grid over
+expand-weight {0, 1} × amax {1.0, 1.8}.
+
+| window-1 RLP arm (PLDM) | τ=0.1 | τ=0.05 |
+|---|---|---|
+| expand 0, amax 1.0 | 96.2 | 79.3 |
+| expand 0, amax 1.8 | 97.8 | 82.0 |
+| expand 1, amax 1.0 | 87.8 | 64.2 |
+| expand 1, amax 1.8 | 89.6 | 62.9 |
+| (reference) window-3 RLP | 99.4 | 91.2 |
+| (reference) window-1 value + CEM | 96.0 | 76.0 |
+
+Reading: the "w1 collapse" is specifically the **expand-weight × window-1
+interaction** (value expansion bootstraps the critic on imagined terminals
+whose arrival velocity a single frame cannot represent → actor/critic
+co-exploitation). With expand=0, window-1 RLP is not collapsed — it sits at
+value-baseline level (~82 at τ=0.05) — and the window-3 critic is worth
+roughly +9 points at the tight tolerance on top of that.
+
+## Provenance of the paper's App C.3 value baseline rows
+
+The `rlp12-measure-reacher-*-value-window1-r2` runs reproduce the paper's
+App C.3 value rows **exactly** (LeWM CEM 97.3/82.0, MPPI 74.0/42.0, Adam
+88.0/64.7; PLDM CEM 96.0/76.0): those rows are **window-1 value** planners.
+The protocol-matched window-3 value rows measured in this campaign (above)
+are uniformly stronger and are the fair comparison against window-3 RLP.
