@@ -269,12 +269,17 @@ class LIPSolver(CEMSolver):
         value_reference = value_path or ck["value"]
         if value_path is None and not Path(value_reference).exists():
             # The training run records an absolute value path; when evaluating
-            # on another machine, fall back to the sibling directory the
-            # checkpoints were copied out with (planner.pt next to value_ac).
-            sibling = Path(actor_path).resolve().parent / Path(value_reference).name
-            if sibling.exists():
-                logger.info(f"LIP value fallback: {value_reference} missing, using sibling {sibling}")
-                value_reference = str(sibling)
+            # on another machine, fall back to the sibling the checkpoints were
+            # copied out with (planner.pt next to value_ac). Vendored values
+            # are artifact directories named by the recorded file's stem, since
+            # a directory ending in .pt breaks upstream checkpoint resolution.
+            recorded = Path(value_reference)
+            actor_directory = Path(actor_path).resolve().parent
+            for candidate in (actor_directory / recorded.name, actor_directory / recorded.stem):
+                if candidate.exists():
+                    logger.info(f"LIP value fallback: {value_reference} missing, using sibling {candidate}")
+                    value_reference = str(candidate)
+                    break
         value_module = load_metric(value_reference, device=self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
