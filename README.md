@@ -26,6 +26,9 @@ method.
   — bit-level replication of the tracked OGBench Cube LeWM base.
 - [`docs/lip/README_lip.md`](docs/lip/README_lip.md) — method notes and recipe
   lessons; [`docs/campaigns/`](docs/campaigns/) — dated experiment records.
+- [`docs/dmpo/README_dmpo.md`](docs/dmpo/README_dmpo.md) — the *Deep Model
+  Predictive Optimization* (ICRA 2024) learned-optimizer baseline: `model=dmpo`
+  to train, `core/solver=dmpo` to evaluate, and the deltas from the paper.
 - [`docs/PARALLELIZATION_ANALYSIS.md`](docs/PARALLELIZATION_ANALYSIS.md) — historical
   serialization/throughput audit (some citations target pre-refactor paths).
 
@@ -89,8 +92,8 @@ complete per-table command sheet (including TwoRoom and Reacher) is in
 
 | path | what |
 |---|---|
-| `src/rlp/core/` | planning stack: solvers (`solver/` — LIP/RLP, CEM, MPPI, Adam), planner network (`planner/`), value functions (`value/`), world-model backends (`world_model/`), shared differentiable unroll (`rollout.py`) |
-| `src/rlp/train/` | trainers: `rlp.py` (composed replication pipeline), `lip_ac.py` (RLP actor-critic), `metric.py` (offline value), `lewm.py` (world-model base) |
+| `src/rlp/core/` | planning stack: solvers (`solver/` — LIP/RLP, CEM, MPPI, Adam, DMPO), planner network (`planner/`), value functions (`value/`), world-model backends (`world_model/`), shared differentiable unroll (`rollout.py`) |
+| `src/rlp/train/` | trainers: `rlp.py` (composed replication pipeline), `lip_ac.py` (RLP actor-critic), `metric.py` (offline value), `lewm.py` (world-model base), `dmpo.py` (DMPO learned-optimizer baseline) |
 | `src/rlp/eval/` | `world_model.py` — the table-producing evaluation driver |
 | `src/rlp/data/` | frozen-latent caching (`LatentCache`, `encode_dataset`) |
 | `src/rlp/environment/` | dataset-evaluation world behavior (reset/record hooks) |
@@ -240,8 +243,9 @@ and dedicated `checkpoints/`, `metrics/`, `videos/`, `artifacts/`,
 pixi run train model=rlp wm=<ckpt> dataset=<lance>   # full RLP pipeline (cache -> value -> planner)
 pixi run train model=lip_ac cache=<fs5> cache_td=<fs1> h5=<h5> wm=<ckpt>  # planner stage alone
 pixi run train model=metric cache=<fs1> learner=td   # offline value alone
+pixi run train model=dmpo wm=<ckpt> cache=<fs5> h5=<h5> init_value=<value_td>  # DMPO baseline
 pixi run train model=lewm                             # LeWM world model, OGBench Cube
-pixi run eval  model=lewm|pldm [core/solver=lip|cem|mppi|adam] [core/policy=no_move]
+pixi run eval  model=lewm|pldm [core/solver=lip|cem|mppi|adam|dmpo] [core/policy=no_move]
 pixi run tool  tool=fetch_dataset dataset=ogb_cube    # fetch the public Cube dataset (~20 GiB)
 pixi run tool  tool=cache_latents wm=<ckpt> dataset=<lance> out=<cache.pt>
 pixi run tool  tool=convert_pldm src=<pldm.pt> dst=<out.pt>  # authors' PLDM -> LeWM key layout

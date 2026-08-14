@@ -1,0 +1,188 @@
+# DMPO baseline campaign (arXiv:2310.04590) on the Pantheon cluster — one
+# environment x base (x value window) cell per job, clean-tree pipeline only
+# (`model=rlp skip=[planner]` -> `model=dmpo` -> `core/solver=dmpo`).
+#
+#   sky jobs launch scripts/sky/dmpo_campaign.yaml -n dmpo-cube-lewm --priority p1 \
+#       --env ENVNAME=cube --env BASE=lewm --env AMAX=1.6 \
+#       --env EXPERIMENT_TAG=dmpo-cube-lewm-20260814 -y
+#   sky jobs launch scripts/sky/dmpo_campaign.yaml -n dmpo-tworoom-lejepa --priority p1 \
+#       --env ENVNAME=tworoom --env BASE=lejepa --env EXPERIMENT_TAG=dmpo-tw-lejepa-20260814 -y
+#   sky jobs launch scripts/sky/dmpo_campaign.yaml -n dmpo-reacher-pldm-w3 --priority p1 \
+#       --env ENVNAME=reacher --env BASE=pldm --env VALUE_FRAMES=3 --env AMAX=1.8 \
+#       --env EXPERIMENT_TAG=dmpo-re-pldm-w3-20260814 -y
+#
+# Each job: dataset -> latent caches (fs1 + fs5) -> action h5 -> offline
+# quasimetric critic (value_td) -> DMPO learned optimizer (one per train seed)
+# -> evaluation at h25 on report seeds 42/43/44, 50 episodes. MPPI is evaluated
+# under the same learned value as the like-for-like sampling baseline (DMPO is
+# a learned residual on exactly that update). Caches and checkpoints are durable
+# on /checkpoints so a preempted job resumes past the encode stages.
+#
+# The critic is trained once per cell and shared by every DMPO seed: DMPO is a
+# planner baseline, so the critic must not vary with it.
+
+name: dmpo
+
+envs:
+  ENVNAME: cube             # cube | tworoom | reacher
+  BASE: lewm                # cube: lewm|pldm   tworoom/reacher: lejepa|pldm
+  VALUE_FRAMES: "1"         # frames in the critic window (reacher runs 1 and 3)
+  AMAX: "1.6"              # plan clip; matches the RLP cell (cube lewm 1.6 / pldm 4.5,
+                            # reacher w3 lejepa 2.2 / pldm 1.8, tworoom 2.5)
+  NUM_SAMPLES: "256"        # DMPO particles per iteration (paper's headline budget)
+  DMPO_ITERS: "1"           # inner-loop iterations per decision (reference: 1)
+  DMPO_STEPS: "2000"
+  DMPO_BATCH: "32"
+  TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
+  EVAL_SEEDS: "42 43 44"
+  EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
+  SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
+  CACHE_TAG: ""             # reuse another experiment's caches (default: own tag)
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: dmpo
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  /checkpoints: checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  # The base image presets LD_LIBRARY_PATH to system dirs whose libstdc++ is
+  # older than the pixi env's toolchain; put the env's own runtime first.
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  # EGL only, with a pinned render index (osmesa silently costs points, and the
+  # winning index does not carry across pods — see docs/campaigns).
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$D" && chmod 777 "$D"
+  CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
+
+  # ---------------------------------------------------------------- per-cell wiring
+  case $ENVNAME in
+    cube)
+      pixi run tool tool=fetch_dataset dataset=ogb_cube
+      DATASET="$RLP_DATA_HOME/datasets/ogb_cube_single.lance"
+      WM="$PWD/assets/core/world_model/${BASE}_cube"
+      EVAL_MODEL="$BASE"
+      VALUE_EXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=50"
+      VALUE_STEPS=12000; MAX_DELTA=10
+      TRAIN_EPISODES=8000
+      ;;
+    tworoom)
+      # authors' contract: TwoRoom trains and evaluates on the same 10k pool
+      [ -d "$HOME/.stable_worldmodel/datasets/tworoom_play.lance" ] \
+        || pixi run tool tool=collect_tworoom_mixed expert=0 random=10000 out=tworoom_play.lance
+      DATASET="tworoom_play.lance"
+      WM="$PWD/assets/core/world_model/${BASE}_tworoom"
+      EVAL_MODEL="tworoom_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm"
+      VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
+      VALUE_STEPS=6000; MAX_DELTA=12
+      TRAIN_EPISODES=10000
+      ;;
+    reacher)
+      pixi run tool tool=fetch_dataset dataset=reacher
+      DATASET=$(ls -d "$RLP_DATA_HOME"/datasets/reacher/*.lance 2>/dev/null | head -1)
+      [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -name '*.h5' | head -1)
+      [ -n "$DATASET" ] || { echo "no reacher dataset found under $RLP_DATA_HOME/datasets/reacher"; ls -R "$RLP_DATA_HOME/datasets/reacher" | head -40; exit 1; }
+      WM="$PWD/assets/core/world_model/${BASE}_reacher"
+      EVAL_MODEL="reacher_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="reacher_pldm"
+      # the reacher critic is a window quasimetric (frames 1 or 3, lag 5)
+      VALUE_EXTRA="value.gamma=0.98 value.expectile=0.05 value.n_step=50 \
+        +value.window_frames=$VALUE_FRAMES +value.window_lag=5"
+      VALUE_STEPS=12000; MAX_DELTA=12
+      TRAIN_EPISODES=8000
+      ;;
+    *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
+  esac
+  NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}"
+
+  EVAL_N=50
+  DMPO_EXTRA="max_delta=$MAX_DELTA"
+  if [ "$SMOKE" = 1 ]; then
+    TRAIN_EPISODES=64; EVAL_N=2; TRAIN_SEEDS=0; EVAL_SEEDS=42
+    VALUE_STEPS=60
+    DMPO_EXTRA="$DMPO_EXTRA steps=20 batch=8"
+  fi
+
+  # ------------------------------------------------- caches + critic (shared per cell)
+  SKIP="planner"
+  [ -f "$CD/${NAME}_fs1.pt" ] && SKIP="$SKIP,cache"
+  [ -f "$CD/${NAME}_fs5.pt" ] && SKIP="$SKIP,subsample"
+  [ -f "$CD/${NAME}_actions.h5" ] && SKIP="$SKIP,actions"
+
+  if [ ! -d "$D/value_td" ]; then
+    pixi run train model=rlp wm="$WM" dataset="$DATASET" name="$NAME" \
+      cache_directory="$CD" train_episodes=$TRAIN_EPISODES seed=0 \
+      "skip=[$SKIP]" value.steps=$VALUE_STEPS $VALUE_EXTRA
+    RUN=$(ls -dt logs/*/* | head -1)
+    rm -rf "$D/value_td"; cp -r "$RUN/checkpoints/value_td" "$D/value_td"
+  fi
+
+  # ------------------------------------------------------------------ DMPO per seed
+  for S in $TRAIN_SEEDS; do
+    if [ ! -f "$D/dmpo_s${S}.pt" ]; then
+      pixi run train model=dmpo wm="$WM" \
+        cache="$CD/${NAME}_fs5.pt" h5="$CD/${NAME}_actions.h5" \
+        init_value="$D/value_td" seed=$S \
+        core.planner.action_limit=$AMAX \
+        core.planner.num_samples=$NUM_SAMPLES core.planner.iterations=$DMPO_ITERS \
+        steps=$DMPO_STEPS batch=$DMPO_BATCH $DMPO_EXTRA
+      RUN=$(ls -dt logs/*/* | head -1)
+      cp "$RUN/checkpoints/dmpo.pt" "$D/dmpo_s${S}.pt"
+      rm -rf "$D/dmpo_value_s${S}"; cp -r "$RUN/checkpoints/value" "$D/dmpo_value_s${S}"
+    fi
+  done
+
+  # ------------------------------------------------------------------------- evaluate
+  run_eval () {  # run_eval <label> <seed> <overrides...>
+    local label=$1 seed=$2; shift 2
+    echo "===== EVAL $label seed=$seed ====="
+    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N "$@"
+    local run=$(ls -dt logs/*/* | head -1)
+    local out="$D/results_${label}_s${seed}.txt"
+    cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
+    echo "----- RESULT $label seed=$seed -----"; cat "$out"
+  }
+
+  for ES in $EVAL_SEEDS; do
+    for COND in $EVAL_CONDS; do
+      case $COND in
+        dmpo)
+          for S in $TRAIN_SEEDS; do
+            run_eval "dmpo_a${S}" $ES core/solver=dmpo \
+              core.solver.actor_path="$D/dmpo_s${S}.pt" \
+              core.solver.value_path="$D/dmpo_value_s${S}"
+          done;;
+        # the sampling baseline DMPO learns a residual on, under the same critic
+        mppi_value) run_eval mppi_value $ES core/solver=mppi \
+              core/value=metric "core.value.checkpoints=[$D/value_td]";;
+        cem_value) run_eval cem_value $ES core/solver=cem \
+              core/value=metric "core.value.checkpoints=[$D/value_td]";;
+        noop) run_eval noop $ES core/policy=no_move;;
+      esac
+    done
+  done
+  echo "DMPO_CAMPAIGN_DONE env=$ENVNAME base=$BASE window=$VALUE_FRAMES tag=$EXPERIMENT_TAG"
