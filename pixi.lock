@@ -4142,6 +4142,7 @@ packages:
   - torchmetrics>=1.9
   - torchvision==0.22.1
   - tqdm>=4.67
+  - zstandard>=0.23
   - stable-worldmodel[env]==0.1.1 ; extra == 'all-envs'
   - imageio-ffmpeg>=0.6 ; extra == 'campaign'
   - ogbench>=1.2 ; extra == 'campaign'

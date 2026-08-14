@@ -620,6 +620,7 @@ run: |
     AM=1.6; [ "$BASE" = pldm ] && AM=4.5      # per-base, matching the RLP arm
     ADIM=25; [ "$ENVNAME" = tworoom ] && ADIM=10   # action block: 5 steps x (5-d cube | 2-d tworoom)
     EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="++bf16=true +eval.ep_range=8000:10000"
+    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && EXTRA="+eval.ep_range=8000:10000"
     # dinowm needs the action column cached or the eval silently returns
     # ~30 instead of ~99 -- it does not error (cost two full tvp runs)
     K2CP=""; [ "$BASE" = dinowm ] && K2CP="dataset.keys_to_cache=[action]"
@@ -709,6 +710,7 @@ run: |
         SMLOG=$PERSIST/logs/smoke_${ENVNAME}_${BASE}_${SCOST}_cem_h${SMOFF}.log
         SMFLAG=(); [ "$SCOST" = value ] && SMFLAG=("+metric=$CRIT")
         SMEXTRA=""; [ "$ENVNAME" = cube ] && SMEXTRA="++bf16=true +eval.ep_range=8000:10000"
+        [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && SMEXTRA="+eval.ep_range=8000:10000"
         cube_eval_lock
         CUDA_VISIBLE_DEVICES=0 MUJOCO_EGL_DEVICE_ID=0 timeout 1800 \
           python3 scripts/plan/eval_wm.py --config-name "$ENVNAME" \
@@ -737,6 +739,7 @@ run: |
     export SUMP_PY=$PERSIST/results/${VCOST_PY}_planners.csv
     SUMP=$SUMP_PY; touch "$SUMP"
     EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="++bf16=true +eval.ep_range=8000:10000"
+    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && EXTRA="+eval.ep_range=8000:10000"
     # dinowm needs the action column cached or the eval silently returns
     # ~30 instead of ~99 -- it does not error (cost two full tvp runs)
     K2CW=""; [ "$BASE" = dinowm ] && K2CW="dataset.keys_to_cache=[action]"

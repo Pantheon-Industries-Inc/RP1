@@ -104,3 +104,40 @@ def test_fetch_refuses_insufficient_disk_space(monkeypatch: pytest.MonkeyPatch, 
 
     with pytest.raises(RuntimeError, match="Insufficient disk space"):
         fetch_module.fetch_dataset("ogb_cube", cache_root=tmp_path, min_free_gib=1.0)
+
+
+def test_archive_extraction_and_h5_validation(tmp_path: Path) -> None:
+    import tarfile
+
+    import h5py
+    import numpy as np
+    import zstandard
+
+    from rlp.data import DatasetSpec
+    from rlp.tools.data.fetch_dataset import _extract_archive, _validate_dataset
+
+    source = tmp_path / "payload"
+    source.mkdir()
+    with h5py.File(source / "mini.h5", "w") as handle:
+        handle.create_dataset("action", data=np.zeros((12, 2), dtype=np.float32))
+    plain_tar = tmp_path / "mini.tar"
+    with tarfile.open(plain_tar, "w") as tar:
+        tar.add(source / "mini.h5", arcname="mini.h5")
+    archive = tmp_path / "mini.tar.zst"
+    archive.write_bytes(zstandard.ZstdCompressor().compress(plain_tar.read_bytes()))
+
+    destination = tmp_path / "extracted"
+    _extract_archive(archive, destination)
+    spec = DatasetSpec(
+        name="mini",
+        repo_id="unused/unused",
+        revision="0" * 40,
+        remote_directory="mini.tar.zst",
+        local_directory="extracted",
+        required_columns=("action",),
+        kind="h5",
+        archive_file="mini.tar.zst",
+    )
+    rows, columns = _validate_dataset(destination, spec)
+    assert rows == 12
+    assert "action" in columns

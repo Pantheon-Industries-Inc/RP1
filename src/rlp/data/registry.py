@@ -9,7 +9,12 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class DatasetSpec:
-    """A reproducible external dataset source."""
+    """A reproducible external dataset source.
+
+    ``kind`` is ``"lance"`` (a lance directory mirrored file-by-file) or
+    ``"h5"`` (a single ``archive_file`` tarball extracted into
+    ``local_directory``).
+    """
 
     name: str
     repo_id: str
@@ -17,6 +22,8 @@ class DatasetSpec:
     remote_directory: str
     local_directory: str
     required_columns: tuple[str, ...] = ()
+    kind: str = "lance"
+    archive_file: str | None = None
 
 
 DATASETS: dict[str, DatasetSpec] = {
@@ -37,6 +44,26 @@ DATASETS: dict[str, DatasetSpec] = {
             "privileged_block_0_pos",
             "privileged_block_0_quat",
         ),
+    ),
+    "tworoom": DatasetSpec(
+        name="tworoom",
+        repo_id="quentinll/lewm-tworooms",
+        revision="6903a2de048b13819d812da0b4dd661290bc01e4",
+        remote_directory="tworoom.tar.zst",
+        local_directory="tworoom",
+        required_columns=("action",),
+        kind="h5",
+        archive_file="tworoom.tar.zst",
+    ),
+    "reacher": DatasetSpec(
+        name="reacher",
+        repo_id="quentinll/lewm-reacher",
+        revision="e70a080d0d04c6072123c9ebd343acf7fff28dbf",
+        remote_directory="reacher.tar.zst",
+        local_directory="reacher",
+        required_columns=("action",),
+        kind="h5",
+        archive_file="reacher.tar.zst",
     ),
 }
 
