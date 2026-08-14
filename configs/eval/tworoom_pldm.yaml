@@ -1,5 +1,5 @@
 # @package _global_
-# TwoRoom evaluation on the tracked LeWM (LeJEPA) base.
+# TwoRoom evaluation on the tracked PLDM base (converted to the LeWM layout).
 defaults:
   - tworoom_pixels
   - /core/world_model: lewm
@@ -7,4 +7,5 @@ defaults:
   - _self_
 core:
   world_model:
-    checkpoint: assets/core/world_model/lejepa_tworoom
+    name: pldm
+    checkpoint: assets/core/world_model/pldm_tworoom
