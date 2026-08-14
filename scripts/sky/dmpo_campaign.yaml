@@ -37,6 +37,8 @@ envs:
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
+  TWOROOM_EPISODES: "10000" # random-play pool size (authors' TwoRoom contract)
+  TWOROOM_ENVS: "100"       # parallel envs while recording that pool
   CACHE_TAG: ""             # reuse another experiment's caches (default: own tag)
   PANTHEON_USER: armin@pantheon.inc
   EXPERIMENT_TAG: dmpo
@@ -80,6 +82,9 @@ run: |
   mkdir -p "$D" && chmod 777 "$D"
   CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
 
+  # SMOKE shrinks the data stages too, so it is resolved before they run.
+  if [ "$SMOKE" = 1 ]; then TWOROOM_EPISODES=64; TWOROOM_ENVS=10; fi
+
   # ---------------------------------------------------------------- per-cell wiring
   case $ENVNAME in
     cube)
@@ -87,15 +92,24 @@ run: |
       DATASET="$RLP_DATA_HOME/datasets/ogb_cube_single.lance"
       WM="$PWD/assets/core/world_model/${BASE}_cube"
       EVAL_MODEL="$BASE"
+      EVAL_DATA=""
       VALUE_EXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=50"
       VALUE_STEPS=12000; MAX_DELTA=10
       TRAIN_EPISODES=8000
       ;;
     tworoom)
-      # authors' contract: TwoRoom trains and evaluates on the same 10k pool
-      [ -d "$HOME/.stable_worldmodel/datasets/tworoom_play.lance" ] \
-        || pixi run tool tool=collect_tworoom_mixed expert=0 random=10000 out=tworoom_play.lance
-      DATASET="tworoom_play.lance"
+      # authors' contract: TwoRoom trains and evaluates on the same 10k pool.
+      # The pool is collected once per CACHE_TAG and shared by both bases;
+      # recording is CPU-bound on rendering, so it runs NUM_ENVS-wide.
+      POOL="$CD/tworoom_play.lance"
+      if [ ! -d "$POOL" ]; then
+        pixi run tool tool=collect_tworoom_mixed expert=0 random=$TWOROOM_EPISODES \
+          num_envs=$TWOROOM_ENVS out=tworoom_play.lance
+        cp -r "$HOME/.stable_worldmodel/datasets/tworoom_play.lance" "$POOL.tmp"
+        mv "$POOL.tmp" "$POOL"
+      fi
+      DATASET="$POOL"
+      EVAL_DATA="data.path=$POOL"
       WM="$PWD/assets/core/world_model/${BASE}_tworoom"
       EVAL_MODEL="tworoom_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm"
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
@@ -104,9 +118,11 @@ run: |
       ;;
     reacher)
       pixi run tool tool=fetch_dataset dataset=reacher
-      DATASET=$(ls -d "$RLP_DATA_HOME"/datasets/reacher/*.lance 2>/dev/null | head -1)
-      [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -name '*.h5' | head -1)
-      [ -n "$DATASET" ] || { echo "no reacher dataset found under $RLP_DATA_HOME/datasets/reacher"; ls -R "$RLP_DATA_HOME/datasets/reacher" | head -40; exit 1; }
+      echo "----- reacher dataset layout -----"; find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 | head -20
+      DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.lance' | head -1 || true)
+      [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.h5' | head -1 || true)
+      [ -n "$DATASET" ] || { echo "no reacher dataset found under $RLP_DATA_HOME/datasets/reacher"; exit 1; }
+      EVAL_DATA="data.path=$DATASET"
       WM="$PWD/assets/core/world_model/${BASE}_reacher"
       EVAL_MODEL="reacher_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="reacher_pldm"
       # the reacher critic is a window quasimetric (frames 1 or 3, lag 5)
@@ -160,7 +176,7 @@ run: |
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
     echo "===== EVAL $label seed=$seed ====="
-    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N "$@"
+    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N ${EVAL_DATA:+$EVAL_DATA} "$@"
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
