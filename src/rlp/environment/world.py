@@ -45,7 +45,31 @@ class World(_World):
 
     def __init__(self, env_name: str, *args: Any, **kwargs: Any) -> None:
         self.record_path = kwargs.pop("record_path", None)
+        # First-hit scoring at an explicit tolerance, replacing the
+        # environment's own termination test. Reacher's qpos-match task
+        # hardcodes a 0.05 rad threshold, so the tau=0.1 column of the paper's
+        # Reacher table is unreachable through termination alone; with this set
+        # success latches on the first step whose worst joint is within
+        # `success_threshold` of the goal state.
+        self.success_threshold: float | None = kwargs.pop("success_threshold", None)
+        self.success_key: str = kwargs.pop("success_key", "qpos")
+        if self.success_threshold is not None:
+            self.success_threshold = float(self.success_threshold)
         super().__init__(env_name, *args, **kwargs)
+
+    @staticmethod
+    def _final_frame(value: np.ndarray) -> np.ndarray:
+        """Drop the per-env history axis, keeping the current step."""
+        return value[:, -1] if value.ndim > 2 else value
+
+    @classmethod
+    def threshold_hits(cls, current: np.ndarray, target: np.ndarray, threshold: float) -> np.ndarray:
+        """Per-environment first-hit test: worst coordinate within ``threshold``."""
+        deviation = np.abs(
+            cls._final_frame(np.asarray(current, dtype=np.float64))
+            - cls._final_frame(np.asarray(target, dtype=np.float64))
+        )
+        return np.asarray(deviation.max(axis=-1) < threshold)
 
     def _evaluate_from_dataset(
         self,
@@ -87,6 +111,11 @@ class World(_World):
                     self.infos[key] = np.broadcast_to(value[:, None, ...], shape_prefix + value.shape[1:]).copy()
 
         goal_snapshot = {key: self.infos[key].copy() for key in goal_state}
+        if self.success_threshold is not None:
+            missing = [key for key in (self.success_key, f"goal_{self.success_key}") if key not in self.infos]
+            if missing:
+                raise KeyError(f"first-hit scoring needs {missing} in the evaluation state")
+            logger.info(f"First-hit scoring on |{self.success_key} - goal| < {self.success_threshold}")
         record_path = self.record_path
         record_cols = ("pixels", "action", "qpos", "qvel")
         record_buffers: list[defaultdict[str, list[np.ndarray]]] | None = (
@@ -120,9 +149,16 @@ class World(_World):
                 if world.terminateds is None or world.truncateds is None:
                     raise RuntimeError("world step did not populate termination arrays")
                 record_done[:] |= world.terminateds | world.truncateds
-            if world.terminateds is None:
-                raise RuntimeError("world step did not populate termination flags")
-            results["episode_successes"] |= world.terminateds
+            if self.success_threshold is None:
+                if world.terminateds is None:
+                    raise RuntimeError("world step did not populate termination flags")
+                results["episode_successes"] |= world.terminateds
+            else:
+                results["episode_successes"] |= self.threshold_hits(
+                    world.infos[self.success_key],
+                    goal_snapshot[f"goal_{self.success_key}"],
+                    self.success_threshold,
+                )
             if frames is not None:
                 for i in range(n):
                     frame = world.infos["pixels"][i]

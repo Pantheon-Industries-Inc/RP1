@@ -97,12 +97,15 @@ run: |
       VALUE_EXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=50"
       VALUE_STEPS=12000; MAX_DELTA=10
       TRAIN_EPISODES=8000
+      HORIZONS="25 100"
       ;;
     tworoom)
-      # The authors' TwoRoom pool, fetched (h5) rather than re-collected:
-      # `tool=collect_tworoom_mixed` degrades as the lance grows (3,443 of
-      # 10,000 episodes in 11 h, still slowing — job 6766), so regenerating the
-      # 10k pool is not a viable job stage. TWOROOM_COLLECT=1 forces collection.
+      # The authors' TwoRoom pool (10,000 episodes), fetched rather than
+      # re-collected: `tool=collect_tworoom_mixed` degrades as the lance grows
+      # (3,443 episodes in 11 h and still slowing — job 6766), so regenerating
+      # the pool is not a viable job stage. That h5 stores the agent position
+      # as `pos_agent`, so evaluation runs through the *_h5 roots, which carry
+      # the matching reset callables. TWOROOM_COLLECT=1 forces collection.
       if [ "$TWOROOM_COLLECT" = 1 ]; then
         POOL="$CD/tworoom_play.lance"
         if [ ! -d "$POOL" ]; then
@@ -112,16 +115,16 @@ run: |
           mv "$POOL.tmp" "$POOL"
         fi
         DATASET="$POOL"
+        EVAL_MODEL="tworoom_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm"
+        EVAL_DATA="data.path=$POOL"
       else
         pixi run tool tool=fetch_dataset dataset=tworoom
-        echo "----- tworoom dataset layout -----"; find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 | head -20
-        DATASET=$(find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 -name '*.lance' | head -1 || true)
-        [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 -name '*.h5' | head -1 || true)
-        [ -n "$DATASET" ] || { echo "no tworoom dataset found"; exit 1; }
+        DATASET="$RLP_DATA_HOME/datasets/tworoom/tworoom.h5"
+        [ -f "$DATASET" ] || { echo "tworoom h5 missing"; find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 2; exit 1; }
+        EVAL_MODEL="tworoom_lewm_h5"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm_h5"
+        EVAL_DATA=""
       fi
-      EVAL_DATA="data.path=$DATASET"
       WM="$PWD/assets/core/world_model/${BASE}_tworoom"
-      EVAL_MODEL="tworoom_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm"
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
       VALUE_STEPS=6000; MAX_DELTA=12
       TRAIN_EPISODES=10000
@@ -140,6 +143,8 @@ run: |
         +value.window_frames=$VALUE_FRAMES +value.window_lag=5"
       VALUE_STEPS=12000; MAX_DELTA=12
       TRAIN_EPISODES=8000
+      # the paper's Reacher table reports first-hit success at both tolerances
+      TAUS="0.1 0.05"
       ;;
     *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
   esac
@@ -194,21 +199,35 @@ run: |
   }
 
   for ES in $EVAL_SEEDS; do
-    for COND in $EVAL_CONDS; do
-      case $COND in
-        dmpo)
-          for S in $TRAIN_SEEDS; do
-            run_eval "dmpo_a${S}" $ES core/solver=dmpo \
-              core.solver.actor_path="$D/dmpo_s${S}.pt" \
-              core.solver.value_path="$D/dmpo_value_s${S}"
-          done;;
-        # the sampling baseline DMPO learns a residual on, under the same critic
-        mppi_value) run_eval mppi_value $ES core/solver=mppi \
-              core/value=metric "core.value.checkpoints=[$D/value_td]";;
-        cem_value) run_eval cem_value $ES core/solver=cem \
-              core/value=metric "core.value.checkpoints=[$D/value_td]";;
-        noop) run_eval noop $ES core/policy=no_move;;
+    for H in ${HORIZONS:-25}; do
+      case $H in
+        25)  HOR="evaluation.goal_offset_steps=25 evaluation.budget=50";;
+        100) HOR="evaluation.goal_offset_steps=100 evaluation.budget=200";;
+        *) echo "unknown horizon $H"; exit 1;;
       esac
+      for TAU in ${TAUS:--}; do
+        TAG="h$H"; TOL=""
+        if [ "$TAU" != "-" ]; then
+          # first-hit at an explicit tolerance; the env's own test is 0.05 rad
+          TOL="environment.success_threshold=$TAU"; TAG="h${H}_tau${TAU}"
+        fi
+        for COND in $EVAL_CONDS; do
+          case $COND in
+            dmpo)
+              for S in $TRAIN_SEEDS; do
+                run_eval "dmpo_a${S}_${TAG}" $ES $HOR $TOL core/solver=dmpo \
+                  core.solver.actor_path="$D/dmpo_s${S}.pt" \
+                  core.solver.value_path="$D/dmpo_value_s${S}"
+              done;;
+            # the sampling baseline DMPO learns a residual on, under the same critic
+            mppi_value) run_eval "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
+                  core/value=metric "core.value.checkpoints=[$D/value_td]";;
+            cem_value) run_eval "cem_value_${TAG}" $ES $HOR $TOL core/solver=cem \
+                  core/value=metric "core.value.checkpoints=[$D/value_td]";;
+            noop) run_eval "noop_${TAG}" $ES $HOR $TOL core/policy=no_move;;
+          esac
+        done
+      done
     done
   done
   echo "DMPO_CAMPAIGN_DONE env=$ENVNAME base=$BASE window=$VALUE_FRAMES tag=$EXPERIMENT_TAG"

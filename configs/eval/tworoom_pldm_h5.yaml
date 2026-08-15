@@ -1,0 +1,11 @@
+# @package _global_
+# TwoRoom (authors' fetched h5 pool) on the converted PLDM base.
+defaults:
+  - tworoom_pixels_h5
+  - /core/world_model: lewm
+  - override /core/policy: world_model
+  - _self_
+core:
+  world_model:
+    name: pldm
+    checkpoint: assets/core/world_model/pldm_tworoom
