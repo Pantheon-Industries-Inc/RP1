@@ -1,0 +1,189 @@
+# L2O-MPC baseline campaign (arXiv:2212.02603) on the Pantheon cluster — one
+# environment x base cell per job, clean-tree pipeline only
+# (`model=rlp skip=[planner]` -> `model=l2o` -> `core/solver=l2o`).
+#
+#   sky jobs launch scripts/sky/l2o_campaign.yaml -n l2o-cube-lewm --priority p1 \
+#       --env ENVNAME=cube --env BASE=lewm --env AMAX=1.6 \
+#       --env EXPERIMENT_TAG=l2o-cube-lewm-20260815 -y
+#   sky jobs launch scripts/sky/l2o_campaign.yaml -n l2o-tworoom-lejepa --priority p1 \
+#       --env ENVNAME=tworoom --env BASE=lejepa --env EXPERIMENT_TAG=l2o-tw-lejepa-20260815 -y
+#
+# Each job: dataset -> latent caches (fs1 + fs5) -> action h5 -> offline
+# quasimetric critic (value_td) -> L2O-MPC DAgger training (one per train
+# seed) -> evaluation at h25 AND h100 on report seeds 42/43/44, 50 episodes.
+# Caches and checkpoints are durable on /checkpoints so a preempted job
+# resumes past the encode stages.
+#
+# The critic is trained once per cell and shared by every L2O seed: L2O-MPC is
+# a planner baseline, so the critic must not vary with it. Same critic recipe
+# per environment as the DMPO campaign, so the rows sit in one table; MPPI
+# under the same critic is the like-for-like hand-written baseline (the
+# expert's own update deployed at the standard budget).
+
+name: l2o
+
+envs:
+  ENVNAME: cube             # cube | tworoom
+  BASE: lewm                # cube: lewm|pldm   tworoom: lejepa|pldm
+  AMAX: "1.6"               # plan clip; matches the other planner rows per cell
+                            # (cube lewm 1.6 / pldm 4.5, tworoom 2.5)
+  NUM_SAMPLES: "64"         # learner particles per iteration (M)
+  L2O_ITERS: "4"            # inner iterations; 64 x 4 = 256 = DMPO's deploy budget
+  EXPERT_SAMPLES: "512"     # DAgger expert particles (N >> M, paper regime)
+  L2O_STEPS: "2000"
+  L2O_BATCH: "16"
+  TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
+  EVAL_SEEDS: "42 43 44"
+  EVAL_CONDS: "l2o"         # l2o | mppi_value | cem_value | noop
+  SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
+  CACHE_TAG: ""             # reuse another experiment's caches (default: own tag)
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: l2o
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  /checkpoints: checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  # The base image presets LD_LIBRARY_PATH to system dirs whose libstdc++ is
+  # older than the pixi env's toolchain; put the env's own runtime first.
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  # EGL only, with a pinned render index (osmesa silently costs points, and the
+  # winning index does not carry across pods — see docs/campaigns).
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$D" && chmod 777 "$D"
+  CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
+
+  # ---------------------------------------------------------------- per-cell wiring
+  case $ENVNAME in
+    cube)
+      pixi run tool tool=fetch_dataset dataset=ogb_cube
+      DATASET="$RLP_DATA_HOME/datasets/ogb_cube_single.lance"
+      WM="$PWD/assets/core/world_model/${BASE}_cube"
+      EVAL_MODEL="$BASE"
+      VALUE_EXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=50"
+      VALUE_STEPS=12000; MAX_DELTA=10
+      TRAIN_EPISODES=8000
+      ;;
+    tworoom)
+      # The authors' TwoRoom pool (10,000 episodes), fetched rather than
+      # re-collected — see the DMPO campaign's note. That h5 stores the agent
+      # position as `pos_agent`, so evaluation runs through the *_h5 roots,
+      # which carry the matching reset callables.
+      pixi run tool tool=fetch_dataset dataset=tworoom
+      DATASET="$RLP_DATA_HOME/datasets/tworoom/tworoom.h5"
+      [ -f "$DATASET" ] || { echo "tworoom h5 missing"; find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 2; exit 1; }
+      EVAL_MODEL="tworoom_lewm_h5"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm_h5"
+      WM="$PWD/assets/core/world_model/${BASE}_tworoom"
+      VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
+      VALUE_STEPS=6000; MAX_DELTA=12
+      # TwoRoom's shipped contract shares the full pool between train and eval
+      TRAIN_EPISODES=10000
+      ;;
+    *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
+  esac
+  NAME="${ENVNAME}_${BASE}_w1"
+  HORIZONS="25 100"
+
+  EVAL_N=50
+  L2O_EXTRA="max_delta=$MAX_DELTA"
+  if [ "$SMOKE" = 1 ]; then
+    TRAIN_EPISODES=64; EVAL_N=2; TRAIN_SEEDS=0; EVAL_SEEDS=42
+    VALUE_STEPS=60
+    L2O_EXTRA="$L2O_EXTRA steps=20 batch=4"
+    EXPERT_SAMPLES=128
+    HORIZONS="25"
+  fi
+
+  # ------------------------------------------------- caches + critic (shared per cell)
+  SKIP="planner"
+  [ -f "$CD/${NAME}_fs1.pt" ] && SKIP="$SKIP,cache"
+  [ -f "$CD/${NAME}_fs5.pt" ] && SKIP="$SKIP,subsample"
+  [ -f "$CD/${NAME}_actions.h5" ] && SKIP="$SKIP,actions"
+
+  if [ ! -d "$D/value_td" ]; then
+    pixi run train model=rlp wm="$WM" dataset="$DATASET" name="$NAME" \
+      cache_directory="$CD" train_episodes=$TRAIN_EPISODES seed=0 \
+      "skip=[$SKIP]" value.steps=$VALUE_STEPS $VALUE_EXTRA
+    RUN=$(ls -dt logs/*/* | head -1)
+    rm -rf "$D/value_td"; cp -r "$RUN/checkpoints/value_td" "$D/value_td"
+  fi
+
+  # ------------------------------------------------------------------- L2O per seed
+  for S in $TRAIN_SEEDS; do
+    if [ ! -f "$D/l2o_s${S}.pt" ]; then
+      pixi run train model=l2o wm="$WM" \
+        cache="$CD/${NAME}_fs5.pt" h5="$CD/${NAME}_actions.h5" \
+        init_value="$D/value_td" seed=$S \
+        core.planner.action_limit=$AMAX \
+        core.planner.num_samples=$NUM_SAMPLES core.planner.iterations=$L2O_ITERS \
+        core.planner.expert_samples=$EXPERT_SAMPLES \
+        steps=$L2O_STEPS batch=$L2O_BATCH $L2O_EXTRA
+      RUN=$(ls -dt logs/*/* | head -1)
+      cp "$RUN/checkpoints/l2o.pt" "$D/l2o_s${S}.pt"
+      rm -rf "$D/l2o_value_s${S}"; cp -r "$RUN/checkpoints/value" "$D/l2o_value_s${S}"
+    fi
+  done
+
+  # ------------------------------------------------------------------------- evaluate
+  run_eval () {  # run_eval <label> <seed> <overrides...>
+    local label=$1 seed=$2; shift 2
+    echo "===== EVAL $label seed=$seed ====="
+    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N "$@"
+    local run=$(ls -dt logs/*/* | head -1)
+    local out="$D/results_${label}_s${seed}.txt"
+    cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
+    echo "----- RESULT $label seed=$seed -----"; cat "$out"
+  }
+
+  for ES in $EVAL_SEEDS; do
+    for H in $HORIZONS; do
+      case $H in
+        25)  HOR="evaluation.goal_offset_steps=25 evaluation.budget=50";;
+        100) HOR="evaluation.goal_offset_steps=100 evaluation.budget=200";;
+        *) echo "unknown horizon $H"; exit 1;;
+      esac
+      for COND in $EVAL_CONDS; do
+        case $COND in
+          l2o)
+            for S in $TRAIN_SEEDS; do
+              run_eval "l2o_a${S}_h${H}" $ES $HOR core/solver=l2o \
+                core.solver.actor_path="$D/l2o_s${S}.pt" \
+                core.solver.value_path="$D/l2o_value_s${S}"
+            done;;
+          # the hand-written update the expert computes, at the standard budget
+          mppi_value) run_eval "mppi_value_h${H}" $ES $HOR core/solver=mppi \
+                core/value=metric "core.value.checkpoints=[$D/value_td]";;
+          cem_value) run_eval "cem_value_h${H}" $ES $HOR core/solver=cem \
+                core/value=metric "core.value.checkpoints=[$D/value_td]";;
+          noop) run_eval "noop_h${H}" $ES $HOR core/policy=no_move;;
+        esac
+      done
+    done
+  done
+  echo "L2O_CAMPAIGN_DONE env=$ENVNAME base=$BASE tag=$EXPERIMENT_TAG"
