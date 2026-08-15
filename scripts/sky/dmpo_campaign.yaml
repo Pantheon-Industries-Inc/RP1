@@ -131,6 +131,7 @@ run: |
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
       VALUE_STEPS=6000; MAX_DELTA=12
       TRAIN_EPISODES=10000
+      HORIZONS="25 100"
       ;;
     reacher)
       pixi run tool tool=fetch_dataset dataset=reacher
