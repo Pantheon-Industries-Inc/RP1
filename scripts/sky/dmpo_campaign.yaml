@@ -29,6 +29,9 @@ envs:
   VALUE_FRAMES: "1"         # frames in the critic window (reacher runs 1 and 3)
   AMAX: "1.6"              # plan clip; matches the RLP cell (cube lewm 1.6 / pldm 4.5,
                             # reacher w3 lejepa 2.2 / pldm 1.8, tworoom 2.5)
+  OBJECTIVE: pathwise       # pathwise (model=dmpo) | ppo (model=dmpo_ppo, offline DMPO)
+  PPO_ITERATIONS: "400"     # policy-improvement rounds when OBJECTIVE=ppo
+  PPO_DECISIONS: "4"        # closed-loop decisions per imagined episode
   NUM_SAMPLES: "256"        # DMPO particles per iteration (paper's headline budget)
   DMPO_ITERS: "1"           # inner-loop iterations per decision (reference: 1)
   DMPO_STEPS: "2000"
@@ -152,10 +155,11 @@ run: |
 
   EVAL_N=50
   DMPO_EXTRA="max_delta=$MAX_DELTA"
+  PPO_BATCH=16
   if [ "$SMOKE" = 1 ]; then
     TRAIN_EPISODES=64; EVAL_N=2; TRAIN_SEEDS=0; EVAL_SEEDS=42
     VALUE_STEPS=60
-    DMPO_EXTRA="$DMPO_EXTRA steps=20 batch=8"
+    DMPO_STEPS=20; DMPO_BATCH=8; PPO_ITERATIONS=4; PPO_BATCH=4; PPO_DECISIONS=2
   fi
 
   # ------------------------------------------------- caches + critic (shared per cell)
@@ -175,12 +179,18 @@ run: |
   # ------------------------------------------------------------------ DMPO per seed
   for S in $TRAIN_SEEDS; do
     if [ ! -f "$D/dmpo_s${S}.pt" ]; then
-      pixi run train model=dmpo wm="$WM" \
+      if [ "$OBJECTIVE" = ppo ]; then
+        # offline DMPO: the paper's PPO objective, closed inside the world model
+        TRAINER="model=dmpo_ppo ppo_iterations=$PPO_ITERATIONS batch=$PPO_BATCH decisions=$PPO_DECISIONS"
+      else
+        TRAINER="model=dmpo steps=$DMPO_STEPS batch=$DMPO_BATCH"
+      fi
+      pixi run train $TRAINER wm="$WM" \
         cache="$CD/${NAME}_fs5.pt" h5="$CD/${NAME}_actions.h5" \
         init_value="$D/value_td" seed=$S \
         core.planner.action_limit=$AMAX \
         core.planner.num_samples=$NUM_SAMPLES core.planner.iterations=$DMPO_ITERS \
-        steps=$DMPO_STEPS batch=$DMPO_BATCH $DMPO_EXTRA
+        $DMPO_EXTRA
       RUN=$(ls -dt logs/*/* | head -1)
       cp "$RUN/checkpoints/dmpo.pt" "$D/dmpo_s${S}.pt"
       rm -rf "$D/dmpo_value_s${S}"; cp -r "$RUN/checkpoints/value" "$D/dmpo_value_s${S}"

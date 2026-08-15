@@ -30,9 +30,41 @@ Reference hyperparameters (one 256-unit ReLU hidden layer, last layer
 covariance, one inner iteration) are the defaults in
 `configs/core/planner/dmpo.yaml`.
 
+## Two trainers: `model=dmpo` and `model=dmpo_ppo`
+
+| | `model=dmpo` (pathwise) | `model=dmpo_ppo` (offline DMPO) |
+|---|---|---|
+| objective | `V(z_T(mu_K), z_g)` of **one** decision | discounted return over `decisions` closed-loop decisions |
+| algorithm | backprop through the frozen world model | PPO + GAE, forward-only rollouts |
+| search heads | absent (deterministic update) | present — the sampled `(mu, Sigma)` is the policy action |
+| critic | — | `DMPOCritic` over `(z_t, z_g, theta_{t-1})`, the paper's auxiliary state |
+| trains the shift model | no (single decision) | yes (credit crosses decisions) |
+| env steps | 0 | 0 |
+
+`model=dmpo_ppo` is the paper's *algorithm*, closed inside the world model:
+each imagined episode runs the whole MPC-in-the-loop policy for several
+decisions, the reward is progress in the critic's cost-to-go
+`V(z_t, z_g) - V(z_{t+1}, z_g)`, and PPO optimizes the discounted sum. Nothing
+differentiates through the world model, exactly as on hardware. It is the
+closer reproduction and the one to prefer when the DMPO row has to defend
+itself as DMPO; `model=dmpo` remains the cheaper apples-to-apples comparison
+against RLP, which is trained pathwise in the same way.
+
+Both write the same checkpoint format, so `core/solver=dmpo` deploys either
+(deployment always uses the distribution *locations* — the reference's
+`use_mean`).
+
+What neither trainer reproduces: the paper measures return on the **system**,
+with the model only inside the inner loop, under domain randomization. That is
+what lets its learned optimizer compensate for model error — the robustness
+claim. Here training and the inner loop share one frozen world model, so model
+error is invisible to training and only surfaces at evaluation. Closing that
+gap needs environment rollouts.
+
 ## What differs from the paper, and why
 
-1. **Pathwise gradients instead of PPO.** DMPO is trained with PPO because its
+1. **Pathwise gradients instead of PPO** (`model=dmpo`; `model=dmpo_ppo` closes
+   this gap for the algorithm, though not for the on-system objective). DMPO is trained with PPO because its
    costs come from a real quadrotor: no analytic gradient exists. Here the
    world model is differentiable, so the same networks are trained by
    backpropagating `V(z_T(mu_K), z_g)` through the frozen world model — the
@@ -93,6 +125,16 @@ pixi run train model=dmpo wm=assets/core/world_model/lewm_cube \
 
 ```bash
 pixi run eval model=lewm core/solver=dmpo core.solver.actor_path=<dmpo.pt>
+```
+
+Offline DMPO (the PPO objective) swaps one command:
+
+```bash
+pixi run train model=dmpo_ppo wm=assets/core/world_model/lewm_cube \
+    cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt \
+    h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 \
+    init_value=logs/<date>/<time>/checkpoints/value_td \
+    core.planner.action_limit=1.6
 ```
 
 Baselines for the same cell — the hand-written update DMPO learns a residual

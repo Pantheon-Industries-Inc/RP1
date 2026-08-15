@@ -120,3 +120,46 @@ def test_solver_rejects_a_foreign_checkpoint(tmp_path: object) -> None:
     torch.save({"kind": "lip4", "sd": {}}, path)
     with pytest.raises(ValueError, match="unsupported checkpoint kind"):
         DMPOSolver(model=torch.nn.Linear(2, 2), actor_path=str(path))
+
+
+def test_search_heads_give_a_usable_policy() -> None:
+    """The on-policy objective needs sampled updates with finite log-probs."""
+    torch.manual_seed(0)
+    net = _net(learn_search_std=True, mean_search_std=0.1, std_search_std=0.01)
+    mean, std = net.initial(B, "cpu")
+    plans = net.plans(mean, std)
+    costs = plans.pow(2).sum(dim=(2, 3))
+
+    sampled, sampled_std, log_prob, step = net.sample_step(mean, std, plans, costs)
+    assert sampled.shape == mean.shape and log_prob.shape == (B,)
+    assert bool(torch.isfinite(log_prob).all())
+    assert bool((sampled.abs() <= net.amax + 1e-6).all())
+    # sampling is a perturbation of the deterministic update, not a replacement
+    assert not torch.allclose(sampled, step.mean_loc)
+    assert torch.allclose(net(mean, std, plans, costs)[0], step.mean_loc.clamp(-net.amax, net.amax))
+
+    deterministic, _, _, _ = net.sample_step(mean, std, plans, costs, deterministic=True)
+    assert torch.allclose(deterministic, step.mean_loc.clamp(-net.amax, net.amax))
+    assert bool(torch.isfinite(step.entropy()).all())
+
+
+def test_ppo_ratio_is_differentiable_in_the_actor() -> None:
+    net = _net(learn_search_std=True)
+    mean, std = net.initial(B, "cpu")
+    plans = net.plans(mean, std)
+    costs = plans.pow(2).sum(dim=(2, 3))
+    action, action_std, old_log_prob, _ = net.sample_step(mean, std, plans, costs)
+
+    step = net.update(mean, std, plans, costs)
+    ratio = (step.log_prob(action, action_std) - old_log_prob.detach()).exp()
+    ratio.mean().backward()  # type: ignore[no-untyped-call]
+    assert any(p.grad is not None and bool(p.grad.abs().sum() > 0) for p in net.actor.parameters())
+
+
+def test_critic_reads_the_auxiliary_state() -> None:
+    from rlp.core.planner.dmpo import DMPOCritic
+
+    critic = DMPOCritic(8, horizon=H, a_dim=A_DIM, hidden=16)
+    mean = torch.randn(B, H, A_DIM)
+    value = critic(torch.randn(B, 8), torch.randn(B, 8), mean, torch.ones_like(mean))
+    assert value.shape == (B,)

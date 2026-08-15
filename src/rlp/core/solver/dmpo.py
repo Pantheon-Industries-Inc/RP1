@@ -65,6 +65,10 @@ class DMPOCheckpoint(TypedDict):
     gate_activation: NotRequired[str]
     halton: NotRequired[bool]
     seed_val: NotRequired[int]
+    learn_search_std: NotRequired[bool]
+    mean_search_std: NotRequired[float]
+    std_search_std: NotRequired[float]
+    objective: NotRequired[str]
     temporal_objective: NotRequired[str]
     value_context: NotRequired[int]
 
@@ -118,6 +122,11 @@ class DMPOSolver(CEMSolver):
             gate_activation=ck.get("gate_activation", "tanh"),
             halton=ck.get("halton", True),
             seed_val=ck.get("seed_val", 0),
+            # present in on-policy checkpoints; deployment uses the locations,
+            # but the heads must exist for the state dict to load
+            learn_search_std=ck.get("learn_search_std", False),
+            mean_search_std=ck.get("mean_search_std", 0.1),
+            std_search_std=ck.get("std_search_std", 0.01),
         ).to(self.device)
         self.net.load_state_dict(ck["sd"])
         self.net.eval()

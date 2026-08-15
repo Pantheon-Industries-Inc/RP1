@@ -45,13 +45,15 @@ Deltas from the reference implementation, all deliberate:
   limits.
 """
 
+import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import cast
 
 import torch
 import torch.nn as nn
 
-__all__ = ["DMPONet", "gaussian_halton"]
+__all__ = ["DMPOCritic", "DMPONet", "DMPOUpdate", "gaussian_halton"]
 
 _STD_MIN = 1e-6
 _STD_MAX = 1e3
@@ -99,6 +101,44 @@ def gaussian_halton(
     return cast(torch.Tensor, normal.to(device=device, dtype=dtype))
 
 
+_LOG_SQRT_2PI = 0.5 * math.log(2.0 * math.pi)
+_HALF_LOG_2PIE = 0.5 * math.log(2.0 * math.pi * math.e)
+
+
+def _gaussian_log_prob(value: torch.Tensor, loc: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    """Diagonal-Gaussian log density, summed over the plan, per batch row."""
+    z = (value - loc) / scale
+    return (-0.5 * z * z - scale.log() - _LOG_SQRT_2PI).flatten(1).sum(-1)
+
+
+def _gaussian_entropy(scale: torch.Tensor) -> torch.Tensor:
+    return (scale.log() + _HALF_LOG_2PIE).flatten(1).sum(-1)
+
+
+@dataclass(frozen=True)
+class DMPOUpdate:
+    """One learned iteration as distributions over the next ``(mean, std)``."""
+
+    mean_loc: torch.Tensor
+    mean_scale: torch.Tensor
+    std_loc: torch.Tensor
+    std_scale: torch.Tensor | None
+    mppi: torch.Tensor
+
+    def log_prob(self, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+        """Joint log-probability of a sampled ``(mean, std)``, per batch row."""
+        total = _gaussian_log_prob(mean, self.mean_loc, self.mean_scale)
+        if self.std_scale is not None:
+            total = total + _gaussian_log_prob(std, self.std_loc, self.std_scale)
+        return total
+
+    def entropy(self) -> torch.Tensor:
+        total = _gaussian_entropy(self.mean_scale)
+        if self.std_scale is not None:
+            total = total + _gaussian_entropy(self.std_scale)
+        return total
+
+
 def _mlp(in_size: int, out_size: int, hidden: int, init_scale: float) -> nn.Sequential:
     """The reference MLP: one hidden layer, ReLU, near-zero last layer."""
     last = nn.Linear(hidden, out_size)
@@ -137,6 +177,9 @@ class DMPONet(nn.Module):
         init_scale: float = 1e-3,
         halton: bool = True,
         seed_val: int = 0,
+        learn_search_std: bool = False,
+        mean_search_std: float = 0.1,
+        std_search_std: float = 0.01,
     ) -> None:
         super().__init__()
         if gate_activation not in {"tanh", "sigmoid"}:
@@ -157,10 +200,24 @@ class DMPONet(nn.Module):
         self.gate_activation = gate_activation
         self.halton = bool(halton)
         self.seed_val = int(seed_val)
+        # Search distributions exist for the on-policy (PPO) objective: the
+        # optimizer's "action" is the updated (mean, covariance), so it must be
+        # sampled to get a policy gradient. Off for the pathwise trainer, which
+        # differentiates through the world model instead.
+        self.learn_search_std = bool(learn_search_std)
+        self.mean_search_std = float(mean_search_std)
+        self.std_search_std = float(std_search_std)
 
         plan_size = self.horizon * self.a_dim
         actor_in = self.num_samples + plan_size + (plan_size if self.learn_std else 0)
-        actor_out = plan_size * (1 + int(self.gated) + int(self.learn_std))
+        # reference head order: mean, gate, mean-search-std, covariance, covariance-search-std
+        actor_out = plan_size * (
+            1
+            + int(self.gated)
+            + int(self.learn_search_std)
+            + int(self.learn_std)
+            + int(self.learn_std and self.learn_search_std)
+        )
         self.actor = _mlp(actor_in, actor_out, self.hidden, init_scale)
         self.shift_model = (
             _mlp(
@@ -234,6 +291,55 @@ class DMPONet(nn.Module):
             update = (weights[:, :, None, None] * plans).sum(dim=1)
         return (1.0 - self.step_size) * mean + self.step_size * update
 
+    def update(
+        self,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        plans: torch.Tensor,
+        costs: torch.Tensor,
+    ) -> DMPOUpdate:
+        """One learned iteration, as distribution parameters over ``(mean, std)``.
+
+        The search scales are the on-policy exploration widths; the pathwise
+        trainer and deployment use the locations directly (the reference's
+        ``use_mean``).
+        """
+        batch, plan_size = mean.shape[0], self.horizon * self.a_dim
+        mppi = self.mppi_mean(mean, plans, costs)
+        features = [self._standardized_costs(costs)]
+        features += self._normalized(mean, std, self.init_std * 10.0)
+        out = cast(torch.Tensor, self.actor(torch.cat(features, dim=-1)))
+
+        def head(index: int) -> torch.Tensor:
+            return out[:, plan_size * index : plan_size * (index + 1)].view(batch, self.horizon, self.a_dim)
+
+        proposed = torch.tanh(head(0)) * (2.0 * self.amax)
+        index = 1
+        gate: torch.Tensor | None = None
+        if self.gated:
+            activation = torch.tanh if self.gate_activation == "tanh" else torch.sigmoid
+            gate = activation(head(index))
+            index += 1
+        anchor = mppi if self.residual else mean
+        mean_loc = anchor + proposed if gate is None else (1.0 - gate) * anchor + gate * proposed
+
+        if self.learn_search_std:
+            mean_scale = (self.mean_search_std * head(index).exp()).clamp(_STD_MIN, _STD_MAX)
+            index += 1
+        else:
+            mean_scale = torch.full_like(mean_loc, self.mean_search_std)
+
+        if self.learn_std:
+            std_loc = (self.init_std * head(index).exp()).clamp(_STD_MIN, _STD_MAX)
+            index += 1
+            if self.learn_search_std:
+                std_scale = (self.std_search_std * head(index).exp()).clamp(_STD_MIN, _STD_MAX)
+            else:
+                std_scale = torch.full_like(std_loc, self.std_search_std)
+        else:
+            std_loc, std_scale = std, None
+        return DMPOUpdate(mean_loc=mean_loc, mean_scale=mean_scale, std_loc=std_loc, std_scale=std_scale, mppi=mppi)
+
     def forward(
         self,
         mean: torch.Tensor,
@@ -241,30 +347,9 @@ class DMPONet(nn.Module):
         plans: torch.Tensor,
         costs: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        batch, plan_size = mean.shape[0], self.horizon * self.a_dim
-        mppi = self.mppi_mean(mean, plans, costs)
-        features = [self._standardized_costs(costs)]
-        features += self._normalized(mean, std, self.init_std * 10.0)
-        out = cast(torch.Tensor, self.actor(torch.cat(features, dim=-1)))
-
-        proposed = torch.tanh(out[:, :plan_size]).view(batch, self.horizon, self.a_dim) * (2.0 * self.amax)
-        index = 1
-        gate: torch.Tensor | None = None
-        if self.gated:
-            raw = out[:, plan_size * index : plan_size * (index + 1)]
-            activation = torch.tanh if self.gate_activation == "tanh" else torch.sigmoid
-            gate = activation(raw).view(batch, self.horizon, self.a_dim)
-            index += 1
-        anchor = mppi if self.residual else mean
-        new_mean = anchor + proposed if gate is None else (1.0 - gate) * anchor + gate * proposed
-        new_mean = new_mean.clamp(-self.amax, self.amax)
-
-        if self.learn_std:
-            log_std = out[:, plan_size * index : plan_size * (index + 1)].view(batch, self.horizon, self.a_dim)
-            new_std = (self.init_std * log_std.exp()).clamp(_STD_MIN, _STD_MAX)
-        else:
-            new_std = std
-        return new_mean, new_std, mppi
+        """Deterministic iteration: the update's locations, clipped."""
+        step = self.update(mean, std, plans, costs)
+        return step.mean_loc.clamp(-self.amax, self.amax), step.std_loc, step.mppi
 
     # ----------------------------------------------------------- warm start
     def warm_start(self, mean: torch.Tensor, std: torch.Tensor, executed: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -293,6 +378,29 @@ class DMPONet(nn.Module):
         return new_mean, shifted_std
 
     # ----------------------------------------------------------- inner loop
+    def sample_step(
+        self,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+        plans: torch.Tensor,
+        costs: torch.Tensor,
+        deterministic: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, DMPOUpdate]:
+        """One iteration with the update *sampled* — the on-policy action."""
+        step = self.update(mean, std, plans, costs)
+        if deterministic:
+            new_mean, new_std = step.mean_loc, step.std_loc
+        else:
+            new_mean = step.mean_loc + step.mean_scale * torch.randn_like(step.mean_loc)
+            new_std = (
+                step.std_loc
+                if step.std_scale is None
+                else step.std_loc + step.std_scale * torch.randn_like(step.std_loc)
+            )
+        new_mean = new_mean.clamp(-self.amax, self.amax)
+        new_std = new_std.clamp(_STD_MIN, _STD_MAX)
+        return new_mean, new_std, step.log_prob(new_mean, new_std), step
+
     def plan(
         self,
         cost_fn: CostFn,
@@ -314,3 +422,33 @@ class DMPONet(nn.Module):
             mean, std, _ = self(mean, std, plans, costs)
             history.append(mean)
         return mean, std, history
+
+
+class DMPOCritic(nn.Module):
+    """Value head for the on-policy objective.
+
+    The paper's critic sees the auxiliary MDP state ``(x_t, theta_{t-1})`` —
+    the system state plus the previous decision's distribution parameters —
+    rather than the optimizer's cost view. Its goal-conditioned analogue here
+    is ``(z_t, z_g, mu, sigma)``; it exists only during training and is never
+    part of the deployed planner.
+    """
+
+    def __init__(self, z_dim: int, horizon: int, a_dim: int, hidden: int = 1024, learn_std: bool = True) -> None:
+        super().__init__()
+        self.learn_std = bool(learn_std)
+        plan_size = horizon * a_dim
+        in_size = 2 * z_dim + plan_size * (2 if self.learn_std else 1)
+        self.net = _mlp(in_size, 1, hidden, 1e-3)
+
+    def forward(
+        self,
+        state: torch.Tensor,
+        goal: torch.Tensor,
+        mean: torch.Tensor,
+        std: torch.Tensor,
+    ) -> torch.Tensor:
+        features = [state, goal, mean.flatten(1)]
+        if self.learn_std:
+            features.append(std.flatten(1))
+        return cast(torch.Tensor, self.net(torch.cat(features, dim=-1))).squeeze(-1)
