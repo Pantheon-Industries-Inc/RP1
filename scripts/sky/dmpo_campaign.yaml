@@ -37,7 +37,8 @@ envs:
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
-  TWOROOM_EPISODES: "10000" # random-play pool size (authors' TwoRoom contract)
+  TWOROOM_COLLECT: "0"      # 1 = re-collect the pool instead of fetching the authors' set
+  TWOROOM_EPISODES: "10000" # random-play pool size when collecting
   TWOROOM_ENVS: "100"       # parallel envs while recording that pool
   CACHE_TAG: ""             # reuse another experiment's caches (default: own tag)
   PANTHEON_USER: armin@pantheon.inc
@@ -98,18 +99,27 @@ run: |
       TRAIN_EPISODES=8000
       ;;
     tworoom)
-      # authors' contract: TwoRoom trains and evaluates on the same 10k pool.
-      # The pool is collected once per CACHE_TAG and shared by both bases;
-      # recording is CPU-bound on rendering, so it runs NUM_ENVS-wide.
-      POOL="$CD/tworoom_play.lance"
-      if [ ! -d "$POOL" ]; then
-        pixi run tool tool=collect_tworoom_mixed expert=0 random=$TWOROOM_EPISODES \
-          num_envs=$TWOROOM_ENVS out=tworoom_play.lance
-        cp -r "$HOME/.stable_worldmodel/datasets/tworoom_play.lance" "$POOL.tmp"
-        mv "$POOL.tmp" "$POOL"
+      # The authors' TwoRoom pool, fetched (h5) rather than re-collected:
+      # `tool=collect_tworoom_mixed` degrades as the lance grows (3,443 of
+      # 10,000 episodes in 11 h, still slowing — job 6766), so regenerating the
+      # 10k pool is not a viable job stage. TWOROOM_COLLECT=1 forces collection.
+      if [ "$TWOROOM_COLLECT" = 1 ]; then
+        POOL="$CD/tworoom_play.lance"
+        if [ ! -d "$POOL" ]; then
+          pixi run tool tool=collect_tworoom_mixed expert=0 random=$TWOROOM_EPISODES \
+            num_envs=$TWOROOM_ENVS out=tworoom_play.lance
+          cp -r "$HOME/.stable_worldmodel/datasets/tworoom_play.lance" "$POOL.tmp"
+          mv "$POOL.tmp" "$POOL"
+        fi
+        DATASET="$POOL"
+      else
+        pixi run tool tool=fetch_dataset dataset=tworoom
+        echo "----- tworoom dataset layout -----"; find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 | head -20
+        DATASET=$(find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 -name '*.lance' | head -1 || true)
+        [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 3 -name '*.h5' | head -1 || true)
+        [ -n "$DATASET" ] || { echo "no tworoom dataset found"; exit 1; }
       fi
-      DATASET="$POOL"
-      EVAL_DATA="data.path=$POOL"
+      EVAL_DATA="data.path=$DATASET"
       WM="$PWD/assets/core/world_model/${BASE}_tworoom"
       EVAL_MODEL="tworoom_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm"
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
