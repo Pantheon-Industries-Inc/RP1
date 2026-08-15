@@ -141,3 +141,38 @@ def test_archive_extraction_and_h5_validation(tmp_path: Path) -> None:
     rows, columns = _validate_dataset(destination, spec)
     assert rows == 12
     assert "action" in columns
+
+
+def test_plain_zst_extraction_and_h5_validation(tmp_path: Path) -> None:
+    """A bare ``.h5.zst`` (the PushT release layout) decompresses in place."""
+    import h5py
+    import numpy as np
+    import zstandard
+
+    from rlp.data import DatasetSpec
+    from rlp.tools.data.fetch_dataset import _extract_archive, _validate_dataset
+
+    payload = tmp_path / "pusht_expert_train.h5"
+    with h5py.File(payload, "w") as handle:
+        handle.create_dataset("action", data=np.zeros((7, 2), dtype=np.float32))
+        handle.create_dataset("episode_idx", data=np.zeros(7, dtype=np.int64))
+    archive = tmp_path / "pusht_expert_train.h5.zst"
+    archive.write_bytes(zstandard.ZstdCompressor().compress(payload.read_bytes()))
+    payload.unlink()
+
+    destination = tmp_path / "pusht"
+    _extract_archive(archive, destination)
+    assert (destination / "pusht_expert_train.h5").is_file()
+    spec = DatasetSpec(
+        name="pusht",
+        repo_id="unused/unused",
+        revision="0" * 40,
+        remote_directory="pusht_expert_train.h5.zst",
+        local_directory="pusht",
+        required_columns=("action", "episode_idx"),
+        kind="h5",
+        archive_file="pusht_expert_train.h5.zst",
+    )
+    rows, columns = _validate_dataset(destination, spec)
+    assert rows == 7
+    assert "episode_idx" in columns

@@ -55,6 +55,16 @@ DATASETS: dict[str, DatasetSpec] = {
         kind="h5",
         archive_file="tworoom.tar.zst",
     ),
+    "pusht": DatasetSpec(
+        name="pusht",
+        repo_id="quentinll/lewm-pusht",
+        revision="655cd446b9929369d7d406001da85c15d1457850",
+        remote_directory="pusht_expert_train.h5.zst",
+        local_directory="pusht",
+        required_columns=("action", "episode_idx", "step_idx", "pixels", "proprio", "state"),
+        kind="h5",
+        archive_file="pusht_expert_train.h5.zst",
+    ),
     "reacher": DatasetSpec(
         name="reacher",
         repo_id="quentinll/lewm-reacher",

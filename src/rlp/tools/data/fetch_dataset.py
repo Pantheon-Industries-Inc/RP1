@@ -118,7 +118,11 @@ def _validate_h5(path: Path, spec: DatasetSpec) -> tuple[int, tuple[str, ...]]:
 
 
 def _extract_archive(archive: Path, destination: Path) -> None:
-    """Extract a ``.tar.zst`` archive into ``destination`` (flat, path-checked)."""
+    """Extract a ``.tar.zst`` archive into ``destination`` (flat, path-checked).
+
+    A plain ``.zst`` (not a tarball, e.g. ``pusht_expert_train.h5.zst``) is
+    stream-decompressed into ``destination`` under its uncompressed name.
+    """
     import tarfile
 
     import zstandard
@@ -126,8 +130,13 @@ def _extract_archive(archive: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     with archive.open("rb") as compressed:
         reader = zstandard.ZstdDecompressor().stream_reader(compressed)
-        with tarfile.open(fileobj=reader, mode="r|") as tar:
-            tar.extractall(destination, filter="data")
+        if archive.name.endswith(".tar.zst"):
+            with tarfile.open(fileobj=reader, mode="r|") as tar:
+                tar.extractall(destination, filter="data")
+        else:
+            target = destination / archive.name.removesuffix(".zst")
+            with target.open("wb") as output:
+                shutil.copyfileobj(reader, output, length=16 * 1024 * 1024)
 
 
 def _manifest_path(spec: DatasetSpec, cache_root: str | Path | None) -> Path:
