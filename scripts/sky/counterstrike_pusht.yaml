@@ -33,6 +33,10 @@ envs:
   TD_MODE: "cube"       # planner co-critic TD: cube (gamma .98, n50, exp .1->.03)
                         # | pusht (gamma 1.0, n1, exp .03->.01 — the PushT value
                         # corner applied to the co-trained critic as well)
+  EXPAND: "1.0"         # planner.expand_weight: value expansion through WM
+                        # rollouts. 1.0 = cube recipe; 0 won on Reacher —
+                        # per-env, and a value-error question (expansion
+                        # amplifies WM error at the read points)
   VALUE_GAMMA: "1.0"
   VALUE_EXPECTILE: "0.01"
   VALUE_NSTEP: "1"
@@ -148,6 +152,7 @@ run: |
       value.gamma=$VALUE_GAMMA value.expectile=$VALUE_EXPECTILE \
       value.n_step=$VALUE_NSTEP \
       planner.amax=$AMAX planner.mean_weight=$MEAN_WEIGHT \
+      planner.expand_weight=$EXPAND \
       planner.actor_lr=$ACTOR_LR planner.actor_lr_final=$ACTOR_LR_FINAL \
       $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
