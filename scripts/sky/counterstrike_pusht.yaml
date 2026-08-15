@@ -28,10 +28,17 @@ name: counterstrike
 
 envs:
   AMAX: "1.6"           # residual clip; unswept on PushT — sweep if RLP lags CEM
+  MEAN_WEIGHT: "0.1"    # planner mean-anchor weight (0.1 cube, 0.3/0.5 won elsewhere)
+  ACTOR_LR: "3e-4"      # actor LR; final LR is always LR/10
+  TD_MODE: "cube"       # planner co-critic TD: cube (gamma .98, n50, exp .1->.03)
+                        # | pusht (gamma 1.0, n1, exp .03->.01 — the PushT value
+                        # corner applied to the co-trained critic as well)
   VALUE_GAMMA: "1.0"
   VALUE_EXPECTILE: "0.01"
   VALUE_NSTEP: "1"
   TRAIN_EPISODES: "16000"
+  WAIT_CACHE_MIN: "0"   # sweep cells: minutes to wait for CACHE_TAG's shared
+                        # caches before falling back to building them
   EVAL_SEEDS: "42 43 44"
   SMOKE: "0"            # 1 = tiny steps/episodes end-to-end path check
   SEED: "0"             # actor/value training seed. Reportable numbers average
@@ -95,6 +102,22 @@ run: |
     cp "$RAW/config.json" "$WM/config.json"
   fi
 
+  # Sweep cells share the seed-0 run's caches: wait for the encode stages to
+  # land (saves are atomic — crash-safe .tmp + rename) instead of rebuilding
+  # a ~2 h encode per cell. Falls back to building after the timeout.
+  if [ "$WAIT_CACHE_MIN" != 0 ] && [ -n "$CACHE_TAG" ]; then
+    WAITED=0
+    until [ -f "$CD/counterstrike_fs1.pt" ] && [ -f "$CD/counterstrike_fs5.pt" ] \
+        && [ -f "$CD/counterstrike_actions.h5" ]; do
+      if [ "$WAITED" -ge "$WAIT_CACHE_MIN" ]; then
+        echo "cache wait timed out after ${WAITED}m; building locally"
+        break
+      fi
+      echo "waiting for shared caches in $CD (${WAITED}m/${WAIT_CACHE_MIN}m)"
+      sleep 300; WAITED=$((WAITED + 5))
+    done
+  fi
+
   SKIP=""
   [ -f "$CD/counterstrike_fs1.pt" ] && SKIP="cache"
   [ -f "$CD/counterstrike_fs5.pt" ] && SKIP="$SKIP,subsample"
@@ -111,6 +134,12 @@ run: |
     TRAIN_EXTRA="train_episodes=$TRAIN_EPISODES"
   fi
 
+  ACTOR_LR_FINAL=$(awk -v lr="$ACTOR_LR" 'BEGIN { printf "%.0e", lr / 10 }')
+  TD_EXTRA=""
+  if [ "$TD_MODE" = pusht ]; then
+    TD_EXTRA="planner.gamma=1.0 planner.n_step=1 planner.expectile=0.03 planner.expectile_final=0.01"
+  fi
+
   if [ ! -f "$D/train_checkpoints/planner.pt" ]; then
     pixi run train model=rlp \
       wm="$WM" \
@@ -118,7 +147,9 @@ run: |
       name=counterstrike cache_directory="$CD" seed=$SEED \
       value.gamma=$VALUE_GAMMA value.expectile=$VALUE_EXPECTILE \
       value.n_step=$VALUE_NSTEP \
-      planner.amax=$AMAX "skip=[$SKIP]" $TRAIN_EXTRA
+      planner.amax=$AMAX planner.mean_weight=$MEAN_WEIGHT \
+      planner.actor_lr=$ACTOR_LR planner.actor_lr_final=$ACTOR_LR_FINAL \
+      $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
     cp -r "$RUN/checkpoints" "$D/train_checkpoints"
