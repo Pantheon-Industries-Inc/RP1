@@ -201,10 +201,12 @@ run: |
   # ------------------------------------------------------------------------- evaluate
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
+    local out="$D/results_${label}_s${seed}.txt"
+    # resumable evals: a relaunch re-runs only the missing cells
+    [ -s "$out" ] && { echo "===== EVAL $label seed=$seed (cached) ====="; cat "$out"; return 0; }
     echo "===== EVAL $label seed=$seed ====="
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N ${EVAL_DATA:+$EVAL_DATA} "$@"
     local run=$(ls -dt logs/*/* | head -1)
-    local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
     echo "----- RESULT $label seed=$seed -----"; cat "$out"
   }
@@ -230,8 +232,11 @@ run: |
                   core.solver.actor_path="$D/dmpo_s${S}.pt" \
                   core.solver.value_path="$D/dmpo_value_s${S}"
               done;;
-            # the sampling baseline DMPO learns a residual on, under the same critic
-            mppi_value) run_eval "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
+            # the sampling baseline DMPO learns a residual on, under the same
+            # critic. h25 only: at h100 a cell is 8 replans x 9,000 rollouts x
+            # 50 episodes, and the shipped tables already carry h100 MPPI rows.
+            mppi_value) [ "$H" = 25 ] || continue
+                  run_eval "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
                   core/value=metric "core.value.checkpoints=[$D/value_td]";;
             cem_value) run_eval "cem_value_${TAG}" $ES $HOR $TOL core/solver=cem \
                   core/value=metric "core.value.checkpoints=[$D/value_td]";;
