@@ -105,15 +105,33 @@ run: |
       [ -f "$DATASET" ] || { echo "tworoom h5 missing"; find "$RLP_DATA_HOME/datasets/tworoom" -maxdepth 2; exit 1; }
       EVAL_MODEL="tworoom_lewm_h5"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm_h5"
       WM="$PWD/assets/core/world_model/${BASE}_tworoom"
+      EVAL_DATA=""
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
       VALUE_STEPS=6000; MAX_DELTA=12
       # TwoRoom's shipped contract shares the full pool between train and eval
       TRAIN_EPISODES=10000
+      HORIZONS="25 100"
+      ;;
+    reacher)
+      pixi run tool tool=fetch_dataset dataset=reacher
+      echo "----- reacher dataset layout -----"; find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 | head -20
+      DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.lance' | head -1 || true)
+      [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.h5' | head -1 || true)
+      [ -n "$DATASET" ] || { echo "no reacher dataset found under $RLP_DATA_HOME/datasets/reacher"; exit 1; }
+      EVAL_DATA="data.path=$DATASET"
+      WM="$PWD/assets/core/world_model/${BASE}_reacher"
+      EVAL_MODEL="reacher_lewm"; [ "$BASE" = pldm ] && EVAL_MODEL="reacher_pldm"
+      # the reacher critic is a window quasimetric (frames 1 or 3, lag 5)
+      VALUE_EXTRA="value.gamma=0.98 value.expectile=0.05 value.n_step=50 +value.window_frames=$VALUE_FRAMES +value.window_lag=5"
+      VALUE_STEPS=12000; MAX_DELTA=12
+      TRAIN_EPISODES=8000
+      # the paper's Reacher table is one horizon, first-hit at both tolerances
+      HORIZONS="25"
+      TAUS="0.1 0.05"
       ;;
     *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
   esac
-  NAME="${ENVNAME}_${BASE}_w1"
-  HORIZONS="25 100"
+  NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}"
 
   EVAL_N=50
   L2O_EXTRA="max_delta=$MAX_DELTA"
@@ -159,7 +177,7 @@ run: |
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
     echo "===== EVAL $label seed=$seed ====="
-    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N "$@"
+    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N ${EVAL_DATA:+$EVAL_DATA} "$@"
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
@@ -173,21 +191,28 @@ run: |
         100) HOR="evaluation.goal_offset_steps=100 evaluation.budget=200";;
         *) echo "unknown horizon $H"; exit 1;;
       esac
-      for COND in $EVAL_CONDS; do
-        case $COND in
-          l2o)
-            for S in $TRAIN_SEEDS; do
-              run_eval "l2o_a${S}_h${H}" $ES $HOR core/solver=l2o \
-                core.solver.actor_path="$D/l2o_s${S}.pt" \
-                core.solver.value_path="$D/l2o_value_s${S}"
-            done;;
-          # the hand-written update the expert computes, at the standard budget
-          mppi_value) run_eval "mppi_value_h${H}" $ES $HOR core/solver=mppi \
-                core/value=metric "core.value.checkpoints=[$D/value_td]";;
-          cem_value) run_eval "cem_value_h${H}" $ES $HOR core/solver=cem \
-                core/value=metric "core.value.checkpoints=[$D/value_td]";;
-          noop) run_eval "noop_h${H}" $ES $HOR core/policy=no_move;;
-        esac
+      for TAU in ${TAUS:--}; do
+        TAG="h$H"; TOL=""
+        if [ "$TAU" != "-" ]; then
+          # first-hit at an explicit tolerance; the env's own test is 0.05 rad
+          TOL="environment.success_threshold=$TAU"; TAG="h${H}_tau${TAU}"
+        fi
+        for COND in $EVAL_CONDS; do
+          case $COND in
+            l2o)
+              for S in $TRAIN_SEEDS; do
+                run_eval "l2o_a${S}_${TAG}" $ES $HOR $TOL core/solver=l2o \
+                  core.solver.actor_path="$D/l2o_s${S}.pt" \
+                  core.solver.value_path="$D/l2o_value_s${S}"
+              done;;
+            # the hand-written update the expert computes, at the standard budget
+            mppi_value) run_eval "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
+                  core/value=metric "core.value.checkpoints=[$D/value_td]";;
+            cem_value) run_eval "cem_value_${TAG}" $ES $HOR $TOL core/solver=cem \
+                  core/value=metric "core.value.checkpoints=[$D/value_td]";;
+            noop) run_eval "noop_${TAG}" $ES $HOR $TOL core/policy=no_move;;
+          esac
+        done
       done
     done
   done
