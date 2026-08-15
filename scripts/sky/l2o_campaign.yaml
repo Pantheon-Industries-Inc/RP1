@@ -176,10 +176,13 @@ run: |
   # ------------------------------------------------------------------------- evaluate
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
+    local out="$D/results_${label}_s${seed}.txt"
+    # resume semantics: cells already banked by a previous job under this tag
+    # are skipped, so a relaunch only runs what is missing
+    if [ -s "$out" ]; then echo "===== SKIP $label seed=$seed (banked) ====="; return 0; fi
     echo "===== EVAL $label seed=$seed ====="
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N ${EVAL_DATA:+$EVAL_DATA} "$@"
     local run=$(ls -dt logs/*/* | head -1)
-    local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
     echo "----- RESULT $label seed=$seed -----"; cat "$out"
   }
