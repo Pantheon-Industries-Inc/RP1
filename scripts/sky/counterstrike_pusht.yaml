@@ -40,6 +40,10 @@ envs:
   ITERS: ""             # planner.iterations (refinement steps K; empty = the
                         # LIPv4 default 8). Trained unrolled — eval reads K
                         # from the checkpoint, so no eval-side change.
+  BC: ""                # planner.bc_weight (empty = trainer default 0);
+                        # BC anchor toward the expert dataset's actions
+  REPLAY: ""            # planner.replay_prob override (empty = recipe 0.5)
+  STEPS: ""             # planner.steps override (empty = recipe 6000)
   VALUE_GAMMA: "1.0"
   VALUE_EXPECTILE: "0.01"
   VALUE_NSTEP: "1"
@@ -144,6 +148,9 @@ run: |
   ACTOR_LR_FINAL=$(awk -v lr="$ACTOR_LR" 'BEGIN { printf "%.0e", lr / 10 }')
   ITER_EXTRA=""
   [ -n "$ITERS" ] && ITER_EXTRA="planner.iterations=$ITERS"
+  [ -n "$BC" ] && ITER_EXTRA="$ITER_EXTRA planner.bc_weight=$BC"
+  [ -n "$REPLAY" ] && ITER_EXTRA="$ITER_EXTRA planner.replay_prob=$REPLAY"
+  [ -n "$STEPS" ] && ITER_EXTRA="$ITER_EXTRA planner.steps=$STEPS"
   TD_EXTRA=""
   if [ "$TD_MODE" = pusht ]; then
     TD_EXTRA="planner.gamma=1.0 planner.n_step=1 planner.expectile=0.03 planner.expectile_final=0.01"

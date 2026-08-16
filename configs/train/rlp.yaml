@@ -53,3 +53,6 @@ planner:
   iterations: null  # refinement iterations K (null = the planner group's
                     # LIPv4 default, 8); trained unrolled, so eval matches
                     # automatically via the checkpoint
+  bc_weight: null   # behavior-cloning anchor toward dataset actions
+                    # (null = trainer default 0). On expert datasets this
+                    # biases the refiner toward demonstrated contact modes.
