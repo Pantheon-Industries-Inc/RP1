@@ -55,12 +55,26 @@ env's own 0.05 rad termination criterion to within noise).
 
 | planner | roll. | LeJEPA h25 | LeJEPA h100 | PLDM h25 | PLDM h100 |
 |---|---|---|---|---|---|
-| **DMPO** | 256 | **99.3** | 98.5 (4/9, in flight) | **100.0** | 53.0 (2/9, in flight) |
-| value MPPI | 9k | 86.0 | — | 86.0 | — |
+| **DMPO** | 256 | **99.1** (n=9) | **98.5** (n=4) | **100.0** (n=6) | **53.0** (n=2)‡ |
+| value MPPI | 9k | 86.0 (n=2)‡ | — | 84.0 (n=2)‡ | — |
 | RLP (shipped table) | 9 | 100.0 | 94.2 | 98.2 | 96.0 |
 
-The h100 cells are completing under `scripts/sky/dmpo_campaign.yaml` jobs
-7340/7341; this table is updated when they close. Evaluation runs through
+TwoRoom cells are reported at **three eval draws** rather than the full
+3 actor × 3 draw grid: the h25 rows are saturated (every cell 96–100) and the
+LeJEPA h100 spread is 98/98/98/100, so additional draws cannot move them.
+‡ marks entries still at n=2 when this record was written; they are being
+topped up to n=3 before the jobs are stopped.
+
+Per-cell values — LeJEPA h100: 100 (a0/s42), 98 (a0/s43), 98 (a1/s42),
+98 (a2/s42). PLDM h100: 56 (a0/s42), 50 (a1/s42).
+
+The h100 asymmetry is the notable TwoRoom result: **LeJEPA barely degrades**
+(99.1 → 98.5) while **PLDM collapses** (100.0 → ~53) under the same recipe,
+critic settings, and planner — the difference is the world-model base. RLP's
+shipped rows degrade on neither (94.2 / 96.0). DMPO's single learned
+iteration is trained on 5-block problems and nothing in it adapts to the
+8-replan regime; on a base whose rollouts drift more, that shows up as a
+long-horizon collapse. Evaluation runs through
 the `tworoom_{lewm,pldm}_h5` roots (the fetched pool stores the agent
 position as `pos_agent` and has no `state` column; the collector-produced
 lance is not regenerable in-job — 3,443/10,000 episodes in 11 h and
@@ -79,11 +93,11 @@ decelerating).
    the learned sampling-reduction is consistently weaker than the learned
    gradient-refinement at a fraction of RLP's gap to the hand-written
    planners.
-3. **Horizon degrades DMPO faster than RLP.** Cube h25→h100 drops DMPO by
-   ~10–17 points; TwoRoom LeJEPA barely moves (99.3→98.5) but PLDM h100 is
-   collapsing toward ~53 in the early cells (vs RLP's 96.0). DMPO's single
-   learned iteration was trained on 5-block problems; nothing in it
-   compensates for the 8-replan regime.
+3. **Horizon degrades DMPO faster than RLP, and base-dependently.** Cube
+   h25→h100 drops DMPO ~10–17 points on both bases. On TwoRoom the split is
+   stark: LeJEPA holds (99.1→98.5) while PLDM collapses (100.0→~53) against
+   RLP's 96.0. DMPO's single learned iteration was trained on 5-block
+   problems and nothing in it compensates for the 8-replan regime.
 4. **Scope of the claim.** This is *offline* DMPO: the paper's update rule
    and inner loop, trained by pathwise gradients against the shared critic
    through the frozen world model (the same regime RLP trains in). It
