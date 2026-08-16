@@ -1,0 +1,100 @@
+# Counterstrike failure analysis — why does one-shot RLP sit ~20 pts under
+# its own TD+CEM teacher (63 vs 80/83) when the value function is provably
+# fine? Reproduces the 2026-07 interp methodology on the modern stack.
+#
+#   sky jobs launch scripts/sky/counterstrike_failure_analysis.yaml -n cs-fail \
+#       --priority p1 --env EXPERIMENT_TAG=cs-fail-20260816 -y
+#
+# Three arms, IDENTICAL task draws (seed 50, 50 episodes), best sweep actor:
+#   oneshot  R=1  — the sweep configuration
+#   r8       R=8  — the old campaign's inference fix (8 noisy restarts,
+#                   argmin-V selection; one-shot 66.7 -> 84.7 old-stack)
+#   r16      R=16 — dose-response check
+# Each arm records solver probes (planned value E per replan). The final
+# analysis step prints per-arm success + planned-E distributions:
+#   E(r8) << E(oneshot) AND success(r8) >> : optimization-limited at
+#     inference (multi-modal contact landscape defeats local refinement)
+#     -> sweep restarts/noise, ship restarts in the recipe
+#   E flat while success moves, or E low but failures persist: value/WM
+#     miscalibration on the planner's trajectory distribution -> different
+#     knobs (horizon, replan cadence, value retrain on-policy)
+
+name: cs-fail
+
+envs:
+  ACTOR_TAG: cs-swp-20260815-cs-e0-a22-m01
+  ARMS: "1 8 16"           # restart counts, one eval each
+  RESTART_NOISE: "0.5"
+  EVAL_SEED: "50"
+  NUM_EPISODES: "50"
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: cs-fail
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: opt-out
+    telemetry-opt-out-reason: replication-validation
+
+volumes:
+  /checkpoints: checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$D" && chmod 777 "$D"
+  ACTOR=/checkpoints/$PANTHEON_USER/$ACTOR_TAG/train_checkpoints/planner.pt
+  [ -f "$ACTOR" ] || { echo "FATAL: no actor at $ACTOR" >&2; exit 1; }
+
+  pixi run tool tool=fetch_dataset dataset=pusht
+
+  WM=$D/lewm_pusht_official
+  if [ ! -f "$WM/weights.pt" ] || [ ! -f "$WM/config.json" ]; then
+    mkdir -p "$WM"
+    RAW=$RLP_DATA_HOME/wm_raw
+    pixi run hf download quentinll/lewm-pusht weights.pt config.json \
+      --revision 22b330c28c27ead4bfd1888615af1340e3fe9052 --local-dir "$RAW"
+    pixi run tool tool=convert_pldm src="$RAW/weights.pt" dst="$WM/weights.pt"
+    cp "$RAW/config.json" "$WM/config.json"
+  fi
+
+  for R in $ARMS; do
+    echo "===== ARM restarts=$R seed=$EVAL_SEED ====="
+    pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+      core/solver=lip core.solver.actor_path="$ACTOR" \
+      core.solver.restarts=$R core.solver.restart_noise=$RESTART_NOISE \
+      core.solver.record_probes=true \
+      runtime.seed=$EVAL_SEED evaluation.num_episodes=$NUM_EPISODES
+    RUN=$(ls -dt logs/*/* | head -1)
+    mkdir -p "$D/r${R}"
+    cp "$RUN"/*results*.txt "$D/r${R}/" 2>/dev/null || true
+    cp -r "$RUN"/artifacts/probes "$D/r${R}/probes" 2>/dev/null || true
+    cp -r "$RUN"/videos "$D/r${R}/videos" 2>/dev/null || true
+    echo "----- RESULT r$R -----"
+    cat "$D/r${R}"/*results*.txt || true
+  done
+
+  echo "===== ANALYSIS ====="
+  pixi run python scripts/sky/analyze_counterstrike_failures.py "$D" $ARMS
+  echo "CS_FAIL_DONE tag=$EXPERIMENT_TAG"
