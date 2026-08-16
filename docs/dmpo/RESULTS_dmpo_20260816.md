@@ -3,9 +3,11 @@
 Offline DMPO (Sacks et al., ICRA 2024; `model=dmpo`, `core/solver=dmpo`,
 method mapping and deviations in [README_dmpo.md](README_dmpo.md)) evaluated
 against the same-critic MPPI baseline on all three environments and both
-bases. Every DMPO number is the mean over **3 optimizer training seeds
-(0/1/2) × eval seeds 42/43/44 × 50 episodes**; MPPI rows are eval seeds
-42/43/44 × 50 episodes with the identical `value_td` critic and world model.
+bases. Cube and Reacher DMPO numbers are the mean over **3 optimizer training
+seeds (0/1/2) × eval seeds 42/43/44 × 50 episodes** (n=9 per entry); TwoRoom
+is reported at three draws (n stated per entry — see that section). MPPI rows
+use eval seeds 42/43/44 × 50 episodes with the identical `value_td` critic
+and world model.
 Training protocol per cell: `model=rlp skip=[planner]` (caches + offline
 quasimetric critic) → `model=dmpo` per seed → `rlp.eval.world_model`.
 Harness: `scripts/sky/dmpo_campaign.yaml`.
