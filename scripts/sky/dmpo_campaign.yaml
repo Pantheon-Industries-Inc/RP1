@@ -39,6 +39,7 @@ envs:
   TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
+  EVAL_PAR: "4"             # eval cells in flight at once (same-GPU, bit-exact)
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
   TWOROOM_COLLECT: "0"      # 1 = re-collect the pool instead of fetching the authors' set
   TWOROOM_EPISODES: "10000" # random-play pool size when collecting
@@ -199,16 +200,30 @@ run: |
   done
 
   # ------------------------------------------------------------------------- evaluate
+  # Cells run EVAL_PAR wide (default 4): planning is milliseconds on the GPU
+  # while python steps 50 envs serially, so concurrency converts idle GPU time
+  # into throughput. Parallel same-GPU evals are bit-exact on healthy cards
+  # (2026-08-05 audit); each cell gets a unique results filename so collection
+  # never races, and starts are staggered because run dirs are second-stamped.
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
-    local out="$D/results_${label}_s${seed}.txt"
+    local unique="results_${label}_s${seed}"
+    local out="$D/${unique}.txt"
     # resumable evals: a relaunch re-runs only the missing cells
     [ -s "$out" ] && { echo "===== EVAL $label seed=$seed (cached) ====="; cat "$out"; return 0; }
     echo "===== EVAL $label seed=$seed ====="
-    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N ${EVAL_DATA:+$EVAL_DATA} "$@"
-    local run=$(ls -dt logs/*/* | head -1)
-    cp "$run"/metrics/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
-    echo "----- RESULT $label seed=$seed -----"; cat "$out"
+    pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N \
+      ${EVAL_DATA:+$EVAL_DATA} output.filename="${unique}.txt" "$@" > "$D/log_${unique}.txt" 2>&1 \
+      || { echo "EVAL FAILED $label seed=$seed"; tail -5 "$D/log_${unique}.txt"; return 0; }
+    local produced=$(find logs -name "${unique}.txt" | head -1)
+    [ -n "$produced" ] && cp "$produced" "$out"
+    echo "----- RESULT $label seed=$seed -----"; cat "$out" 2>/dev/null || echo "(missing)"
+  }
+
+  spawn () {  # slot-limited background run_eval
+    while [ "$(jobs -rp | wc -l)" -ge "${EVAL_PAR:-4}" ]; do wait -n; done
+    run_eval "$@" &
+    sleep 3
   }
 
   for ES in $EVAL_SEEDS; do
@@ -228,7 +243,7 @@ run: |
           case $COND in
             dmpo)
               for S in $TRAIN_SEEDS; do
-                run_eval "dmpo_a${S}_${TAG}" $ES $HOR $TOL core/solver=dmpo \
+                spawn "dmpo_a${S}_${TAG}" $ES $HOR $TOL core/solver=dmpo \
                   core.solver.actor_path="$D/dmpo_s${S}.pt" \
                   core.solver.value_path="$D/dmpo_value_s${S}"
               done;;
@@ -236,14 +251,16 @@ run: |
             # critic. h25 only: at h100 a cell is 8 replans x 9,000 rollouts x
             # 50 episodes, and the shipped tables already carry h100 MPPI rows.
             mppi_value) [ "$H" = 25 ] || continue
-                  run_eval "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
+                  spawn "mppi_value_${TAG}" $ES $HOR $TOL core/solver=mppi \
                   core/value=metric "core.value.checkpoints=[$D/value_td]";;
-            cem_value) run_eval "cem_value_${TAG}" $ES $HOR $TOL core/solver=cem \
+            cem_value) spawn "cem_value_${TAG}" $ES $HOR $TOL core/solver=cem \
                   core/value=metric "core.value.checkpoints=[$D/value_td]";;
-            noop) run_eval "noop_${TAG}" $ES $HOR $TOL core/policy=no_move;;
+            noop) spawn "noop_${TAG}" $ES $HOR $TOL core/policy=no_move;;
           esac
         done
       done
     done
   done
+  wait
+  echo "Completed result cells: $(ls "$D"/results_*.txt 2>/dev/null | wc -l)"
   echo "DMPO_CAMPAIGN_DONE env=$ENVNAME base=$BASE window=$VALUE_FRAMES tag=$EXPERIMENT_TAG"
