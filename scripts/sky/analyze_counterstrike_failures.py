@@ -25,29 +25,28 @@ def main() -> None:
         if not files:
             print(f"r{arm}: NO PROBES at {probe_dir}")
             continue
-        # (replans, B) planned value at each replan for each parallel env
-        e = torch.stack([torch.load(f, map_location="cpu")["E"].reshape(-1) for f in files])
-        per_arm[arm] = e
-        flat = e.reshape(-1)
+        # One tensor per replan; env count SHRINKS over replans (environments
+        # terminate at success), so keep the list ragged.
+        chunks = [torch.load(f, map_location="cpu")["E"].reshape(-1) for f in files]
+        per_arm[arm] = torch.cat(chunks)
+        flat = per_arm[arm]
         q = torch.quantile(flat, torch.tensor([0.1, 0.25, 0.5, 0.75, 0.9]))
+        alive = "/".join(str(len(c)) for c in chunks)
         print(
-            f"r{arm}: replans={e.shape[0]} envs={e.shape[1]} "
-            f"E mean={flat.mean():.3f} "
+            f"r{arm}: replans={len(chunks)} E mean={flat.mean():.3f} "
             f"p10/p25/p50/p75/p90={'/'.join(f'{v:.2f}' for v in q)}"
         )
-        first, last = e[0], e[-1]
-        print(f"  first replan E median={first.median():.3f}  last replan E median={last.median():.3f}")
+        print(f"  first replan E median={chunks[0].median():.3f}  last replan E median={chunks[-1].median():.3f}")
+        print(f"  envs alive per replan: {alive}")
     if len(per_arm) >= 2:
         keys = sorted(per_arm, key=int)
         base = per_arm[keys[0]]
         for other in keys[1:]:
             o = per_arm[other]
-            n = min(base.shape[0], o.shape[0])
-            delta = (base[:n] - o[:n]).reshape(-1)
-            frac = (delta > 0).float().mean()
             print(
-                f"r{keys[0]} vs r{other}: median planned-E improvement "
-                f"{delta.median():.3f} ({frac * 100:.0f}% of replans improved)"
+                f"r{keys[0]} vs r{other}: pooled planned-E median "
+                f"{base.median():.3f} -> {o.median():.3f} "
+                f"(mean {base.mean():.3f} -> {o.mean():.3f})"
             )
 
 

@@ -80,6 +80,10 @@ run: |
   fi
 
   for R in $ARMS; do
+    if [ -d "$D/r${R}/probes" ]; then
+      echo "===== ARM restarts=$R already evaluated; skipping ====="
+      continue
+    fi
     echo "===== ARM restarts=$R seed=$EVAL_SEED ====="
     pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
       core/solver=lip core.solver.actor_path="$ACTOR" \
@@ -88,7 +92,7 @@ run: |
       runtime.seed=$EVAL_SEED evaluation.num_episodes=$NUM_EPISODES
     RUN=$(ls -dt logs/*/* | head -1)
     mkdir -p "$D/r${R}"
-    cp "$RUN"/*results*.txt "$D/r${R}/" 2>/dev/null || true
+    find "$RUN" -name '*results*.txt' -exec cp {} "$D/r${R}/" \;
     cp -r "$RUN"/artifacts/probes "$D/r${R}/probes" 2>/dev/null || true
     cp -r "$RUN"/videos "$D/r${R}/videos" 2>/dev/null || true
     echo "----- RESULT r$R -----"

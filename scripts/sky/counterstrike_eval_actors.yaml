@@ -14,7 +14,7 @@ name: cs-eval-actors
 
 envs:
   ACTOR_TAGS: ""           # space-separated EXPERIMENT_TAGs holding train_checkpoints/planner.pt
-  RESTARTS: "8"
+  RESTARTS: "8"            # space-separated restart counts, all evaluated serially
   RESTART_NOISE: "0.5"
   EVAL_SEEDS: "50 51"      # selection by default; switch to "42 43 44" for the report pass
   NUM_EPISODES: "50"
@@ -74,17 +74,19 @@ run: |
     if [ ! -f "$ACTOR" ]; then
       echo "SKIP $TAG: no planner.pt at $ACTOR"; continue
     fi
-    for ES in $EVAL_SEEDS; do
-      echo "===== EVAL $TAG restarts=$RESTARTS seed=$ES ====="
-      pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
-        core/solver=lip core.solver.actor_path="$ACTOR" \
-        core.solver.restarts=$RESTARTS core.solver.restart_noise=$RESTART_NOISE \
-        runtime.seed=$ES evaluation.num_episodes=$NUM_EPISODES
-      RUN=$(ls -dt logs/*/* | head -1)
-      OUT="$D/results_${TAG}_r${RESTARTS}_s${ES}.txt"
-      cp "$RUN"/*results*.txt "$OUT" 2>/dev/null || find "$RUN" -name '*.txt' -exec cp {} "$OUT" \;
-      echo "----- RESULT $TAG r$RESTARTS seed=$ES -----"
-      cat "$OUT"
+    for R in $RESTARTS; do
+      for ES in $EVAL_SEEDS; do
+        echo "===== EVAL $TAG restarts=$R noise=$RESTART_NOISE seed=$ES ====="
+        pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+          core/solver=lip core.solver.actor_path="$ACTOR" \
+          core.solver.restarts=$R core.solver.restart_noise=$RESTART_NOISE \
+          runtime.seed=$ES evaluation.num_episodes=$NUM_EPISODES
+        RUN=$(ls -dt logs/*/* | head -1)
+        OUT="$D/results_${TAG}_r${R}_n${RESTART_NOISE}_s${ES}.txt"
+        find "$RUN" -name '*results*.txt' -exec cp {} "$OUT" \;
+        echo "----- RESULT $TAG r$R n$RESTART_NOISE seed=$ES -----"
+        cat "$OUT"
+      done
     done
   done
   echo "CS_EVAL_ACTORS_DONE tag=$EXPERIMENT_TAG"
