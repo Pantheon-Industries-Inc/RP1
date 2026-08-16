@@ -212,6 +212,11 @@ run: |
     # resumable evals: a relaunch re-runs only the missing cells
     [ -s "$out" ] && { echo "===== EVAL $label seed=$seed (cached) ====="; cat "$out"; return 0; }
     echo "===== EVAL $label seed=$seed ====="
+    # cap intra-op threads per process: EVAL_PAR torch processes at the
+    # default thread count (= all cores each) oversubscribe the node and run
+    # SLOWER than sequential (observed 2026-08-16: 4-wide, zero cells in 3 h)
+    local threads=$(( $(nproc) / ${EVAL_PAR:-4} ))
+    OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads \
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N \
       ${EVAL_DATA:+$EVAL_DATA} output.filename="${unique}.txt" "$@" > "$D/log_${unique}.txt" 2>&1 \
       || { echo "EVAL FAILED $label seed=$seed"; tail -5 "$D/log_${unique}.txt"; return 0; }
