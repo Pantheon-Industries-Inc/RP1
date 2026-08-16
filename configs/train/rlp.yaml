@@ -50,3 +50,6 @@ planner:
   expand_weight: 1.0        # value expansion on planner rollouts (Cube recipe; set 0 on Reacher)
   temporal_objective: terminal
   amax: 1.6   # residual clip range — the one per-base knob (LeWM 1.6, PLDM 4.5)
+  iterations: null  # refinement iterations K (null = the planner group's
+                    # LIPv4 default, 8); trained unrolled, so eval matches
+                    # automatically via the checkpoint

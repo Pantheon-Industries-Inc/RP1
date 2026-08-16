@@ -117,11 +117,15 @@ def _run(cfg: DictConfig) -> None:
         )
     if "planner" not in skip:
         planner_overrides = _overrides(cfg.planner)
-        # `amax` is a planner-architecture knob, not a trainer flag; route it
-        # onto the composed planner group where lip_ac reads it.
+        # `amax` and `iterations` are planner-architecture knobs, not trainer
+        # flags; route them onto the composed planner group where lip_ac
+        # reads them.
         amax = planner_overrides.pop("amax", None)
         if amax is not None:
             planner_overrides["core.planner.action_limit"] = amax
+        iterations = planner_overrides.pop("iterations", None)
+        if iterations is not None:
+            planner_overrides["core.planner.iterations"] = iterations
         run_stage(
             "planner",
             "train/lip_ac",

@@ -37,6 +37,9 @@ envs:
                         # rollouts. 1.0 = cube recipe; 0 won on Reacher —
                         # per-env, and a value-error question (expansion
                         # amplifies WM error at the read points)
+  ITERS: ""             # planner.iterations (refinement steps K; empty = the
+                        # LIPv4 default 8). Trained unrolled — eval reads K
+                        # from the checkpoint, so no eval-side change.
   VALUE_GAMMA: "1.0"
   VALUE_EXPECTILE: "0.01"
   VALUE_NSTEP: "1"
@@ -139,6 +142,8 @@ run: |
   fi
 
   ACTOR_LR_FINAL=$(awk -v lr="$ACTOR_LR" 'BEGIN { printf "%.0e", lr / 10 }')
+  ITER_EXTRA=""
+  [ -n "$ITERS" ] && ITER_EXTRA="planner.iterations=$ITERS"
   TD_EXTRA=""
   if [ "$TD_MODE" = pusht ]; then
     TD_EXTRA="planner.gamma=1.0 planner.n_step=1 planner.expectile=0.03 planner.expectile_final=0.01"
@@ -154,7 +159,7 @@ run: |
       planner.amax=$AMAX planner.mean_weight=$MEAN_WEIGHT \
       planner.expand_weight=$EXPAND \
       planner.actor_lr=$ACTOR_LR planner.actor_lr_final=$ACTOR_LR_FINAL \
-      $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA
+      $ITER_EXTRA $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
     cp -r "$RUN/checkpoints" "$D/train_checkpoints"
