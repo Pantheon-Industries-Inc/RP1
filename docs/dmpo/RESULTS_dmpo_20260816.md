@@ -5,9 +5,9 @@ method mapping and deviations in [README_dmpo.md](README_dmpo.md)) evaluated
 against the same-critic MPPI baseline on all three environments and both
 bases. Cube and Reacher DMPO numbers are the mean over **3 optimizer training
 seeds (0/1/2) × eval seeds 42/43/44 × 50 episodes** (n=9 per entry); TwoRoom
-is reported at three draws (n stated per entry — see that section). MPPI rows
-use eval seeds 42/43/44 × 50 episodes with the identical `value_td` critic
-and world model.
+is still filling that grid in (n stated per entry — see that section). MPPI
+rows use eval seeds 42/43/44 × 50 episodes with the identical `value_td`
+critic and world model.
 Training protocol per cell: `model=rlp skip=[planner]` (caches + offline
 quasimetric critic) → `model=dmpo` per seed → `rlp.eval.world_model`.
 Harness: `scripts/sky/dmpo_campaign.yaml`.
@@ -57,15 +57,15 @@ env's own 0.05 rad termination criterion to within noise).
 
 | planner | roll. | LeJEPA h25 | LeJEPA h100 | PLDM h25 | PLDM h100 |
 |---|---|---|---|---|---|
-| **DMPO** | 256 | **99.1** (n=9) | **98.5** (n=4) | **100.0** (n=6) | **53.0** (n=2)‡ |
-| value MPPI | 9k | 86.0 (n=2)‡ | — | 84.0 (n=2)‡ | — |
+| **DMPO** | 256 | 99.1 (n=9) | 98.5 (n=4) | 100.0 (n=6) | 53.0 (n=2) |
+| value MPPI | 9k | 86.0 (n=2) | — | 84.0 (n=2) | — |
 | RLP (shipped table) | 9 | 100.0 | 94.2 | 98.2 | 96.0 |
 
-TwoRoom cells are reported at **three eval draws** rather than the full
-3 actor × 3 draw grid: the h25 rows are saturated (every cell 96–100) and the
-LeJEPA h100 spread is 98/98/98/100, so additional draws cannot move them.
-‡ marks entries still at n=2 when this record was written; they are being
-topped up to n=3 before the jobs are stopped.
+**These TwoRoom numbers are provisional**: the cells are still filling in
+toward the full 3 actor seeds × 3 eval draws (n=9) that every reportable cell
+in this repository requires, and `n` above is what had landed when this record
+was written. Jobs 7340/7341 run to completion; this section is rewritten from
+the complete grid before anything here is quoted.
 
 Per-cell values — LeJEPA h100: 100 (a0/s42), 98 (a0/s43), 98 (a1/s42),
 98 (a2/s42). PLDM h100: 56 (a0/s42), 50 (a1/s42).
