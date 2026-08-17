@@ -11,9 +11,11 @@ Training protocol per cell: `model=rlp skip=[planner]` (caches + offline
 quasimetric critic) → `model=dmpo` per seed → `rlp.eval.world_model`.
 Harness: `scripts/sky/dmpo_campaign.yaml`.
 
-Rollout budgets per decision: DMPO 256 forward (256 samples × 1 learned
-iteration, no backward); MPPI 9,000 forward (300 × 30); RLP 9 forward +
-8 backward.
+Rollout budgets per decision: **DMPO 256 forward** (256 samples × 1 learned
+iteration, no backward); **MPPI 9,000 forward** (300 × 30); **RLP 9 forward**
+— 8 refinement iterations, each reusing its single unroll for both the value
+gradient and the actor's features, plus one selection unroll — with 8 backward
+passes over those same graphs.
 
 ## OGBench Cube (success %, held-out episodes 8000–9999)
 
@@ -123,13 +125,16 @@ decelerating).
    RLP's 96.0 — consistent across all three optimizer seeds. DMPO's single
    learned iteration was trained on 5-block problems and nothing in it
    compensates for the 8-replan regime.
-4. **The comparison is not compute-matched, and the mismatch favors DMPO.**
-   Counting a backward pass as ~2 forward, RLP spends ~25 forward-equivalents
-   per decision (9 fwd + 8 bwd) against DMPO's 256 — DMPO loses every cell
-   while spending an order of magnitude more compute. A compute-matched DMPO
-   row (`num_samples≈24`) is not yet run; `num_samples` is architectural (the
-   actor reads the N costs positionally) so it requires retraining, and the
-   256 used here is the paper's advertised operating point, not a tuned value.
+4. **DMPO cannot be run at RLP's rollout budget, and loses at 28x it.**
+   RLP spends 9 forward unrolls per decision; DMPO spends 256 (its reference
+   operating point) and loses in 13 of 14 comparable cells. A rollout-matched
+   DMPO row is not merely unrun but ill-posed: 9 samples in a 125-dimensional
+   plan space (Cube) is fewer samples than dimensions, below what a Gaussian
+   sampler can estimate at all. That asymmetry — a gradient refiner needs
+   O(10) unrolls where a sampler needs O(100+) — is a structural property, not
+   a tuning gap. (Counting RLP's 8 backward passes at the textbook ~2x forward
+   would put it near ~25 forward-equivalents; wall-clock measurement is the
+   honest arbiter and is pending, job 7737.)
 5. **Scope of the claim.** This is *offline* DMPO: the paper's update rule
    and inner loop, trained by pathwise gradients against the shared critic
    through the frozen world model (the same regime RLP trains in). It

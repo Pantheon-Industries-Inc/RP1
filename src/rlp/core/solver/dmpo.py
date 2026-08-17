@@ -5,8 +5,11 @@ sample-rollout-reduce loop and learns the reduction; :class:`DMPONet` holds the
 learned pieces and this solver supplies the rollouts and the cost.
 
 Per decision the solver spends ``num_samples * iters`` forward world-model
-unrolls and no backward pass, against CEM/MPPI's ``300 x 30 = 9,000`` forward
-unrolls and RLP/LIP's ``9 forward + 8 backward``. The checkpoint's sample count
+unrolls and no backward pass — 256 at the reference budget. The comparison
+points: CEM/MPPI ``300 x 30 = 9,000`` forward, and RLP/LIP **9 forward**
+(8 refinement iterations, each reusing its single unroll for both the value
+gradient and the actor's features, plus one selection unroll) with 8 backward
+passes over the same graphs. The checkpoint's sample count
 is authoritative: the actor consumes the ``N`` costs positionally, so ``N`` and
 the horizon cannot be changed after training. The iteration count can be
 (the paper varies it at test time) via ``iters``.
@@ -88,6 +91,7 @@ class DMPOSolver(CEMSolver):
         iters: int | None = None,
         mppi_mode: bool = False,
         cost_chunk: int = 0,
+        report_cost: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -99,6 +103,7 @@ class DMPOSolver(CEMSolver):
         # equivalence test in tests/core/test_dmpo.py.
         self.mppi_mode = bool(mppi_mode)
         self.cost_chunk = int(cost_chunk)
+        self.report_cost = bool(report_cost)
 
         raw = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw, dict):
@@ -265,10 +270,17 @@ class DMPOSolver(CEMSolver):
             if self.mppi_mode:
                 for _ in range(self.iters):
                     plans = self.net.plans(mean, std)
-                    mean = self.net.mppi_mean(mean, plans, cost_fn(plans)).clamp(-self.net.amax, self.net.amax)
+                    mean = self.net.clip(self.net.mppi_mean(mean, plans, cost_fn(plans)))
             else:
                 mean, std, _ = self.net.plan(cost_fn, mean, std, self.iters)
-            final = cost_fn(mean.unsqueeze(1)).squeeze(1)
+            # `costs` is diagnostic only — the policy consumes `actions`. Scoring
+            # the final mean would add a rollout per decision (257 instead of
+            # 256 at the default budget), so it is opt-in.
+            final = (
+                cost_fn(mean.unsqueeze(1)).squeeze(1)
+                if self.report_cost
+                else torch.full((batch,), float("nan"), device=self.device)
+            )
 
         plan = mean.detach().to(self.dtype).cpu()
         logger.info(f"DMPO solve completed in {time.time() - start_time:.4f} seconds")
