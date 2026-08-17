@@ -32,6 +32,8 @@ envs:
   PLANNERS: "l2o rlp cem mppi adam"
   REPEATS_B1: "4"           # processes per planner at B=1 (early success = few decisions)
   REPEATS_BIG: "1"          # batched runs already yield the full decision count
+  WARMUP: "2"               # decisions dropped per process (a graph capture
+                            # lands in the first ones; widen it to quote a mean)
   GRAPHED: ""               # "", true, or verify — applies to the solvers that
                             # support CUDA-graph capture (l2o, rlp/lip)
   L2O_TAG: ""               # /checkpoints tag holding l2o_s0.pt + value_td
@@ -135,7 +137,7 @@ run: |
   done
 
   echo "===== SPEED SUMMARY ($ENVNAME/$BASE) ====="
-  pixi run python scripts/planner_speed_summary.py "$D" "$ENVNAME" "$BASE" "$BATCHES" "$PLANNERS" \
+  pixi run python scripts/planner_speed_summary.py "$D" "$ENVNAME" "$BASE" "$BATCHES" "$PLANNERS" "$WARMUP" \
     | tee "$D/summary_${ENVNAME}_${BASE}.txt"
 
   echo "SPEED_DONE env=$ENVNAME base=$BASE tag=$EXPERIMENT_TAG"

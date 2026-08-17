@@ -17,18 +17,22 @@ import statistics
 import sys
 
 LABELS = {"l2o": "L2O", "rlp": "LIP", "cem": "CEM", "mppi": "MPPI", "adam": "Adam", "dmpo": "DMPO"}
-WARMUP_DECISIONS = 2
+WARMUP_DECISIONS = 2  # default; override with a 6th argument
 
 
 def main() -> int:
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in (6, 7):
         print(__doc__)
         return 2
     directory, env, base = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
     batches, planners = sys.argv[4].split(), sys.argv[5].split()
+    # a CUDA-graph capture lands in the first decisions of a process; a warmup
+    # wide enough to exclude it is what makes a MEAN quotable
+    warmup = int(sys.argv[6]) if len(sys.argv) == 7 else WARMUP_DECISIONS
+    print(f"(warmup dropped per process: {warmup})")
     print(
-        f"{'planner':8s} {'B':>4s} {'n':>4s} {'median_ms':>10s} {'mean_ms':>9s} "
-        f"{'plan_med':>9s} {'plan_max':>9s} {'plan_min':>9s}"
+        f"{'planner':8s} {'B':>4s} {'n':>4s} {'mean_ms':>9s} {'median_ms':>10s} "
+        f"{'plan_mean':>10s} {'plan_max':>9s} {'plan_min':>9s}"
     )
     for batch in batches:
         for planner in planners:
@@ -53,8 +57,8 @@ def main() -> int:
                 times = [float(value) for value in re.findall(pattern, text)]
                 plans = [float(value) for value in re.findall(plan_pattern, text)]
                 raw_total += len(times)
-                warm.extend(times[WARMUP_DECISIONS:] if len(times) > WARMUP_DECISIONS else [])
-                plan_warm.extend(plans[WARMUP_DECISIONS:] if len(plans) > WARMUP_DECISIONS else [])
+                warm.extend(times[warmup:] if len(times) > warmup else [])
+                plan_warm.extend(plans[warmup:] if len(plans) > warmup else [])
             if not warm:
                 print(f"{planner:8s} {batch:>4s}  NO_TIMINGS (raw={raw_total}, files={len(logs)})")
                 continue
@@ -62,14 +66,14 @@ def main() -> int:
             mean = 1000 * statistics.fmean(warm)
             # plan-only spread exposes bimodality (graph capture / shape changes)
             if plan_warm:
-                plan_med = f"{1000 * statistics.median(plan_warm):.1f}"
+                plan_med = f"{1000 * statistics.fmean(plan_warm):.1f}"
                 plan_max = f"{1000 * max(plan_warm):.1f}"
                 plan_min = f"{1000 * min(plan_warm):.1f}"
             else:
                 plan_med = plan_max = plan_min = "-"
             print(
-                f"{planner:8s} {batch:>4s} {len(warm):>4d} {median:>10.1f} {mean:>9.1f} "
-                f"{plan_med:>9s} {plan_max:>9s} {plan_min:>9s}"
+                f"{planner:8s} {batch:>4s} {len(warm):>4d} {mean:>9.1f} {median:>10.1f} "
+                f"{plan_med:>10s} {plan_max:>9s} {plan_min:>9s}"
             )
     return 0
 
