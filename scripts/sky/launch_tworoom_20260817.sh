@@ -26,8 +26,8 @@
 # measures job-to-job drift, the confound that comparing against a banked
 # number cannot.
 #
-# 6 seeds x 2 grids = 12 jobs x H200:4 = 48 GPUs. Draws 50/51 (selection) and
-# 42/43/44 (reporting), 50 episodes each -> 1,500 reported episodes per arm.
+# 4 seeds x 2 grids = 8 jobs x H200:4 = 32 GPUs. Draws 42/43/44, 50 episodes
+# each -> 600 reported episodes per arm.
 #
 # Credentials are resolved by the API server from the platform secrets manager
 # (the `secrets:NAME` reference form in tworoom_split_rerun.yaml), so nothing
@@ -46,9 +46,11 @@ SMOKE=${SMOKE:-0}
 DATE=20260817
 SUFFIX=""; [ "$SMOKE" = 1 ] && SUFFIX="-smoke"
 
-# Selection draws first, then the reporting draws. Winners are picked on
-# 50/51; 42/43/44 are the numbers that get quoted, and are never selected on.
-EVAL_SEEDS="50 51 42 43 44"
+# Reporting draws only. NOTE: with no separate selection draws, an argmax over
+# arms would be selection on the reported draws. Analysis therefore reports
+# each arm against its in-job control (pre-registered) and reads the amax
+# ladder as a dose-response shape, not as an argmax.
+EVAL_SEEDS=${EVAL_SEEDS:-"42 43 44"}
 
 launch() {           # launch <base> <grid> <seed> <cachekey>
   local BASE=$1 GRID=$2 SEED=$3 CKEY=$4
@@ -100,13 +102,13 @@ if [ "$SMOKE" = 1 ]; then
   exit 0
 fi
 
-SEEDS=${SEEDS:-"0 1 2 3 4 5"}
+SEEDS=${SEEDS:-"0 1 2 3"}
 for SEED in $SEEDS; do launch lejepa escale         "$SEED" escale;   done
 for SEED in $SEEDS; do launch pldm   pldm_h25_probe "$SEED" pldmamax; done
 
 cat <<'EOF'
 
-12 jobs submitted (48 H200s). Watch with:
+8 jobs submitted (32 H200s). Watch with:
   sky jobs queue | grep rlp-tw-
 
 Per-job sanity, in the logs:

@@ -121,9 +121,18 @@ its own arms: `pl100_ctrl_md12_a1.8` (anchors the banked 96.0),
 
 ### 3d. Scale
 
-12 jobs x H200:4 = **48 GPUs**, one job per train seed per grid. 6 seeds x
-draws 50/51 (selection) + 42/43/44 (reporting) x 50 episodes = **1,500
-reported episodes per arm**, which is what makes a 1-2 point move resolvable.
+8 jobs x H200:4 = **32 GPUs**, one job per train seed per grid. Train seeds
+0-3 x reporting draws 42/43/44 x 50 episodes = **600 reported episodes per
+arm** (SE ~0.6 pt at p=0.98).
+
+There are **no separate selection draws**, so an argmax over arms would be
+selection on the reported draws. The analysis therefore does not pick a
+winner by argmax: each arm is reported against its own in-job control (the
+comparison is pre-registered and paired at the episode level), and the PLDM
+amax ladder is read as a **dose-response shape** — a monotone curve across
+seven clip values is evidence in a way a single best point is not. Any arm
+promoted on this basis needs a confirmation run on fresh draws before it is
+quoted as a headline number.
 
 ## 4. Guards
 
@@ -146,8 +155,13 @@ reported episodes per arm**, which is what makes a 1-2 point move resolvable.
 | value+CEM remeasure | 7699–7704 | `vcem2-tw-{lejepa,pldm}-e{42,43,44}-20260817` |
 | smokes (control path) | 7726 / 7727 | `rlp-tw-{escale,pldmamax}-s0-20260817-smoke` |
 | smoke (`vnorm=log` path) | 7736 | `rlp-tw-vlog-smoke-20260817` |
-| escale, seeds 0–5 | 7740–7745 | `rlp-tw-escale-s{0..5}-20260817` |
-| pldm, seeds 0–5 | 7746–7751 | `rlp-tw-pldmamax-s{0..5}-20260817` |
+| escale, seeds 0–3 | 7752–7755 | `rlp-tw-escale-s{0..3}-20260817` |
+| pldm, seeds 0–3 | 7756–7759 | `rlp-tw-pldmamax-s{0..3}-20260817` |
+
+Jobs 7740–7751 were an earlier 6-seed / 5-draw launch of the same grids,
+cancelled ~20 min in (during cache build, before any actor trained) when the
+protocol was narrowed to seeds 0–3 and draws 42/43/44. No results came from
+them.
 
 Smoke gate cleared on all three: `[grid] -> N configs` (never 0),
 `[args-ok] ... iters=8 ... md=... vnorm=...` matching the row on every cell,
@@ -158,7 +172,7 @@ guard, and that a horizon-separated row evaluates at exactly one offset
 
 ## 5. Open
 
-- Results for §3 (jobs 7740–7751 in flight at time of writing, ~5.5 h).
+- Results for §3 (jobs 7752–7759 in flight at time of writing, ~4.5 h).
 - Both banked numbers this campaign is measured against (LeJEPA 94.2, PLDM
   98.2) came from a *single* actor scored at both horizons. The h100 arms here
   are h100-trained, so the fair anchor for them is the in-job `*_ctrl_md12`
