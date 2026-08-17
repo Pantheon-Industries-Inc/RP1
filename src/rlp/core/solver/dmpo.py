@@ -92,6 +92,7 @@ class DMPOSolver(CEMSolver):
         mppi_mode: bool = False,
         cost_chunk: int = 0,
         report_cost: bool = False,
+        graphed: bool | str = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -104,6 +105,13 @@ class DMPOSolver(CEMSolver):
         self.mppi_mode = bool(mppi_mode)
         self.cost_chunk = int(cost_chunk)
         self.report_cost = bool(report_cost)
+        # Opt-in CUDA-graph capture of the sampled-cost evaluation. DMPO is
+        # wide-and-shallow (5 dependent world-model steps at batch B*N), not
+        # launch-bound like LIP, so the expected gain is small — measured, not
+        # assumed. "verify" additionally recomputes eagerly and logs the
+        # deviation. Lazily built on first solve.
+        self.graphed = graphed
+        self._graphed_cost: Any = None
 
         raw = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw, dict):
@@ -249,6 +257,41 @@ class DMPOSolver(CEMSolver):
 
         return cost
 
+    def _graphed_cost_fn(
+        self,
+        z_hist: torch.Tensor,
+        a_hist: torch.Tensor,
+        z_goal: torch.Tensor,
+        eager: Callable[[torch.Tensor], torch.Tensor],
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
+        """Replace the cost evaluation with its captured graph for this decision."""
+        if self._graphed_cost is None:
+            from .graphed_dmpo import GraphedSampledCost
+
+            self._graphed_cost = GraphedSampledCost(
+                cast(LatentWorldModel, self._base()),
+                self.value,
+                horizon=self.horizon,
+                action_dim=self.action_dim,
+                latent_dim=z_hist.shape[-1],
+                num_samples=self.net.num_samples,
+                device=self.device,
+                temporal_objective=self.temporal_objective,
+                value_context=self.value_context,
+            )
+        self._graphed_cost.bind(z_hist, a_hist, z_goal)
+        graphed = self._graphed_cost
+        if self.graphed != "verify":
+            return cast(Callable[[torch.Tensor], torch.Tensor], graphed)
+
+        def verified(plans: torch.Tensor) -> torch.Tensor:
+            captured = cast(torch.Tensor, graphed(plans))
+            reference = eager(plans)
+            logger.info(f"Graphed DMPO verification max_difference={float((captured - reference).abs().max()):.3e}")
+            return captured
+
+        return verified
+
     # ---------------------------------------------------------------- solve
     def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:
         start_time = time.time()
@@ -267,6 +310,8 @@ class DMPOSolver(CEMSolver):
                 mean, std = self.net.warm_start(previous, std, executed)
 
             cost_fn = self._cost_fn(z_hist, a_hist, z_goal)
+            if self.graphed and not self.mppi_mode:
+                cost_fn = self._graphed_cost_fn(z_hist, a_hist, z_goal, cost_fn)
             if self.mppi_mode:
                 for _ in range(self.iters):
                     plans = self.net.plans(mean, std)
