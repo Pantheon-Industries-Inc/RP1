@@ -139,9 +139,26 @@ reported episodes per arm**, which is what makes a 1-2 point move resolvable.
 - Any arm that wins h100 while dropping h25 below 99.3 is rejected on that
   basis alone.
 
+## 4b. Provenance
+
+| stage | jobs | tag |
+|---|---|---|
+| value+CEM remeasure | 7699–7704 | `vcem2-tw-{lejepa,pldm}-e{42,43,44}-20260817` |
+| smokes (control path) | 7726 / 7727 | `rlp-tw-{escale,pldmamax}-s0-20260817-smoke` |
+| smoke (`vnorm=log` path) | 7736 | `rlp-tw-vlog-smoke-20260817` |
+| escale, seeds 0–5 | 7740–7745 | `rlp-tw-escale-s{0..5}-20260817` |
+| pldm, seeds 0–5 | 7746–7751 | `rlp-tw-pldmamax-s{0..5}-20260817` |
+
+Smoke gate cleared on all three: `[grid] -> N configs` (never 0),
+`[args-ok] ... iters=8 ... md=... vnorm=...` matching the row on every cell,
+`[summary]` non-null, no `[args-mismatch]` and no `REUSED persistent actor`.
+Job 7736 specifically confirms `--vnorm log` threads trainer → checkpoint →
+guard, and that a horizon-separated row evaluates at exactly one offset
+(`{"rh5_h25_s42": …}` with no h100 key).
+
 ## 5. Open
 
-- Results for §3 (smokes 7726/7727 in flight at time of writing).
+- Results for §3 (jobs 7740–7751 in flight at time of writing, ~5.5 h).
 - Both banked numbers this campaign is measured against (LeJEPA 94.2, PLDM
   98.2) came from a *single* actor scored at both horizons. The h100 arms here
   are h100-trained, so the fair anchor for them is the in-job `*_ctrl_md12`
