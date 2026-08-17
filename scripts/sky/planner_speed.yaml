@@ -115,8 +115,13 @@ run: |
     for s in $(seq 42 $((42 + reps - 1))); do
       local log="$D/log_${ENVNAME}_${BASE}_${planner}_b${batch}_s${s}.txt"
       echo "===== TIMING $planner B=$batch seed=$s ====="
+      echo "  overrides: ${ARGS[*]}"
       pixi run eval model=$EVAL_MODEL runtime.seed=$s \
         evaluation.num_episodes=$batch $HOR "${ARGS[@]}" 2>&1 | tee "$log" | tail -2
+      # surface capture and verify evidence: the tee'd file holds the detail,
+      # the job log only keeps the tail
+      echo "  captures: $(grep -c 'capturing' "$log" || true)"
+      grep -hoE '(graphed|Graphed)[A-Za-z ]*verify: max_deviation [0-9.e+-]+' "$log" | sort -u | head -3 || true
     done
   }
 
