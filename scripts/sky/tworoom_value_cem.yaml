@@ -24,6 +24,11 @@ envs:
   EVAL_SEEDS: "42"         # report draws; shard one per job for parallelism
   HORIZONS: "25 100"
   EVAL_N: "50"
+  # Environments planned per CEM solve. The eval runs all 50 episodes in
+  # lockstep (num_envs = num_episodes) and the solver chunks them; the stock
+  # default of 1 issues 50 sequential solves per planning step (~20 s each on
+  # an H200) and leaves the GPU idle. The producing campaign used 10.
+  EVAL_BATCH: "10"
   VALUE_STEPS: "6000"
   SMOKE: "0"               # 1 = tiny end-to-end path check
   CACHE_TAG: ""            # reuse another tag's caches (default: own tag)
@@ -130,6 +135,7 @@ run: |
       # overrides. RANGE carries literal quotes so hydra reads "8000:10000"
       # as a string rather than choking on the colon.
       run_eval "cem_value_h${H}" $ES $HOR $RANGE core/solver=cem \
+        core.solver.batch_size=$EVAL_BATCH \
         core/value=metric "core.value.checkpoints=[$D/value_td]"
     done
   done

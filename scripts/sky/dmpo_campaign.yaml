@@ -41,6 +41,7 @@ envs:
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
   EVAL_PAR: "4"             # eval cells in flight at once (same-GPU, bit-exact)
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
+  TWOROOM_SPLIT: "1"        # 1 = held-out (train 0-7999, eval 8000-9999); 0 = authors' full pool
   TWOROOM_COLLECT: "0"      # 1 = re-collect the pool instead of fetching the authors' set
   TWOROOM_EPISODES: "10000" # random-play pool size when collecting
   TWOROOM_ENVS: "100"       # parallel envs while recording that pool
@@ -131,8 +132,18 @@ run: |
       WM="$PWD/assets/core/world_model/${BASE}_tworoom"
       VALUE_EXTRA="value.gamma=1.0 value.expectile=0.1 value.n_step=50"
       VALUE_STEPS=6000; MAX_DELTA=12
-      TRAIN_EPISODES=10000
       HORIZONS="25 100"
+      # Held-out by default, matching the replication record's RLP rows
+      # (train 0-7999, eval 8000-9999). TWOROOM_SPLIT=0 restores the authors'
+      # full-pool contract, whose numbers are upper bounds and are NOT
+      # comparable to the held-out RLP row.
+      if [ "$TWOROOM_SPLIT" = 1 ]; then
+        TRAIN_EPISODES=8000
+        EVAL_EXTRA='evaluation.episode_range="8000:10000"'
+        NAME_SUFFIX="_split"
+      else
+        TRAIN_EPISODES=10000
+      fi
       ;;
     reacher)
       pixi run tool tool=fetch_dataset dataset=reacher
@@ -153,7 +164,9 @@ run: |
       ;;
     *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
   esac
-  NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}"
+  # the cache filename must encode the episode split: a held-out cache and a
+  # full-pool cache of the same cell are different data under one name
+  NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}${NAME_SUFFIX:-}"
 
   EVAL_N=50
   DMPO_EXTRA="max_delta=$MAX_DELTA"
@@ -218,7 +231,8 @@ run: |
     local threads=$(( $(nproc) / ${EVAL_PAR:-4} ))
     OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads \
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N \
-      ${EVAL_DATA:+$EVAL_DATA} output.filename="${unique}.txt" "$@" > "$D/log_${unique}.txt" 2>&1 \
+      ${EVAL_DATA:+$EVAL_DATA} ${EVAL_EXTRA:+$EVAL_EXTRA} output.filename="${unique}.txt" \
+      "$@" > "$D/log_${unique}.txt" 2>&1 \
       || { echo "EVAL FAILED $label seed=$seed"; tail -5 "$D/log_${unique}.txt"; return 0; }
     local produced=$(find logs -name "${unique}.txt" | head -1)
     [ -n "$produced" ] && cp "$produced" "$out"
