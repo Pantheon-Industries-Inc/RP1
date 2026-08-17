@@ -56,13 +56,28 @@ env's own 0.05 rad termination criterion to within noise).
 
 | planner | roll. | LeJEPA h25 | LeJEPA h100 | PLDM h25 | PLDM h100 |
 |---|---|---|---|---|---|
-| **DMPO** | 256 | **99.1** | **98.9** | **99.8** | 58.4 |
-| value MPPI | 9k | 84.7 | — | 80.0 | — |
-| RLP (shipped table) | 9 | 100.0 | 94.2 | 98.2 | **96.0** |
+| **DMPO** (full pool)‡ | 256 | 99.1 | 98.9 | 99.8 | 58.4 |
+| value MPPI (full pool)‡ | 9k | 84.7 | — | 80.0 | — |
+| RLP (held-out split) | 9 | 100.0 | 94.2 | 98.2 | 96.0 |
+
+‡ trained and evaluated on the same 10,000-episode pool — upper bounds, not
+comparable to the held-out RLP row below (see the warning).
 
 Complete 3×3 grids (jobs 7340/7341, 21 result cells each). Per-actor-seed
 h100 means — LeJEPA: 99.3 / 98.7 / 98.7 (range 98–100); PLDM: 57.3 / 58.0 /
 60.0 (range 50–70).
+
+> **Protocol warning — the DMPO and RLP rows here are NOT comparable.**
+> These DMPO cells follow the authors' TwoRoom contract (train on all 10,000
+> episodes, `episode_range: null`), so the critic and optimizer trained on the
+> episodes the eval tasks are drawn from: they are **upper bounds**. The RLP
+> row is from the held-out replication (`RESULTS_REPLICATION_20260814.md`:
+> train 0–7999, eval 8000–9999). DMPO's apparent +4.7 at LeJEPA h100 and +1.6
+> at PLDM h25 are therefore artifacts of the split difference, not wins. To
+> make the row quotable, re-run these cells with `train_episodes=8000`,
+> `evaluation.episode_range="8000:10000"`, and a fresh cache tag (the cache
+> filename does not encode the episode count, so a split cache would silently
+> collide with the full-pool one).
 
 The h100 asymmetry is the notable TwoRoom result: **LeJEPA barely degrades**
 (99.1 → 98.9) while **PLDM collapses** (99.8 → 58.4) under the same recipe,
@@ -87,15 +102,16 @@ decelerating).
    PLDM), +14.4/+19.8 (TwoRoom h25) — at 1/35th the rollouts. The one loss
    is Cube PLDM h25 (−4.2), where `amax=4.5` (inherited from the RLP recipe,
    untuned for DMPO) is the prime suspect.
-2. **DMPO loses to RLP in every cell where an RLP number exists** — by 6–21
-   points on Reacher, ~14–20 on Cube. Under a shared frozen model and cost,
-   the learned sampling-reduction is consistently weaker than the learned
-   gradient-refinement at a fraction of RLP's gap to the hand-written
-   planners.
+2. **DMPO loses to RLP on Cube and Reacher** — by 6–21 points on Reacher,
+   ~14–20 on Cube, under a shared frozen model and cost. **TwoRoom cannot be
+   compared**: see the protocol warning in that section. Where the comparison
+   is valid, the learned sampling-reduction is consistently weaker than the
+   learned gradient-refinement.
 3. **Horizon degrades DMPO faster than RLP, and base-dependently.** Cube
    h25→h100 drops DMPO ~10–17 points on both bases. On TwoRoom the split is
    stark: LeJEPA holds (99.1→98.9) while PLDM collapses (99.8→58.4) against
-   RLP's 96.0 — consistent across all three optimizer seeds. DMPO's single
+   RLP's 96.0 (different protocol; the collapse is far larger than any split
+   effect) — consistent across all three optimizer seeds. DMPO's single
    learned iteration was trained on 5-block problems and nothing in it
    compensates for the 8-replan regime.
 4. **The comparison is not compute-matched, and the mismatch favors DMPO.**
