@@ -232,6 +232,7 @@ class L2OSolver(CEMSolver):
     def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:
         start_time = time.time()
         z_hist, z_goal = self._encode(info_dict)
+        encode_seconds = time.time() - start_time
         batch = z_hist.shape[0]
         a_hist = torch.zeros(batch, 2, self.action_dim, device=self.device)
         mean, std = self.net.initial(batch, self.device)
@@ -250,7 +251,11 @@ class L2OSolver(CEMSolver):
             final = cost_fn(mean.unsqueeze(1)).squeeze(1)
 
         plan = mean.detach().to(self.dtype).cpu()
-        logger.info(f"L2O solve completed in {time.time() - start_time:.4f} seconds")
+        total_seconds = time.time() - start_time
+        logger.info(
+            f"L2O solve completed in {total_seconds:.4f} seconds "
+            f"(encode {encode_seconds:.4f}, plan {total_seconds - encode_seconds:.4f})"
+        )
         return {
             "actions": plan,
             "mean": [plan],

@@ -371,6 +371,7 @@ class LIPSolver(CEMSolver):
         return self._graphed_refinement
 
     def _proposal_lip(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        encode_start = time.time()
         wm = cast(EncoderWorldModel, self._base())
         with torch.no_grad():
             px = info_dict["pixels"].to(self.device, dtype=self.dtype)
@@ -399,6 +400,10 @@ class LIPSolver(CEMSolver):
                 genc_in["proprio"] = gpro.unsqueeze(1).expand(-1, gx.shape[1], -1)
             zg = wm.encode(genc_in)["emb"][:, -1].float()
 
+        # everything above is observation/goal encoding; everything below is
+        # planning. The split matters: only the refinement is graph-captured,
+        # so a whole-decision number is not comparable to a refinement number.
+        self._last_encode_seconds = time.time() - encode_start
         R = max(1, self.restarts)
         B = n_envs
         zh_r = z_hist.repeat_interleave(R, dim=0)
@@ -620,5 +625,10 @@ class LIPSolver(CEMSolver):
         outputs["actions"] = mean.detach().cpu()
         outputs["mean"] = [mean.detach().cpu()]
         outputs["var"] = [var.detach().cpu()]
-        logger.info(f"LIP solve completed in {time.time() - start_time:.4f} seconds")
+        total_seconds = time.time() - start_time
+        encode_seconds = getattr(self, "_last_encode_seconds", 0.0)
+        logger.info(
+            f"LIP solve completed in {total_seconds:.4f} seconds "
+            f"(encode {encode_seconds:.4f}, plan {total_seconds - encode_seconds:.4f})"
+        )
         return outputs

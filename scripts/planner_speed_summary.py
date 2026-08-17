@@ -26,7 +26,10 @@ def main() -> int:
         return 2
     directory, env, base = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
     batches, planners = sys.argv[4].split(), sys.argv[5].split()
-    print(f"{'planner':8s} {'B':>4s} {'n':>4s} {'median_ms':>10s} {'mean_ms':>9s} {'per_ep_s':>9s}")
+    print(
+        f"{'planner':8s} {'B':>4s} {'n':>4s} {'median_ms':>10s} {'mean_ms':>9s} "
+        f"{'plan_med':>9s} {'plan_max':>9s} {'plan_min':>9s}"
+    )
     for batch in batches:
         for planner in planners:
             # one log per process (seed); each carries its own warmup, so drop
@@ -39,19 +42,35 @@ def main() -> int:
                 print(f"{planner:8s} {batch:>4s}  MISSING log_{env}_{base}_{planner}_b{batch}_s*.txt")
                 continue
             pattern = rf"{LABELS[planner]} solve completed in ([\d.]+) seconds"
+            # LIP and L2O also report the encode/plan split; plan-only is the
+            # number comparable to a graph-capture benchmark
+            plan_pattern = rf"{LABELS[planner]} solve completed in [\d.]+ seconds \(encode [\d.]+, plan ([\d.]+)\)"
             warm: list[float] = []
+            plan_warm: list[float] = []
             raw_total = 0
             for log in logs:
-                times = [float(value) for value in re.findall(pattern, log.read_text())]
+                text = log.read_text()
+                times = [float(value) for value in re.findall(pattern, text)]
+                plans = [float(value) for value in re.findall(plan_pattern, text)]
                 raw_total += len(times)
                 warm.extend(times[WARMUP_DECISIONS:] if len(times) > WARMUP_DECISIONS else [])
+                plan_warm.extend(plans[WARMUP_DECISIONS:] if len(plans) > WARMUP_DECISIONS else [])
             if not warm:
                 print(f"{planner:8s} {batch:>4s}  NO_TIMINGS (raw={raw_total}, files={len(logs)})")
                 continue
             median = 1000 * statistics.median(warm)
             mean = 1000 * statistics.fmean(warm)
-            # one h100 episode = 8 decisions; per-episode planner seconds at this batch
-            print(f"{planner:8s} {batch:>4s} {len(warm):>4d} {median:>10.1f} {mean:>9.1f} {8 * mean / 1000:>9.2f}")
+            # plan-only spread exposes bimodality (graph capture / shape changes)
+            if plan_warm:
+                plan_med = f"{1000 * statistics.median(plan_warm):.1f}"
+                plan_max = f"{1000 * max(plan_warm):.1f}"
+                plan_min = f"{1000 * min(plan_warm):.1f}"
+            else:
+                plan_med = plan_max = plan_min = "-"
+            print(
+                f"{planner:8s} {batch:>4s} {len(warm):>4d} {median:>10.1f} {mean:>9.1f} "
+                f"{plan_med:>9s} {plan_max:>9s} {plan_min:>9s}"
+            )
     return 0
 
 
