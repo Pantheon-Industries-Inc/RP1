@@ -570,24 +570,34 @@ run: |
   # ladders sharing ONE control, which is the shipped App-C.1 PLDM recipe
   # RETRAINED IN THIS JOB (never the banked 98.2, which came from a different
   # job, cache and TD teacher):
-  #   refinement depth K   : 8 (= ctrl) / 12 / 16   at amax 1.8
-  #   action clip amax     : 1.0 / 1.4 / 1.6 / 1.8 (= ctrl)  at K=8
-  # amax below 1.8 is the only unexplored half of that axis on this cell (the
-  # live terminal_search grid sweeps 2.4-3.2 and the shipped winner sits below
-  # all of it); K has only ever been tested DOWNWARD here (4, 2).
-  # Rows are ordered longest-cell-first so the K=16 cell starts in wave 1.
+  # Single lever, a 7-point dose-response on the action clip amax, at the
+  # shipped operating point (mean-weight 0.0, actor-lr 1e-3, max-delta 12) and
+  # K FIXED AT 8 -- refinement depth is deliberately NOT varied here.
+  #   action clip amax : 1.0 / 1.2 / 1.4 / 1.6 / 1.8 (= ctrl) / 2.0 / 2.2
+  # amax below 1.8 is the unexplored half of that axis on this cell: the live
+  # terminal_search grid sweeps 2.4-3.2, entirely on the far side of the
+  # shipped winner. Mechanistically motivated by the executable-box argument --
+  # with sigma(action) in the plausible 0.55-0.72 range the env's clamp(+-1) is
+  # +-1.4-1.8 in z-units, so amax >= 1.8 lets the refiner plan actions the env
+  # truncates. Two sibling cells point the same way (TwoRoom LeWM best at
+  # 2.0-2.2, worst at 3.0; Reacher PLDM latched winner amax 1.0).
+  # Every launch must include the ctrl row, which is the shipped App-C.1 PLDM
+  # recipe RETRAINED IN THAT JOB -- never the banked 98.2, which came from a
+  # different job, cache and TD teacher. Replicating ctrl across the sharded
+  # launches also measures job-to-job drift directly.
   # Field 12 = K; field 11 carries both eval offsets as a COMMA list because
   # the row is word-split and a space there would be eaten by field 12.
   if [ "${GRID:-axes}" = pldm_h25_probe ]; then
     [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] \
       || { echo "GRID=pldm_h25_probe requires ENVNAME=tworoom BASE=pldm" >&2; exit 2; }
     CFG=()
-    CFG+=("k16_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 16")
-    CFG+=("k12_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 12")
     CFG+=("ctrl_a1.8_m0.0_l1e-3_k8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
     CFG+=("a1.0_m0.0_l1e-3_k8 1.0 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a1.2_m0.0_l1e-3_k8 1.2 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
     CFG+=("a1.4_m0.0_l1e-3_k8 1.4 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
     CFG+=("a1.6_m0.0_l1e-3_k8 1.6 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a2.0_m0.0_l1e-3_k8 2.0 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a2.2_m0.0_l1e-3_k8 2.2 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
   fi
   # GRID=escale (2026-08-17). TwoRoom/LeJEPA h100 deficit (94.2 vs 100.0 at
   # h25, and behind both DMPO 99.1 and value+CEM 96.0 on the same cell).
@@ -611,7 +621,11 @@ run: |
     CFG+=("escale_vlog_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
     CFG+=("escale_vinv_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 loggn")
     CFG+=("escale_vlog_a2.6_m0.1_l1e-4 2.6 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
+    CFG+=("escale_vlog_a1.4_m0.1_l1e-4 1.4 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
     CFG+=("escale_md20_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 20 25,100 8 none")
+    # both mechanisms at once: if compressing E and widening the trained goal
+    # band are independent contributions, this is the cell that should win.
+    CFG+=("escale_vlogmd20_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 20 25,100 8 log")
   fi
   # Exact OGBench terminal replication plus a horizon-matched training arm.
   # The only intentional training difference is the fs5 goal-range cap:
