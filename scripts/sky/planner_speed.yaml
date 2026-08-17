@@ -29,7 +29,8 @@ envs:
   BASE: lejepa              # tworoom: lejepa|pldm   cube: lewm|pldm
   AMAX: "2.5"               # informational; solvers read their checkpoints
   BATCHES: "1 50"           # episode-batch sizes to time
-  PLANNERS: "l2o rlp cem mppi adam"
+  PLANNERS: "l2o rlp cem mppi adam"   # + dmpo (needs DMPO_TAG)
+  DMPO_TAG: "dmpo-cube-lewm-20260814"  # /checkpoints tag holding dmpo_s0.pt
   REPEATS_B1: "4"           # processes per planner at B=1 (early success = few decisions)
   REPEATS_BIG: "1"          # batched runs already yield the full decision count
   WARMUP: "2"               # decisions dropped per process (a graph capture
@@ -108,6 +109,10 @@ run: |
       cem)  ARGS=(core/solver=cem core/value=metric "core.value.checkpoints=[$A/value_td]");;
       mppi) ARGS=(core/solver=mppi core/value=metric "core.value.checkpoints=[$A/value_td]");;
       adam) ARGS=(core/solver=adam core/value=metric "core.value.checkpoints=[$A/value_td]");;
+      dmpo) local M=/checkpoints/$PANTHEON_USER/$DMPO_TAG
+            ARGS=(core/solver=dmpo core.solver.actor_path="$M/dmpo_s0.pt"
+                  core.solver.value_path="$M/dmpo_value_s0"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
       *) echo "unknown planner $planner"; return 1;;
     esac
     # one process per seed: an episode that reaches its goal early stops

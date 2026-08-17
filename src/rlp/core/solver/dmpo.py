@@ -104,6 +104,12 @@ class DMPOSolver(CEMSolver):
         # equivalence test in tests/core/test_dmpo.py.
         self.mppi_mode = bool(mppi_mode)
         self.cost_chunk = int(cost_chunk)
+        if graphed not in (True, False, "verify"):
+            raise ValueError(f"graphed must be true, false, or 'verify' (got {graphed!r})")
+        # DMPO's sampled-plan cost has the same fixed-shape forward-only
+        # structure as L2O's, so it takes the same CUDAGraph capture
+        self.graphed = graphed
+        self._graph: Any = None
         self.report_cost = bool(report_cost)
         # Opt-in CUDA-graph capture of the sampled-cost evaluation. DMPO is
         # wide-and-shallow (5 dependent world-model steps at batch B*N), not
@@ -230,29 +236,45 @@ class DMPOSolver(CEMSolver):
         wm = cast(LatentWorldModel, self._base())
         chunk = self.cost_chunk
 
+        def score_rows(zh: torch.Tensor, ah: torch.Tensor, zg: torch.Tensor, flat: torch.Tensor) -> torch.Tensor:
+            traj = rollout_traj(wm, zh, ah, flat)
+            if self.value_context > 1:
+                return windowed_terminal_value(self.value, traj, zg, self.value_context)
+            return trajectory_value(self.value, traj, zg, zh[:, -1], self.temporal_objective)
+
+        if self.graphed and self._graph is None:
+            from .graphed import GraphedCost
+
+            self._graph = GraphedCost(
+                score_rows,
+                horizon=self.horizon,
+                action_dim=self.action_dim,
+                latent_dim=z_hist.shape[-1],
+                device=self.device,
+            )
+
         def cost(plans: torch.Tensor) -> torch.Tensor:
             batch, samples = plans.shape[0], plans.shape[1]
             flat = plans.reshape(batch * samples, plans.shape[2], plans.shape[3])
             zh = z_hist.repeat_interleave(samples, dim=0)
             ah = a_hist.repeat_interleave(samples, dim=0)
             zg = z_goal.repeat_interleave(samples, dim=0)
+            if self.graphed and chunk <= 0:
+                graphed_costs = cast(torch.Tensor, self._graph.costs(zh, ah, zg, flat))
+                if self.graphed == "verify":
+                    deviation = float((graphed_costs - score_rows(zh, ah, zg, flat)).abs().max().item())
+                    logger.info(f"DMPO graphed verify: max_deviation {deviation:.3e}")
+                return graphed_costs.view(batch, samples)
             size = flat.shape[0] if chunk <= 0 else chunk
-            scored: list[torch.Tensor] = []
-            for start in range(0, flat.shape[0], size):
-                stop = start + size
-                traj = rollout_traj(wm, zh[start:stop], ah[start:stop], flat[start:stop])
-                if self.value_context > 1:
-                    scored.append(windowed_terminal_value(self.value, traj, zg[start:stop], self.value_context))
-                else:
-                    scored.append(
-                        trajectory_value(
-                            self.value,
-                            traj,
-                            zg[start:stop],
-                            zh[start:stop, -1],
-                            self.temporal_objective,
-                        )
-                    )
+            scored = [
+                score_rows(
+                    zh[start : start + size],
+                    ah[start : start + size],
+                    zg[start : start + size],
+                    flat[start : start + size],
+                )
+                for start in range(0, flat.shape[0], size)
+            ]
             return torch.cat(scored).view(batch, samples)
 
         return cost
@@ -296,6 +318,7 @@ class DMPOSolver(CEMSolver):
     def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:
         start_time = time.time()
         z_hist, z_goal = self._encode(info_dict)
+        encode_seconds = time.time() - start_time
         batch = z_hist.shape[0]
         a_hist = torch.zeros(batch, 2, self.action_dim, device=self.device)
         mean, std = self.net.initial(batch, self.device)
@@ -328,7 +351,11 @@ class DMPOSolver(CEMSolver):
             )
 
         plan = mean.detach().to(self.dtype).cpu()
-        logger.info(f"DMPO solve completed in {time.time() - start_time:.4f} seconds")
+        total_seconds = time.time() - start_time
+        logger.info(
+            f"DMPO solve completed in {total_seconds:.4f} seconds "
+            f"(encode {encode_seconds:.4f}, plan {total_seconds - encode_seconds:.4f})"
+        )
         return {
             "actions": plan,
             "mean": [plan],
