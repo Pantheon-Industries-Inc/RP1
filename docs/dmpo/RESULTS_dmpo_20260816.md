@@ -62,7 +62,7 @@ rows in `RESULTS_REPLICATION_20260814.md`. Jobs 7689/7690, 21 cells each.
 | **DMPO** | 256 | 96.7 | **99.1** | 97.3 | 54.4 |
 | value MPPI | 9k | 83.3 | — | 76.0 | — |
 | RLP (held-out) | 9 | **100.0** | 94.2 | **98.2** | **96.0** |
-| value CEM (held-out record) | 9k | 100.0 | 96.0 | 100.0 | 89.3 |
+| value CEM (remeasured 2026-08-17) | 9k | 100.0 | 94.7 | 100.0 | 88.7 |
 
 An earlier version of these cells ran the authors' full-pool contract
 (train and eval on all 10,000 episodes) and was therefore an upper bound:
@@ -79,15 +79,23 @@ Two findings survive the corrected protocol:
    iteration is trained on 5-block problems and nothing in it adapts to the
    8-replan regime, so on a base whose imagined rollouts drift more, that
    surfaces as long-horizon collapse. RLP holds 96.0 there.
-2. **TwoRoom LeJEPA h100 is a weak RLP cell.** Under the identical held-out
-   protocol, RLP's 94.2 is beaten by DMPO (99.1, +4.9) and by value+CEM
-   (96.0, +1.8), and sits 3.8 below the paper's own quote (98.0, full pool).
-   This is the only cell in the campaign where DMPO beats RLP. A plausible
-   mechanism: the TwoRoom RLP recipe trains the refiner with
-   `max_delta=12` (goals ≤12 blocks) while h100 places the goal 20 blocks
-   out — outside its training range of goal distances, which would penalize
-   a learned refiner more than a re-sampling planner. Untested; one retrained
-   TwoRoom RLP seed at `max_delta=20` would settle it.
+2. **TwoRoom LeJEPA h100 is a weak RLP cell, and DMPO is the evidence.**
+   Under the identical held-out protocol RLP scores 94.2 against DMPO's 99.1
+   (+4.9) — the only cell in this campaign where DMPO beats RLP. value+CEM
+   *ties* RLP there (94.7 remeasured over six shards; the banked 96.0 did not
+   reproduce), so DMPO's margin is the only surviving evidence that the cell
+   has headroom (see
+   [../campaigns/2026-08-17/RESULTS_tworoom_improvement.md](../campaigns/2026-08-17/RESULTS_tworoom_improvement.md)).
+
+   The mechanism established there is a value-scale sensitivity specific to
+   RLP's architecture, not a data-range problem: the LIPv4 actor consumes the
+   raw critic value `E` as its only goal-distance channel, unnormalised, and
+   with `gamma=1.0` h100 presents an `E` ~4x outside its training band, driving
+   plan entries onto the clip boundary. **DMPO is structurally immune** because
+   it z-scores the cost vector before the actor sees it (and MPPI only ranks
+   it) — which is why DMPO holds h100 while training at the *same*
+   `max_delta=12`. My earlier "trained on nearer goals" hypothesis was the
+   rival explanation and is ruled out by exactly that fact.
 
 Evaluation runs through
 the `tworoom_{lewm,pldm}_h5` roots (the fetched pool stores the agent
