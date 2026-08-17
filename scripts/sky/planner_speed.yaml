@@ -30,6 +30,8 @@ envs:
   AMAX: "2.5"               # informational; solvers read their checkpoints
   BATCHES: "1 50"           # episode-batch sizes to time
   PLANNERS: "l2o rlp cem mppi adam"
+  REPEATS_B1: "4"           # processes per planner at B=1 (early success = few decisions)
+  REPEATS_BIG: "1"          # batched runs already yield the full decision count
   L2O_TAG: ""               # /checkpoints tag holding l2o_s0.pt + value_td
                             # (default: l2o-<env>-<base>-20260815)
   PANTHEON_USER: armin@pantheon.inc
@@ -92,10 +94,8 @@ run: |
   # h100 gives 8 decisions per episode; one batch per (planner, B) measurement
   HOR="evaluation.goal_offset_steps=100 evaluation.budget=200"
 
-  time_one () {  # time_one <planner> <batch>
-    local planner=$1 batch=$2
-    local log="$D/log_${ENVNAME}_${BASE}_${planner}_b${batch}.txt"
-    echo "===== TIMING $planner B=$batch ====="
+  time_one () {  # time_one <planner> <batch> <repeats>
+    local planner=$1 batch=$2 reps=$3
     case $planner in
       l2o)  ARGS=(core/solver=l2o core.solver.actor_path="$A/l2o_s0.pt" core.solver.value_path="$A/value_td");;
       rlp)  ARGS=(core/solver=lip core.solver.actor_path="$RLP_ACTOR");;
@@ -104,13 +104,24 @@ run: |
       adam) ARGS=(core/solver=adam core/value=metric "core.value.checkpoints=[$A/value_td]");;
       *) echo "unknown planner $planner"; return 1;;
     esac
-    pixi run eval model=$EVAL_MODEL runtime.seed=42 \
-      evaluation.num_episodes=$batch $HOR "${ARGS[@]}" 2>&1 | tee "$log" | tail -3
+    # one process per seed: an episode that reaches its goal early stops
+    # producing decisions, so repeats are how B=1 gets enough samples. Each
+    # process carries its own warmup, hence one log file per seed.
+    local s
+    for s in $(seq 42 $((42 + reps - 1))); do
+      local log="$D/log_${ENVNAME}_${BASE}_${planner}_b${batch}_s${s}.txt"
+      echo "===== TIMING $planner B=$batch seed=$s ====="
+      pixi run eval model=$EVAL_MODEL runtime.seed=$s \
+        evaluation.num_episodes=$batch $HOR "${ARGS[@]}" 2>&1 | tee "$log" | tail -2
+    done
   }
 
   for B in $BATCHES; do
+    # B=1 episodes end early when the planner succeeds; repeat across seeds so
+    # every planner contributes a comparable number of timed decisions
+    REPS=$REPEATS_B1; [ "$B" != 1 ] && REPS=$REPEATS_BIG
     for P in $PLANNERS; do
-      time_one "$P" "$B" || echo "TIMING_FAILED $P B=$B"
+      time_one "$P" "$B" "$REPS" || echo "TIMING_FAILED $P B=$B"
     done
   done
 

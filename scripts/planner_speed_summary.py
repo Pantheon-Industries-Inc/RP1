@@ -29,15 +29,24 @@ def main() -> int:
     print(f"{'planner':8s} {'B':>4s} {'n':>4s} {'median_ms':>10s} {'mean_ms':>9s} {'per_ep_s':>9s}")
     for batch in batches:
         for planner in planners:
-            log = directory / f"log_{env}_{base}_{planner}_b{batch}.txt"
-            if not log.is_file():
-                print(f"{planner:8s} {batch:>4s}  MISSING {log.name}")
+            # one log per process (seed); each carries its own warmup, so drop
+            # the first decisions per file rather than once across the pool
+            logs = sorted(directory.glob(f"log_{env}_{base}_{planner}_b{batch}_s*.txt"))
+            legacy = directory / f"log_{env}_{base}_{planner}_b{batch}.txt"
+            if not logs and legacy.is_file():
+                logs = [legacy]
+            if not logs:
+                print(f"{planner:8s} {batch:>4s}  MISSING log_{env}_{base}_{planner}_b{batch}_s*.txt")
                 continue
             pattern = rf"{LABELS[planner]} solve completed in ([\d.]+) seconds"
-            times = [float(value) for value in re.findall(pattern, log.read_text())]
-            warm = times[WARMUP_DECISIONS:] if len(times) > WARMUP_DECISIONS + 1 else times
+            warm: list[float] = []
+            raw_total = 0
+            for log in logs:
+                times = [float(value) for value in re.findall(pattern, log.read_text())]
+                raw_total += len(times)
+                warm.extend(times[WARMUP_DECISIONS:] if len(times) > WARMUP_DECISIONS else [])
             if not warm:
-                print(f"{planner:8s} {batch:>4s}  NO_TIMINGS (raw={len(times)})")
+                print(f"{planner:8s} {batch:>4s}  NO_TIMINGS (raw={raw_total}, files={len(logs)})")
                 continue
             median = 1000 * statistics.median(warm)
             mean = 1000 * statistics.fmean(warm)
