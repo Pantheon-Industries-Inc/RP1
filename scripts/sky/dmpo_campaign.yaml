@@ -39,7 +39,7 @@ envs:
   TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
-  EVAL_PAR: "4"             # eval cells in flight at once (same-GPU, bit-exact)
+  EVAL_PAR: "8"             # eval cells in flight at once (bit-exact across GPUs)
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
   TWOROOM_SPLIT: "1"        # 1 = held-out (train 0-7999, eval 8000-9999); 0 = authors' full pool
   TWOROOM_COLLECT: "0"      # 1 = re-collect the pool instead of fetching the authors' set
@@ -52,9 +52,12 @@ envs:
 workdir: .
 
 resources:
-  accelerators: H200:1
-  cpus: 20
-  memory: 230
+  # Eval is CPU-bound (50 synchronous envs stepped in python) and training is
+  # GPU-bound, so the cell throughput scales with cores, not with one fast GPU.
+  # Mirrors the pre-refactor harness that ran 8 cells wide.
+  accelerators: H200:4
+  cpus: 80
+  memory: 920
   image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
   labels:
     telemetry-contract: training-v1
@@ -167,6 +170,7 @@ run: |
   # the cache filename must encode the episode split: a held-out cache and a
   # full-pool cache of the same cell are different data under one name
   NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}${NAME_SUFFIX:-}"
+  NGPU_TRAIN=$(nvidia-smi -L 2>/dev/null | wc -l); [ "$NGPU_TRAIN" -ge 1 ] || NGPU_TRAIN=1
 
   EVAL_N=50
   DMPO_EXTRA="max_delta=$MAX_DELTA"
@@ -192,24 +196,36 @@ run: |
   fi
 
   # ------------------------------------------------------------------ DMPO per seed
+  SEED_INDEX=0
   for S in $TRAIN_SEEDS; do
     if [ ! -f "$D/dmpo_s${S}.pt" ]; then
+    (  # one seed per GPU: the seeds are independent, so they run concurrently
       if [ "$OBJECTIVE" = ppo ]; then
         # offline DMPO: the paper's PPO objective, closed inside the world model
         TRAINER="model=dmpo_ppo ppo_iterations=$PPO_ITERATIONS batch=$PPO_BATCH decisions=$PPO_DECISIONS"
       else
         TRAINER="model=dmpo steps=$DMPO_STEPS batch=$DMPO_BATCH"
       fi
+      CUDA_VISIBLE_DEVICES=$(( SEED_INDEX % ${NGPU_TRAIN:-1} )) \
       pixi run train $TRAINER wm="$WM" \
         cache="$CD/${NAME}_fs5.pt" h5="$CD/${NAME}_actions.h5" \
         init_value="$D/value_td" seed=$S \
         core.planner.action_limit=$AMAX \
         core.planner.num_samples=$NUM_SAMPLES core.planner.iterations=$DMPO_ITERS \
         $DMPO_EXTRA
-      RUN=$(ls -dt logs/*/* | head -1)
+      # concurrent seeds make `ls -dt` ambiguous: read this seed's own run dir
+      RUN=$(grep -a -m1 "Run directory:" "$D/log_train_s${S}.txt" | awk '{print $NF}')
+      [ -d "$RUN" ] || { echo "seed $S: could not resolve its run directory"; exit 1; }
       cp "$RUN/checkpoints/dmpo.pt" "$D/dmpo_s${S}.pt"
       rm -rf "$D/dmpo_value_s${S}"; cp -r "$RUN/checkpoints/value" "$D/dmpo_value_s${S}"
+    ) > "$D/log_train_s${S}.txt" 2>&1 &
+    SEED_INDEX=$((SEED_INDEX + 1))
     fi
+  done
+  wait
+  for S in $TRAIN_SEEDS; do
+    [ -f "$D/dmpo_s${S}.pt" ] || { echo "training seed $S produced no checkpoint"; tail -20 "$D/log_train_s${S}.txt"; exit 1; }
+    echo "--- train seed $S ---"; grep -a "step \|Saved" "$D/log_train_s${S}.txt" | tail -3
   done
 
   # ------------------------------------------------------------------------- evaluate
@@ -229,7 +245,11 @@ run: |
     # default thread count (= all cores each) oversubscribe the node and run
     # SLOWER than sequential (observed 2026-08-16: 4-wide, zero cells in 3 h)
     local threads=$(( $(nproc) / ${EVAL_PAR:-4} ))
-    OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads \
+    [ "$threads" -lt 1 ] && threads=1
+    # compute roams across GPUs; the EGL *render* index stays pinned (an
+    # unpinned render device silently costs points — see docs/campaigns)
+    local gpu=$(( ${CELL_GPU:-0} % ${NGPU:-1} ))
+    CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=$threads MKL_NUM_THREADS=$threads \
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N \
       ${EVAL_DATA:+$EVAL_DATA} ${EVAL_EXTRA:+$EVAL_EXTRA} output.filename="${unique}.txt" \
       "$@" > "$D/log_${unique}.txt" 2>&1 \
@@ -239,9 +259,12 @@ run: |
     echo "----- RESULT $label seed=$seed -----"; cat "$out" 2>/dev/null || echo "(missing)"
   }
 
-  spawn () {  # slot-limited background run_eval
+  NGPU=$(nvidia-smi -L 2>/dev/null | wc -l); [ "$NGPU" -ge 1 ] || NGPU=1
+  CELL_INDEX=0
+  spawn () {  # slot-limited background run_eval, round-robin over GPUs
     while [ "$(jobs -rp | wc -l)" -ge "${EVAL_PAR:-4}" ]; do wait -n; done
-    run_eval "$@" &
+    CELL_GPU=$CELL_INDEX run_eval "$@" &
+    CELL_INDEX=$((CELL_INDEX + 1))
     sleep 3
   }
 
