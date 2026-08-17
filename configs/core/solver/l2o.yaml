@@ -14,3 +14,4 @@ actor_path: ???
 value_path: null  # override the value recorded in the L2O checkpoint
 iters: null  # inner-loop iterations; null = the trained count
 cost_chunk: 0  # rollout chunk size for the sampled plans; 0 = one batch
+graphed: false  # CUDA-graphed cost evaluation (true | "verify"); inference only

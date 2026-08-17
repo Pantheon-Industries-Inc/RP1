@@ -76,12 +76,17 @@ class L2OSolver(CEMSolver):
         value_path: str | None = None,
         iters: int | None = None,
         cost_chunk: int = 0,
+        graphed: bool | str = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         from rlp.core.value import load_metric
 
         self.cost_chunk = int(cost_chunk)
+        if graphed not in (True, False, "verify"):
+            raise ValueError(f"graphed must be true, false, or 'verify' (got {graphed!r})")
+        self.graphed = graphed
+        self._graph: Any = None
 
         raw = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw, dict):
@@ -176,29 +181,49 @@ class L2OSolver(CEMSolver):
         wm = cast(LatentWorldModel, self._base())
         chunk = self.cost_chunk
 
+        def score_rows(zh: torch.Tensor, ah: torch.Tensor, zg: torch.Tensor, flat: torch.Tensor) -> torch.Tensor:
+            """Cost of one flattened batch of plans — the whole inner-loop hot path."""
+            traj = rollout_traj(wm, zh, ah, flat)
+            if self.value_context > 1:
+                return windowed_terminal_value(self.value, traj, zg, self.value_context)
+            return trajectory_value(self.value, traj, zg, zh[:, -1], self.temporal_objective)
+
+        if self.graphed and self._graph is None:
+            from .graphed import GraphedCost
+
+            self._graph = GraphedCost(
+                score_rows,
+                horizon=self.horizon,
+                action_dim=self.action_dim,
+                latent_dim=z_hist.shape[-1],
+                device=self.device,
+            )
+
         def cost(plans: torch.Tensor) -> torch.Tensor:
             batch, samples = plans.shape[0], plans.shape[1]
             flat = plans.reshape(batch * samples, plans.shape[2], plans.shape[3])
             zh = z_hist.repeat_interleave(samples, dim=0)
             ah = a_hist.repeat_interleave(samples, dim=0)
             zg = z_goal.repeat_interleave(samples, dim=0)
+            if self.graphed and chunk <= 0:
+                # the captured graph owns the whole row count; chunking would
+                # change the shape per call and defeat the capture
+                graphed_costs = cast(torch.Tensor, self._graph.costs(zh, ah, zg, flat))
+                if self.graphed == "verify":
+                    eager = score_rows(zh, ah, zg, flat)
+                    deviation = float((graphed_costs - eager).abs().max().item())
+                    logger.info(f"L2O graphed verify: max_deviation {deviation:.3e}")
+                return graphed_costs.view(batch, samples)
             size = flat.shape[0] if chunk <= 0 else chunk
-            scored: list[torch.Tensor] = []
-            for start in range(0, flat.shape[0], size):
-                stop = start + size
-                traj = rollout_traj(wm, zh[start:stop], ah[start:stop], flat[start:stop])
-                if self.value_context > 1:
-                    scored.append(windowed_terminal_value(self.value, traj, zg[start:stop], self.value_context))
-                else:
-                    scored.append(
-                        trajectory_value(
-                            self.value,
-                            traj,
-                            zg[start:stop],
-                            zh[start:stop, -1],
-                            self.temporal_objective,
-                        )
-                    )
+            scored: list[torch.Tensor] = [
+                score_rows(
+                    zh[start : start + size],
+                    ah[start : start + size],
+                    zg[start : start + size],
+                    flat[start : start + size],
+                )
+                for start in range(0, flat.shape[0], size)
+            ]
             return torch.cat(scored).view(batch, samples)
 
         return cost
