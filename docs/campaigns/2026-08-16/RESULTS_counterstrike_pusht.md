@@ -46,7 +46,9 @@ plateau 2.0–2.8 at 72–78, off a cliff at 3.0. K=32 grid (15 cells) plateaus
 - **γ=1/n=1 on the co-trained critic collapses training** (8–13%); the
   short-backup corner is for the offline init value ONLY.
 - actor_lr 3e-4 ≥ 1e-4; mean_weight 0.1 ≥ {0.05, 0.2}.
-- Training steps 12k/18k probe: pending at time of writing (cs-st12k/18k).
+- **Training duration closed**: steps 12k → 73.0, 18k → 68.0 vs 6k → 78.0
+  at the winner config (selection 50/51) — flat-to-worse; the K=24 actor is
+  not undertrained at the recipe's 6k steps.
 
 ## Failure analysis (probe-instrumented, seed-50 identical draws)
 
