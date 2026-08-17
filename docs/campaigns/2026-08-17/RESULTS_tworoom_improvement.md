@@ -67,11 +67,11 @@ interchangeable.
 
 ## 3. Arms in flight
 
-Six jobs, `scripts/sky/launch_tworoom_20260817.sh`, one job per train seed
-(so every job carries the control and trains its own TD teacher; the
-replicated control also measures job-to-job drift). Selection draws 50/51,
-reporting draws 42/43/44, both horizons for every arm. **K is fixed at 8
-throughout — refinement depth is not a variable in this campaign.**
+`scripts/sky/launch_tworoom_20260817.sh`, one job per train seed (so every job
+carries its grid's control and trains its own TD teacher; the replicated
+control also measures job-to-job drift). Selection draws 50/51, reporting
+draws 42/43/44. **K is fixed at 8 throughout — refinement depth is not a
+variable in this campaign.**
 
 ### 3a. Horizon-matched training
 
@@ -141,9 +141,10 @@ reported episodes per arm**, which is what makes a 1-2 point move resolvable.
 
 ## 5. Open
 
-- Results for §3 (jobs not yet launched at time of writing — the harness
-  clones a second repo with a PAT that must be supplied at launch).
-- A promoted PLDM winner needs a 3-seed confirmation before it is quoted
-  against the banked 98.2.
+- Results for §3 (smokes 7726/7727 in flight at time of writing).
+- Both banked numbers this campaign is measured against (LeJEPA 94.2, PLDM
+  98.2) came from a *single* actor scored at both horizons. The h100 arms here
+  are h100-trained, so the fair anchor for them is the in-job `*_ctrl_md12`
+  arm rather than the banked value.
 - If `vnorm=log` works, Cube h100 is the immediate next test — the same raw-`E`
   conditioning is in every RLP actor.
