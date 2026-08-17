@@ -69,8 +69,8 @@ interchangeable.
 
 `scripts/sky/launch_tworoom_20260817.sh`, one job per train seed (so every job
 carries its grid's control and trains its own TD teacher; the replicated
-control also measures job-to-job drift). Selection draws 50/51, reporting
-draws 42/43/44. **K is fixed at 8 throughout — refinement depth is not a
+control also measures job-to-job drift). Train seeds 0-3, reporting draws
+42/43/44. **K is fixed at 8 throughout — refinement depth is not a
 variable in this campaign.**
 
 ### 3a. Horizon-matched training
@@ -81,7 +81,7 @@ is never read off an h25-tuned refiner. `max_delta=12` covers the h25 goal
 (5 blocks); `max_delta=20` reaches the 100 primitive steps an h100 goal sits
 at. This turns the goal band from a confound into a factor.
 
-### 3b. LeJEPA — `GRID=escale` (10 arms x 6 seeds)
+### 3b. LeJEPA — `GRID=escale` (10 arms x 4 seeds)
 
 h25-trained (`max_delta` 12, scored at 25):
 
@@ -105,7 +105,7 @@ banked 94.2, so the factorial is anchored:
 | `es100_vinv_md20_a1.8` | 20 | 1.8 | loggn |
 | `es100_vlog_md20_a2.6` | 20 | 2.6 | log |
 
-### 3c. PLDM — `GRID=pldm_h25_probe` (12 arms x 6 seeds)
+### 3c. PLDM — `GRID=pldm_h25_probe` (12 arms x 4 seeds)
 
 h25-trained (`max_delta` 12, scored at 25) — the target cell. A 7-point amax
 dose-response (**1.0 / 1.2 / 1.4 / 1.6 / 1.8 = ctrl / 2.0 / 2.2**) plus the
