@@ -150,6 +150,43 @@ decelerating).
    return-driven model-error compensation, which requires on-system
    interaction (see README_dmpo.md).
 
+## Wall-clock per decision (measured 2026-08-17, job 7868)
+
+OGBench Cube LeWM on one H200, `evaluation.num_episodes=50` (the protocol's
+batch), h100 budget 500 so each arm yields 20 decisions. **Steady median**
+excludes the first solve, which carries warmup and — in graphed mode — the
+multi-second CUDA-graph capture; a mean over 8 solves is dominated by that
+outlier and is how an earlier version of this table wrongly showed graphing as
+a 3.9x regression.
+
+| planner | mode | first solve | steady median | ms/env | rollouts/decision |
+|---|---|---|---|---|---|
+| **RLP / LIP** | graphed | 2182 | **80.1** | **1.60** | 9 fwd (+8 bwd) |
+| RLP / LIP | eager | 747 | 319.5 | 6.39 | 9 fwd (+8 bwd) |
+| **DMPO** | graphed | 2364 | 151.5 | 3.03 | 256 fwd |
+| DMPO | eager | 651 | 159.1 | 3.18 | 256 fwd |
+| CEM | eager, `batch_size=50` | 10342 | 1976.9 | 39.54 | 9,000 fwd |
+| MPPI | eager, `batch_size=50` | 10390 | 4766.8 | 95.34 | 9,000 fwd |
+
+Reading:
+
+1. **Graph capture buys RLP 4.0x and DMPO 1.05x.** RLP's decision is 8
+   sequential iterations of a 5-step unroll plus backward — launch-bound, which
+   is what capture removes. DMPO is one wide forward batch of `B*N` plans (5
+   dependent steps), so there is almost no launch overhead to recover. Graphed
+   DMPO is bit-exact against eager (`max_difference = 0.000e+00` on every
+   `graphed=verify` call).
+2. **Best-config latency: RLP 1.60 vs DMPO 3.03 ms/env** — RLP 1.9x faster,
+   on top of using 28x fewer rollouts. Eager-only, the ordering *reverses*
+   (DMPO 3.18 vs RLP 6.39), so any latency claim must state the mode.
+3. **Both learned planners are an order of magnitude faster than the sampling
+   baselines**: 13-25x versus CEM, 31-60x versus MPPI.
+4. The shipped `configs/core/solver/{cem,mppi}.yaml` set `batch_size: 1`, i.e.
+   50 sequential single-env solves; the rows above use `batch_size=50`. As
+   shipped, CEM costs 144 ms/env and MPPI 222 ms/env (job 7761) — a ~2.3x
+   config penalty that applies to every baseline timing in this repository, not
+   just this table.
+
 ## Provenance
 
 | cell | jobs (train+eval) | tag |
