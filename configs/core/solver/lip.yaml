@@ -15,3 +15,14 @@ graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static
 record_probes: false
 probe_directory: ${run.artifacts}/probes
 value_path: null  # override the value recorded in the actor checkpoint
+# Plan initialisation. "zero" (the benchmarked default) starts refinement from
+# A=0, so the solver is purely LOCAL descent from a single fixed point.
+# "value" instead picks A(0) = argmin-E over {zero, iid-Gaussian, time-tiled
+# Gaussian} candidates -- exactly CEM's iteration-0 -- which is the only way
+# the refiner reaches the sustained-motion (time-tiled) family when the value
+# gradient is flat at A=0. Costs init_samples forward rollouts once per
+# decision. Listed explicitly so they are overridable and their defaults are
+# visible; the values here reproduce the previous behaviour exactly.
+init_mode: zero
+init_samples: 64
+init_scale: 1.5

@@ -1,0 +1,153 @@
+% Baseline tables: TwoRoom, Reacher, OGBench Cube.
+% Requires: booktabs, caption, array (and wrapfig only for the wraptable variant
+% at the bottom of this file).
+%
+% Naming: the LeWM column is the LeJEPA-family base; the DMPO and L2O-MPC result
+% records call the same base "LeJEPA".
+%
+% Sources
+%   latent/value + CEM/MPPI/Adam ... docs/replication/RESULTS_REPLICATION_20260814.md
+%   DMPO ......................... docs/dmpo/RESULTS_dmpo_20260816.md
+%   L2O-MPC ...................... docs/l2o/RESULTS_L2O_20260816.md
+%   TwoRoom value+CEM remeasure .. docs/campaigns/2026-08-17/RESULTS_tworoom_improvement.md
+
+% ---------------------------------------------------------------- TwoRoom ----
+\begin{table}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{TwoRoom success rate (\%).}}
+  \label{tab:tworoom}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}lrrrrr@{}
+  }
+  \toprule
+  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+  \cmidrule(lr){3-4}\cmidrule(l){5-6}
+  planner & rollouts & $h25$ & $h100$ & $h25$ & $h100$ \\
+  \midrule
+  latent + CEM   & $9000$ & 84.0 & 13.3 & 93.3 & 52.0 \\
+  latent + MPPI  & $9000$ & 70.7 & 20.0 & 64.0 & 33.3 \\
+  latent + Adam  & $3000$ & 94.7 & 24.0 & 90.7 & 42.0 \\
+  \midrule
+  value + CEM    & $9000$ & \textbf{100.0} & 96.0\rlap{$^{\dagger}$} & \textbf{100.0} & 89.3\rlap{$^{\dagger}$} \\
+  value + MPPI   & $9000$ & 87.3 & 64.0 & 78.7 & 58.7 \\
+  value + Adam   & $3000$ & 96.7 & 83.3 & 96.0 & 73.3 \\
+  \midrule
+  DMPO           & $256$  & 96.9 & \textbf{100.0} & 97.8 & 92.7 \\
+  L2O-MPC        & $256$  & 95.8 & 90.9 & 95.1 & 48.2 \\
+  \midrule
+  \textbf{RP1 (ours)} & $9$
+  & \textbf{100.0} & 94.2
+  & 98.2 & \textbf{96.0} \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent Success rate (\%), held-out protocol, 50 episodes per cell.
+  $h25$ and $h100$ refer to 25 and 100 steps respectively. \emph{latent} rows
+  score plans by terminal latent $L_2$; \emph{value} rows by the learned
+  quasimetric critic; DMPO and L2O-MPC are learned optimizers using the same
+  critic. Bold marks the best entry per column.
+  $^{\dagger}$A six-shard remeasurement gives $94.7 \pm 3.1$ (LeWM) and
+  $88.7 \pm 5.0$ (PLDM) at $h100$.\par}
+\end{table}
+
+% ---------------------------------------------------------------- Reacher ----
+\begin{table}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{Reacher success rate (\%), first-hit at $h25$.}}
+  \label{tab:reacher}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}lrrrrr@{}
+  }
+  \toprule
+  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+  \cmidrule(lr){3-4}\cmidrule(l){5-6}
+  planner & rollouts & $\tau{=}.1$ & $\tau{=}.05$ & $\tau{=}.1$ & $\tau{=}.05$ \\
+  \midrule
+  latent + CEM   & $9000$ & 99.0 & 94.3 & 98.3 & 89.3 \\
+  latent + MPPI  & $9000$ & 87.7 & 68.0 & 85.7 & 64.3 \\
+  latent + Adam  & $3000$ & 97.3 & 80.0 & 96.7 & 77.3 \\
+  \midrule
+  value + CEM    & $9000$ & 99.3 & 89.3 & 98.3 & 84.7 \\
+  value + MPPI   & $9000$ & 86.0 & 66.0 & 83.7 & 61.7 \\
+  value + Adam   & $3000$ & 98.3 & 81.0 & 97.3 & 76.7 \\
+  \midrule
+  DMPO           & $256$  & 92.7\rlap{$^{\diamond}$} & 75.8\rlap{$^{\diamond}$} & 95.1 & 82.9 \\
+  L2O-MPC        & $256$  & 93.3 & 74.9 & 94.7 & 77.3 \\
+  \midrule
+  \textbf{RP1 (ours)} & $9$
+  & \textbf{99.9} & \textbf{97.1}
+  & \textbf{99.4} & \textbf{91.2} \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent First-hit success (\%) at goal tolerance $\tau$ (rad), held-out,
+  open loop with receding horizon 5. All planners use 3-frame-window costs, so
+  the rows differ in optimizer and objective only. RP1 averages 6 actor seeds
+  $\times$ 6 eval draws; the baseline rows use draws 42--47, DMPO 3 seeds
+  $\times$ draws 42--44, L2O-MPC 3 seeds $\times$ draws 42--44.
+  $^{\diamond}$Measured with the symmetric clip $a_{\max}{=}2.2$ rather than the
+  environment's per-dimension action bounds; the matched PLDM cells moved
+  $\le 1$ point when re-measured.\par}
+\end{table}
+
+% ---------------------------------------------------------- OGBench Cube ----
+\begin{table}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{OGBench Cube success rate (\%).}}
+  \label{tab:ogbench}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}lrrrrr@{}
+  }
+  \toprule
+  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+  \cmidrule(lr){3-4}\cmidrule(l){5-6}
+  planner & rollouts & $h25$ & $h100$ & $h25$ & $h100$ \\
+  \midrule
+  latent + CEM   & $9000$ & 78.0 & -- & 62.7 & -- \\
+  value + MPPI   & $9000$ & 62.7 & 50.0\rlap{$^{*}$} & 66.0 & 50.0\rlap{$^{*}$} \\
+  \midrule
+  DMPO           & $256$  & 72.9\rlap{$^{\diamond}$} & \textbf{55.8}\rlap{$^{\diamond}$} & 61.8\rlap{$^{\diamond}$} & \textbf{51.6}\rlap{$^{\diamond}$} \\
+  L2O-MPC        & $256$  & 64.4 & 50.0 & 58.9 & 45.3 \\
+  \midrule
+  \textbf{RP1 (ours)} & $9$
+  & \textbf{86.9} & --
+  & \textbf{82.0} & -- \\
+  \midrule
+  no-op floor    & --     & 54.0 & -- & 54.0 & -- \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent Success rate (\%), held-out, 50 episodes per cell. RP1 LeWM is
+  $86.9 \pm 3.0$ over 3 actor seeds; RP1 PLDM is a single seed. $h100$ was not
+  run for the sampling baselines or RP1 (dashes). The no-op floor is the score
+  of taking no action.
+  $^{*}$1--2 eval seeds only; footnote-grade.
+  $^{\diamond}$Symmetric $a_{\max}$ inherited from the RP1 recipe (LeWM 1.6,
+  PLDM 4.5) rather than the environment's action bounds, which binds on 4 of 5
+  dimensions for LeWM and 1 of 5 for PLDM; the LeWM--PLDM comparison is
+  confounded and reruns are pending.\par}
+\end{table}
+
+% ----------------------------------------------------------------------------
+% Wraptable variant of the TwoRoom table (needs \usepackage{wrapfig}). Use only
+% if the surrounding text can absorb ~22 lines of wrapped body text.
+%
+% \begin{wraptable}[22]{r}{0.55\textwidth}
+%   \vspace{-0.7\baselineskip}
+%   ... same body as tab:tworoom ...
+% \end{wraptable}
