@@ -41,7 +41,10 @@ envs:
   TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
-  EVAL_PAR: "8"             # eval cells in flight at once (bit-exact across GPUs)
+  EVAL_PAR: "8"             # eval cells in flight at once (bit-exact across GPUs).
+                            # Cube and Reacher-LeJEPA cells died at 8 wide on a
+                            # 920 GB node (killed, no traceback) — lower it for
+                            # heavy environments until the cause is pinned.
   SMOKE: "0"                # 1 = tiny end-to-end path check (one seed, 2 episodes)
   TWOROOM_SPLIT: "1"        # 1 = held-out (train 0-7999, eval 8000-9999); 0 = authors' full pool
   TWOROOM_COLLECT: "0"      # 1 = re-collect the pool instead of fetching the authors' set
@@ -255,7 +258,12 @@ run: |
     pixi run eval model=$EVAL_MODEL runtime.seed=$seed evaluation.num_episodes=$EVAL_N \
       ${EVAL_DATA:+$EVAL_DATA} ${EVAL_EXTRA:+$EVAL_EXTRA} output.filename="${unique}.txt" \
       "$@" > "$D/log_${unique}.txt" 2>&1 \
-      || { echo "EVAL FAILED $label seed=$seed"; tail -5 "$D/log_${unique}.txt"; return 0; }
+      || { echo "EVAL FAILED $label seed=$seed"
+           # the useful line is rarely the last: a killed process ends on warnings
+           grep -a "Error\|error\|Traceback\|Killed\|out of memory\|assert" "$D/log_${unique}.txt" | head -5
+           tail -3 "$D/log_${unique}.txt"
+           echo "$label seed=$seed" >> "$D/.failed_cells"
+           return 0; }
     local produced=$(find logs -name "${unique}.txt" | head -1)
     [ -n "$produced" ] && cp "$produced" "$out"
     echo "----- RESULT $label seed=$seed -----"; cat "$out" 2>/dev/null || echo "(missing)"
@@ -306,5 +314,14 @@ run: |
     done
   done
   wait
-  echo "Completed result cells: $(ls "$D"/results_*.txt 2>/dev/null | wc -l)"
+  COMPLETED=$(ls "$D"/results_*.txt 2>/dev/null | wc -l | tr -d ' ')
+  FAILED=$(wc -l < "$D/.failed_cells" 2>/dev/null | tr -d ' ' || echo 0)
+  echo "Completed result cells: $COMPLETED   failed: ${FAILED:-0}"
+  # A campaign that produced no cells must not report success: the eval loop
+  # deliberately survives a single bad cell, which previously let a job whose
+  # every cell died still print DMPO_CAMPAIGN_DONE and exit 0.
+  if [ "$COMPLETED" = 0 ]; then
+    echo "no eval cell completed — failing the job"; cat "$D/.failed_cells" 2>/dev/null | head -20; exit 1
+  fi
+  [ "${FAILED:-0}" != 0 ] && echo "WARNING: ${FAILED} eval cells failed; the grid is incomplete"
   echo "DMPO_CAMPAIGN_DONE env=$ENVNAME base=$BASE window=$VALUE_FRAMES tag=$EXPERIMENT_TAG"
