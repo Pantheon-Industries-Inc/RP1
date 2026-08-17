@@ -4,10 +4,9 @@ Offline DMPO (Sacks et al., ICRA 2024; `model=dmpo`, `core/solver=dmpo`,
 method mapping and deviations in [README_dmpo.md](README_dmpo.md)) evaluated
 against the same-critic MPPI baseline on all three environments and both
 bases. Cube and Reacher DMPO numbers are the mean over **3 optimizer training
-seeds (0/1/2) × eval seeds 42/43/44 × 50 episodes** (n=9 per entry); TwoRoom
-is still filling that grid in (n stated per entry — see that section). MPPI
+seeds (0/1/2) × eval seeds 42/43/44 × 50 episodes** (n=9 per entry). MPPI
 rows use eval seeds 42/43/44 × 50 episodes with the identical `value_td`
-critic and world model.
+critic and world model. All 8 cells are complete.
 Training protocol per cell: `model=rlp skip=[planner]` (caches + offline
 quasimetric critic) → `model=dmpo` per seed → `rlp.eval.world_model`.
 Harness: `scripts/sky/dmpo_campaign.yaml`.
@@ -57,26 +56,24 @@ env's own 0.05 rad termination criterion to within noise).
 
 | planner | roll. | LeJEPA h25 | LeJEPA h100 | PLDM h25 | PLDM h100 |
 |---|---|---|---|---|---|
-| **DMPO** | 256 | 99.1 (n=9) | 98.5 (n=4) | 100.0 (n=6) | 53.0 (n=2) |
-| value MPPI | 9k | 86.0 (n=2) | — | 84.0 (n=2) | — |
-| RLP (shipped table) | 9 | 100.0 | 94.2 | 98.2 | 96.0 |
+| **DMPO** | 256 | **99.1** | **98.9** | **99.8** | 58.4 |
+| value MPPI | 9k | 84.7 | — | 80.0 | — |
+| RLP (shipped table) | 9 | 100.0 | 94.2 | 98.2 | **96.0** |
 
-**These TwoRoom numbers are provisional**: the cells are still filling in
-toward the full 3 actor seeds × 3 eval draws (n=9) that every reportable cell
-in this repository requires, and `n` above is what had landed when this record
-was written. Jobs 7340/7341 run to completion; this section is rewritten from
-the complete grid before anything here is quoted.
-
-Per-cell values — LeJEPA h100: 100 (a0/s42), 98 (a0/s43), 98 (a1/s42),
-98 (a2/s42). PLDM h100: 56 (a0/s42), 50 (a1/s42).
+Complete 3×3 grids (jobs 7340/7341, 21 result cells each). Per-actor-seed
+h100 means — LeJEPA: 99.3 / 98.7 / 98.7 (range 98–100); PLDM: 57.3 / 58.0 /
+60.0 (range 50–70).
 
 The h100 asymmetry is the notable TwoRoom result: **LeJEPA barely degrades**
-(99.1 → 98.5) while **PLDM collapses** (100.0 → ~53) under the same recipe,
-critic settings, and planner — the difference is the world-model base. RLP's
-shipped rows degrade on neither (94.2 / 96.0). DMPO's single learned
+(99.1 → 98.9) while **PLDM collapses** (99.8 → 58.4) under the same recipe,
+critic settings, and planner — the difference is the world-model base. The
+collapse is consistent across all three optimizer seeds, so it is a property
+of the method on this base, not seed variance. RLP's shipped rows degrade on
+neither base (94.2 / 96.0), so this is the one cell where DMPO's deficit
+against RLP is a chasm (−37.6) rather than a gap. DMPO's single learned
 iteration is trained on 5-block problems and nothing in it adapts to the
-8-replan regime; on a base whose rollouts drift more, that shows up as a
-long-horizon collapse. Evaluation runs through
+8-replan regime; on a base whose imagined rollouts drift more, that surfaces
+as long-horizon collapse. Evaluation runs through
 the `tworoom_{lewm,pldm}_h5` roots (the fetched pool stores the agent
 position as `pos_agent` and has no `state` column; the collector-produced
 lance is not regenerable in-job — 3,443/10,000 episodes in 11 h and
@@ -87,7 +84,7 @@ decelerating).
 1. **DMPO beats the update it residuals on almost everywhere.** Against
    MPPI under the identical critic, WM, and data: +10.2 (Cube LeWM h25),
    +19.7 to +27.7 (all four Reacher w1/w3 τ columns on LeWM; +9 to +18 on
-   PLDM), +13.3/+14.0 (TwoRoom h25) — at 1/35th the rollouts. The one loss
+   PLDM), +14.4/+19.8 (TwoRoom h25) — at 1/35th the rollouts. The one loss
    is Cube PLDM h25 (−4.2), where `amax=4.5` (inherited from the RLP recipe,
    untuned for DMPO) is the prime suspect.
 2. **DMPO loses to RLP in every cell where an RLP number exists** — by 6–21
@@ -97,10 +94,18 @@ decelerating).
    planners.
 3. **Horizon degrades DMPO faster than RLP, and base-dependently.** Cube
    h25→h100 drops DMPO ~10–17 points on both bases. On TwoRoom the split is
-   stark: LeJEPA holds (99.1→98.5) while PLDM collapses (100.0→~53) against
-   RLP's 96.0. DMPO's single learned iteration was trained on 5-block
-   problems and nothing in it compensates for the 8-replan regime.
-4. **Scope of the claim.** This is *offline* DMPO: the paper's update rule
+   stark: LeJEPA holds (99.1→98.9) while PLDM collapses (99.8→58.4) against
+   RLP's 96.0 — consistent across all three optimizer seeds. DMPO's single
+   learned iteration was trained on 5-block problems and nothing in it
+   compensates for the 8-replan regime.
+4. **The comparison is not compute-matched, and the mismatch favors DMPO.**
+   Counting a backward pass as ~2 forward, RLP spends ~25 forward-equivalents
+   per decision (9 fwd + 8 bwd) against DMPO's 256 — DMPO loses every cell
+   while spending an order of magnitude more compute. A compute-matched DMPO
+   row (`num_samples≈24`) is not yet run; `num_samples` is architectural (the
+   actor reads the N costs positionally) so it requires retraining, and the
+   256 used here is the paper's advertised operating point, not a tuned value.
+5. **Scope of the claim.** This is *offline* DMPO: the paper's update rule
    and inner loop, trained by pathwise gradients against the shared critic
    through the frozen world model (the same regime RLP trains in). It
    measures optimizer quality under a given cost — not the paper's
