@@ -32,6 +32,8 @@ envs:
   PLANNERS: "l2o rlp cem mppi adam"
   REPEATS_B1: "4"           # processes per planner at B=1 (early success = few decisions)
   REPEATS_BIG: "1"          # batched runs already yield the full decision count
+  GRAPHED: ""               # "", true, or verify — applies to the solvers that
+                            # support CUDA-graph capture (l2o, rlp/lip)
   L2O_TAG: ""               # /checkpoints tag holding l2o_s0.pt + value_td
                             # (default: l2o-<env>-<base>-20260815)
   PANTHEON_USER: armin@pantheon.inc
@@ -97,8 +99,10 @@ run: |
   time_one () {  # time_one <planner> <batch> <repeats>
     local planner=$1 batch=$2 reps=$3
     case $planner in
-      l2o)  ARGS=(core/solver=l2o core.solver.actor_path="$A/l2o_s0.pt" core.solver.value_path="$A/value_td");;
-      rlp)  ARGS=(core/solver=lip core.solver.actor_path="$RLP_ACTOR");;
+      l2o)  ARGS=(core/solver=l2o core.solver.actor_path="$A/l2o_s0.pt" core.solver.value_path="$A/value_td"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
+      rlp)  ARGS=(core/solver=lip core.solver.actor_path="$RLP_ACTOR"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
       cem)  ARGS=(core/solver=cem core/value=metric "core.value.checkpoints=[$A/value_td]");;
       mppi) ARGS=(core/solver=mppi core/value=metric "core.value.checkpoints=[$A/value_td]");;
       adam) ARGS=(core/solver=adam core/value=metric "core.value.checkpoints=[$A/value_td]");;
