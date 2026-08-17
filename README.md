@@ -29,7 +29,8 @@ method.
 - [`docs/dmpo/README_dmpo.md`](docs/dmpo/README_dmpo.md) — the *Deep Model
   Predictive Optimization* (ICRA 2024) learned-optimizer baseline: `model=dmpo`
   to train, `core/solver=dmpo` to evaluate, and the deltas from the paper;
-  results per environment in `docs/dmpo/RESULTS_dmpo_{tworoom,reacher,ogbench_cube}.md`.
+  results for all three environments in
+  [`docs/dmpo/RESULTS_dmpo_20260816.md`](docs/dmpo/RESULTS_dmpo_20260816.md).
 - [`docs/PARALLELIZATION_ANALYSIS.md`](docs/PARALLELIZATION_ANALYSIS.md) — historical
   serialization/throughput audit (some citations target pre-refactor paths).
 

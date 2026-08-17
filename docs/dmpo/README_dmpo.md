@@ -159,12 +159,9 @@ per quoted cell.
 
 ## Results
 
-| environment | record |
-|---|---|
-| TwoRoom | [RESULTS_dmpo_tworoom.md](RESULTS_dmpo_tworoom.md) |
-| Reacher | [RESULTS_dmpo_reacher.md](RESULTS_dmpo_reacher.md) |
-| OGBench Cube | [RESULTS_dmpo_ogbench_cube.md](RESULTS_dmpo_ogbench_cube.md) |
-| campaign protocol, wall-clock, provenance | [RESULTS_dmpo_20260816.md](RESULTS_dmpo_20260816.md) |
+All measured cells — TwoRoom, Reacher, and OGBench Cube, plus the wall-clock
+benchmark, scope caveats and provenance — are in one record:
+[RESULTS_dmpo_20260816.md](RESULTS_dmpo_20260816.md).
 
 ## Cluster campaign
 
