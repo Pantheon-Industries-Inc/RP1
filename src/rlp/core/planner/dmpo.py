@@ -180,6 +180,8 @@ class DMPONet(nn.Module):
         learn_search_std: bool = False,
         mean_search_std: float = 0.1,
         std_search_std: float = 0.01,
+        action_lows: torch.Tensor | None = None,
+        action_highs: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         if gate_activation not in {"tanh", "sigmoid"}:
@@ -242,11 +244,41 @@ class DMPONet(nn.Module):
         # sample 0 is the current mean itself (reference: prepended zeros row)
         self.register_buffer("base_samples", torch.cat([torch.zeros_like(base[:1]), base], dim=0))
 
+        # Action bounds. The reference clips samples, normalizes the mean, and
+        # scales the residual by the *environment's* per-dimension limits
+        # (`action_lows`/`action_highs`). Passing them is the faithful setting;
+        # the symmetric `amax` fallback exists for checkpoints that predate it
+        # and for unit tests. Note `amax` is NOT interchangeable with RLP's
+        # `amax`, which is a tuned residual trust region rather than a bound.
+        if (action_lows is None) != (action_highs is None):
+            raise ValueError("pass both action bounds or neither")
+        if action_lows is None:
+            low = torch.full((self.a_dim,), -self.amax)
+            high = torch.full((self.a_dim,), self.amax)
+        else:
+            low = torch.as_tensor(action_lows, dtype=torch.float32).reshape(-1)
+            high = torch.as_tensor(action_highs, dtype=torch.float32).reshape(-1)
+            if low.numel() != self.a_dim or high.numel() != self.a_dim:
+                raise ValueError(f"action bounds must have {self.a_dim} entries")
+            if bool((high <= low).any()):
+                raise ValueError("every action high must exceed its low")
+        self.register_buffer("a_low", low)
+        self.register_buffer("a_high", high)
+
     # ------------------------------------------------------------- sampling
+    @property
+    def bounds(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return cast(torch.Tensor, self.a_low), cast(torch.Tensor, self.a_high)
+
+    def clip(self, plan: torch.Tensor) -> torch.Tensor:
+        """Clamp to the per-dimension action bounds."""
+        low, high = self.bounds
+        return plan.clamp(low.to(plan.dtype), high.to(plan.dtype))
+
     def plans(self, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
         """Reparameterize the fixed samples: ``(B, N, H, a)``, clipped."""
         base = cast(torch.Tensor, self.base_samples).to(dtype=mean.dtype)
-        return (mean.unsqueeze(1) + std.unsqueeze(1) * base).clamp(-self.amax, self.amax)
+        return self.clip(mean.unsqueeze(1) + std.unsqueeze(1) * base)
 
     def initial(
         self, batch: int, device: str | torch.device, dtype: torch.dtype = torch.float32
@@ -266,7 +298,8 @@ class DMPONet(nn.Module):
         self, mean: torch.Tensor, std: torch.Tensor | None, std_scale: float | torch.Tensor
     ) -> list[torch.Tensor]:
         batch = mean.shape[0]
-        feats = [((mean + self.amax) / (2.0 * self.amax)).reshape(batch, -1)]
+        low, high = self.bounds
+        feats = [((mean - low) / (high - low)).reshape(batch, -1)]
         if self.learn_std:
             if std is None:
                 raise ValueError("learn_std=True requires a covariance input")
@@ -313,7 +346,8 @@ class DMPONet(nn.Module):
         def head(index: int) -> torch.Tensor:
             return out[:, plan_size * index : plan_size * (index + 1)].view(batch, self.horizon, self.a_dim)
 
-        proposed = torch.tanh(head(0)) * (2.0 * self.amax)
+        low, high = self.bounds
+        proposed = torch.tanh(head(0)) * (high - low)
         index = 1
         gate: torch.Tensor | None = None
         if self.gated:
@@ -349,7 +383,7 @@ class DMPONet(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Deterministic iteration: the update's locations, clipped."""
         step = self.update(mean, std, plans, costs)
-        return step.mean_loc.clamp(-self.amax, self.amax), step.std_loc, step.mppi
+        return self.clip(step.mean_loc), step.std_loc, step.mppi
 
     # ----------------------------------------------------------- warm start
     def warm_start(self, mean: torch.Tensor, std: torch.Tensor, executed: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -370,8 +404,9 @@ class DMPONet(nn.Module):
         batch, plan_size = mean.shape[0], self.horizon * self.a_dim
         features = self._normalized(mean, std, shifted_std * 10.0)
         out = cast(torch.Tensor, self.shift_model(torch.cat(features, dim=-1)))
-        residual = torch.tanh(out[:, :plan_size]).view(batch, self.horizon, self.a_dim) * (2.0 * self.amax)
-        new_mean = (shifted_mean + residual).clamp(-self.amax, self.amax)
+        low, high = self.bounds
+        residual = torch.tanh(out[:, :plan_size]).view(batch, self.horizon, self.a_dim) * (high - low)
+        new_mean = self.clip(shifted_mean + residual)
         if self.learn_std:
             log_std = out[:, plan_size : 2 * plan_size].view(batch, self.horizon, self.a_dim)
             shifted_std = (shifted_std * log_std.exp()).clamp(_STD_MIN, _STD_MAX)
@@ -397,7 +432,7 @@ class DMPONet(nn.Module):
                 if step.std_scale is None
                 else step.std_loc + step.std_scale * torch.randn_like(step.std_loc)
             )
-        new_mean = new_mean.clamp(-self.amax, self.amax)
+        new_mean = self.clip(new_mean)
         new_std = new_std.clamp(_STD_MIN, _STD_MAX)
         return new_mean, new_std, step.log_prob(new_mean, new_std), step
 

@@ -5,7 +5,12 @@ horizon: 5             # plan blocks, must match the world model's frameskip cad
 iterations: 1          # inner-loop iterations per decision (reference: 1)
 num_samples: 256       # particles per iteration; fixes the actor's input width
 hidden: 256            # single hidden layer, ReLU (reference actor_params)
-action_limit: 2.5      # plan clip, the repository's amax
+action_range: 1.0      # the env's raw action box is [-action_range, action_range];
+                       # DMPO clips to it per-dimension after z-scoring, as the
+                       # reference does with action_lows/action_highs. null =
+                       # fall back to the symmetric action_limit below.
+action_limit: 2.5      # symmetric fallback clip; unlike RLP's amax this is a
+                       # BOUND, not a tuned residual trust region
 init_std: 1.0          # initial sampling covariance (diagonal)
 temperature: 0.05      # MPPI temperature of the update the actor residuals on
 step_size: 0.8         # MPPI dynamic-mirror-descent step size

@@ -18,12 +18,10 @@
 # 6 jobs x H200:4 = 24 GPUs. Every arm is evaluated at BOTH h25 and h100 on
 # draws 50/51 (selection) and 42/43/44 (reporting), 50 episodes each.
 #
-# Requires a GitHub PAT in the environment -- the harness clones
-# Value_Metric_LeWM for stable-worldmodel. `--secret NAME` reads it from the
-# environment, so no secret value ever appears in this file or in the command
-# line. Run as:
+# Credentials are resolved by the API server from the platform secrets manager
+# (the `secrets:NAME` reference form in tworoom_split_rerun.yaml), so nothing
+# needs to be exported and no secret value appears here or on a command line.
 #
-#     export GIT_TOKEN=<pat>
 #     bash scripts/sky/launch_tworoom_20260817.sh
 #
 # SMOKE=1 runs the tiny end-to-end path check instead (one config, one seed,
@@ -33,7 +31,6 @@
 #     SMOKE=1 bash scripts/sky/launch_tworoom_20260817.sh
 set -euo pipefail
 
-: "${GIT_TOKEN:?export GIT_TOKEN=<github PAT> before launching}"
 SMOKE=${SMOKE:-0}
 DATE=20260817
 SUFFIX=""; [ "$SMOKE" = 1 ] && SUFFIX="-smoke"
@@ -48,7 +45,6 @@ launch() {           # launch <base> <grid> <seed> <cachekey>
   echo "==> $NAME"
   sky jobs launch scripts/sky/tworoom_split_rerun.yaml \
     -n "$NAME" --priority p1 -y --async \
-    --secret GIT_TOKEN --secret WANDB_API_KEY \
     --env ENVNAME=tworoom \
     --env BASE="$BASE" \
     --env GRID="$GRID" \

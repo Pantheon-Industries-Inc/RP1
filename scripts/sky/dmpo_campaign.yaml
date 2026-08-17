@@ -27,8 +27,10 @@ envs:
   ENVNAME: cube             # cube | tworoom | reacher
   BASE: lewm                # cube: lewm|pldm   tworoom/reacher: lejepa|pldm
   VALUE_FRAMES: "1"         # frames in the critic window (reacher runs 1 and 3)
-  AMAX: "1.6"              # plan clip; matches the RLP cell (cube lewm 1.6 / pldm 4.5,
-                            # reacher w3 lejepa 2.2 / pldm 1.8, tworoom 2.5)
+  ACTION_RANGE: "1.0"       # the env's raw action box; DMPO clips per-dimension
+                            # to it after z-scoring, as the reference does.
+                            # "null" falls back to the symmetric AMAX below.
+  AMAX: "2.5"               # symmetric fallback only (unused when ACTION_RANGE is set)
   OBJECTIVE: pathwise       # pathwise (model=dmpo) | ppo (model=dmpo_ppo, offline DMPO)
   PPO_ITERATIONS: "400"     # policy-improvement rounds when OBJECTIVE=ppo
   PPO_DECISIONS: "4"        # closed-loop decisions per imagined episode
@@ -210,7 +212,7 @@ run: |
       pixi run train $TRAINER wm="$WM" \
         cache="$CD/${NAME}_fs5.pt" h5="$CD/${NAME}_actions.h5" \
         init_value="$D/value_td" seed=$S \
-        core.planner.action_limit=$AMAX \
+        core.planner.action_range=$ACTION_RANGE core.planner.action_limit=$AMAX \
         core.planner.num_samples=$NUM_SAMPLES core.planner.iterations=$DMPO_ITERS \
         $DMPO_EXTRA
       # concurrent seeds make `ls -dt` ambiguous: read this seed's own run dir

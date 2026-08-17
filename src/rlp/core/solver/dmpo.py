@@ -53,6 +53,7 @@ class DMPOCheckpoint(TypedDict):
     value: str
     sd: dict[str, torch.Tensor]
     amax: NotRequired[float]
+    action_range: NotRequired[float | None]
     init_std: NotRequired[float]
     hidden: NotRequired[int]
     temperature: NotRequired[float]
@@ -128,7 +129,16 @@ class DMPOSolver(CEMSolver):
             mean_search_std=ck.get("mean_search_std", 0.1),
             std_search_std=ck.get("std_search_std", 0.01),
         ).to(self.device)
-        self.net.load_state_dict(ck["sd"])
+        # Checkpoints written before the per-dimension action bounds carry no
+        # a_low/a_high buffers; derive them from the symmetric fallback rather
+        # than loading non-strictly, which would hide a genuine key mismatch.
+        state = dict(ck["sd"])
+        for key, fill in (("a_low", -float(ck.get("amax", 2.5))), ("a_high", float(ck.get("amax", 2.5)))):
+            if key not in state:
+                state[key] = torch.full((int(ck["a_dim"]),), fill)
+        self.net.load_state_dict(state)
+        low, high = self.net.bounds
+        logger.info(f"DMPO action bounds: [{float(low.min()):.2f}, {float(high.max()):.2f}]")
         self.net.eval()
         self.net.requires_grad_(False)
         self._actor_horizon = int(ck["horizon"])

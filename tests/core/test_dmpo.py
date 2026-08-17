@@ -163,3 +163,29 @@ def test_critic_reads_the_auxiliary_state() -> None:
     mean = torch.randn(B, H, A_DIM)
     value = critic(torch.randn(B, 8), torch.randn(B, 8), mean, torch.ones_like(mean))
     assert value.shape == (B,)
+
+
+def test_environment_action_bounds_replace_the_symmetric_clip() -> None:
+    """Per-dimension bounds are the faithful setting; amax is only a fallback."""
+    low = torch.tensor([-3.5, -1.5, -2.0, -4.6] * 1)
+    high = torch.tensor([3.4, 1.5, 2.5, 3.3])
+    net = _net(action_lows=low, action_highs=high)
+    mean, std = net.initial(B, "cpu")
+
+    plans = net.plans(mean + 10.0, std)  # push hard against the ceiling
+    assert bool((plans <= high + 1e-6).all()) and bool((plans >= low - 1e-6).all())
+    # the asymmetric ceiling is respected per dimension, not collapsed to one scalar
+    assert torch.allclose(plans.reshape(-1, A_DIM).max(dim=0).values, high, atol=1e-5)
+
+    costs = plans.pow(2).sum(dim=(2, 3))
+    updated, _, _ = net(mean, std, plans, costs)
+    assert bool((updated <= high + 1e-6).all()) and bool((updated >= low - 1e-6).all())
+
+
+def test_bounds_must_be_well_formed() -> None:
+    with pytest.raises(ValueError, match="both action bounds or neither"):
+        _net(action_lows=torch.zeros(A_DIM))
+    with pytest.raises(ValueError, match="must have"):
+        _net(action_lows=torch.zeros(A_DIM + 1), action_highs=torch.ones(A_DIM + 1))
+    with pytest.raises(ValueError, match="must exceed"):
+        _net(action_lows=torch.ones(A_DIM), action_highs=torch.zeros(A_DIM))

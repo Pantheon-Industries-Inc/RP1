@@ -84,6 +84,21 @@ class WindowSampler:
     def latent_dim(self) -> int:
         return int(self.z.shape[-1])
 
+    def action_bounds(self, action_range: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+        """The environment's action limits in the trainer's z-scored units.
+
+        Actions are z-scored by the dataset statistics, so the env's raw box
+        ``[-action_range, action_range]`` maps to a per-dimension asymmetric
+        range. Planners that clip to a symmetric constant instead are searching
+        a different set than the environment allows — and, for the sampling
+        baselines, a different set than CEM/MPPI search. Blocks are laid out
+        frameskip-major (``blocks()`` flattens frameskip consecutive rows), so
+        the per-dimension bounds tile.
+        """
+        low = (-action_range - self.action_mean) / self.action_std
+        high = (action_range - self.action_mean) / self.action_std
+        return np.tile(low, self.frameskip), np.tile(high, self.frameskip)
+
     def _block(self, episode: int, index: int) -> np.ndarray:
         offset = self.frameskip * index
         if self.ep_len is not None:

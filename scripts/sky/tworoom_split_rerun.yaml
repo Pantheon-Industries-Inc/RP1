@@ -82,8 +82,12 @@ envs:
   EXPERIMENT_TAG: tworoom-refine-20260809
 
 secrets:
-  WANDB_API_KEY: null
-  GIT_TOKEN: null          # fine-grained PAT, Contents:Read-only on this repo
+  # References, not values: the API server resolves these from the platform
+  # secrets manager at launch, so no credential ever appears in this file, on a
+  # command line, or in a shell profile. GIT_TOKEN is a fine-grained PAT with
+  # Contents:Read-only on Value_Metric_LeWM.
+  - secrets:WANDB_API_KEY
+  - secrets:GIT_TOKEN
 
 resources:
   accelerators: H200:4

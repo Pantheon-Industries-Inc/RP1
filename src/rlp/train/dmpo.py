@@ -113,6 +113,19 @@ def _run(cfg: DictConfig) -> None:
     critic.requires_grad_(False)
     value = cast(ValueFunction, critic)
 
+    # Faithful bounds: the env's own action limits, not a tuned scalar clip.
+    # action_range=null falls back to the symmetric `action_limit`.
+    if a.action_range is None:
+        action_lows = action_highs = None
+        logger.info(f"DMPO clipping plans to the symmetric fallback +-{float(a.amax)}")
+    else:
+        low, high = sampler.action_bounds(float(a.action_range))
+        action_lows = torch.from_numpy(low).float()
+        action_highs = torch.from_numpy(high).float()
+        logger.info(
+            f"DMPO clipping plans to the environment's action bounds in z-scored units: "
+            f"[{low.min():.2f}, {high.max():.2f}] across {low.size} plan dimensions"
+        )
     net = DMPONet(
         horizon=a.horizon,
         a_dim=sampler.a_dim,
@@ -131,6 +144,8 @@ def _run(cfg: DictConfig) -> None:
         init_scale=a.init_scale,
         halton=a.halton,
         seed_val=a.seed_val,
+        action_lows=action_lows,
+        action_highs=action_highs,
     ).to(dev)
     optimizer = torch.optim.AdamW(net.parameters(), lr=a.actor_lr, weight_decay=a.weight_decay)
 
@@ -235,6 +250,7 @@ def _run(cfg: DictConfig) -> None:
             "num_samples": int(a.num_samples),
             "hidden": int(a.hidden),
             "amax": float(a.amax),
+            "action_range": None if a.action_range is None else float(a.action_range),
             "init_std": float(a.init_std),
             "temperature": float(a.temperature),
             "step_size": float(a.step_size),
