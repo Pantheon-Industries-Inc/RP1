@@ -10,6 +10,13 @@
 %   DMPO ......................... docs/dmpo/RESULTS_dmpo_20260816.md
 %   L2O-MPC ...................... docs/l2o/RESULTS_L2O_20260816.md
 %   TwoRoom value+CEM remeasure .. docs/campaigns/2026-08-17/RESULTS_tworoom_improvement.md
+%
+% Reacher is the window-1 (single-frame critic) table: value rows are the
+% App C.3 family (jobs rlp12-measure-reacher-*-value-window1-r2), RP1 is the
+% window-1 ablation at expand=0 / recipe amax (LeWM job 6770 amax 2.2,
+% PLDM campaign rlp12_reacher_w1 amax 1.8), DMPO/L2O are their w1 arms.
+% The window-3 numbers for every row are in the same two records if the
+% protocol-matched table is wanted instead.
 
 % ---------------------------------------------------------------- TwoRoom ----
 \begin{table}[t]
@@ -59,7 +66,8 @@
 \begin{table}[t]
   \centering
   \captionsetup{font=small,skip=4pt}
-  \caption{\textbf{Reacher success rate (\%), first-hit at $h25$.}}
+  \caption{\textbf{Reacher success rate (\%), first-hit at $h25$, single-frame
+  (window-1) costs.}}
   \label{tab:reacher}
   \footnotesize
   \renewcommand{\arraystretch}{1.08}
@@ -71,30 +79,34 @@
   \cmidrule(lr){3-4}\cmidrule(l){5-6}
   planner & rollouts & $\tau{=}.1$ & $\tau{=}.05$ & $\tau{=}.1$ & $\tau{=}.05$ \\
   \midrule
-  latent + CEM   & $9000$ & 99.0 & 94.3 & 98.3 & 89.3 \\
-  latent + MPPI  & $9000$ & 87.7 & 68.0 & 85.7 & 64.3 \\
-  latent + Adam  & $3000$ & 97.3 & 80.0 & 96.7 & 77.3 \\
+  latent + CEM   & $9000$ & \textbf{98.7} & 80.3 & 96.7 & 80.0 \\
+  latent + MPPI  & $9000$ & 63.7 & 39.3 & 64.7 & 35.7 \\
+  latent + Adam  & $3000$ & 94.0 & 66.0 & 94.3 & 66.0 \\
   \midrule
-  value + CEM    & $9000$ & 99.3 & 89.3 & 98.3 & 84.7 \\
-  value + MPPI   & $9000$ & 86.0 & 66.0 & 83.7 & 61.7 \\
-  value + Adam   & $3000$ & 98.3 & 81.0 & 97.3 & 76.7 \\
+  value + CEM    & $9000$ & 97.3 & 82.0 & 96.0 & 76.0 \\
+  value + MPPI   & $9000$ & 74.0 & 42.0 & 60.0\rlap{$^{\ddagger}$} & 38.7\rlap{$^{\ddagger}$} \\
+  value + Adam   & $3000$ & 88.0 & 64.7 & 92.7\rlap{$^{\ddagger}$} & 66.7\rlap{$^{\ddagger}$} \\
   \midrule
-  DMPO           & $256$  & 92.7\rlap{$^{\diamond}$} & 75.8\rlap{$^{\diamond}$} & 95.1 & 82.9 \\
-  L2O-MPC        & $256$  & 93.3 & 74.9 & 94.7 & 77.3 \\
+  DMPO           & $256$  & 92.4\rlap{$^{\diamond}$} & 67.8\rlap{$^{\diamond}$} & 90.0 & 62.9 \\
+  L2O-MPC        & $256$  & 90.9 & 69.6 & 89.3 & 60.9 \\
   \midrule
   \textbf{RP1 (ours)} & $9$
-  & \textbf{99.9} & \textbf{97.1}
-  & \textbf{99.4} & \textbf{91.2} \\
+  & \textbf{98.7} & \textbf{88.7}
+  & \textbf{97.8} & \textbf{82.0} \\
   \bottomrule
   \end{tabular*}
 
   \vspace{3pt}
   {\footnotesize\setlength{\parindent}{0pt}\raggedright
   \indent First-hit success (\%) at goal tolerance $\tau$ (rad), held-out,
-  open loop with receding horizon 5. All planners use 3-frame-window costs, so
-  the rows differ in optimizer and objective only. RP1 averages 6 actor seeds
-  $\times$ 6 eval draws; the baseline rows use draws 42--47, DMPO 3 seeds
-  $\times$ draws 42--44, L2O-MPC 3 seeds $\times$ draws 42--44.
+  open loop with receding horizon 5. All planners use \emph{single-frame}
+  (window-1) costs, so the rows differ in optimizer and objective only; the
+  paper's latent cost is single-frame terminal $L_2$ by construction. RP1 is the
+  window-1 ablation at expansion weight $0$ (3 seeds $\times$ draws 42--44);
+  DMPO and L2O-MPC are 3 seeds $\times$ draws 42--44; the sampling rows use
+  draws 42--47.
+  $^{\ddagger}$Paper-quoted (App.~C.3); the other value rows are our
+  reproductions of those cells, which match the published numbers exactly.
   $^{\diamond}$Measured with the symmetric clip $a_{\max}{=}2.2$ rather than the
   environment's per-dimension action bounds; the matched PLDM cells moved
   $\le 1$ point when re-measured.\par}

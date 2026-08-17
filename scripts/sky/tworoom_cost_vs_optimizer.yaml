@@ -172,21 +172,11 @@ run: |
           core.solver.actor_path="$ACTOR" core.solver.value_path="$COTRAIN" \
           core.solver.init_mode=value core.solver.init_samples=$NS
       done
-      # MPPI polish seeded from the refined plan: learned refinement gets
-      # close, a little sampling closes the tail.
-      run_eval "F_rlp_mppi5_a${AS}" $ES $HOR $RANGE core/solver=lip \
-        core.solver.actor_path="$ACTOR" core.solver.value_path="$COTRAIN" \
-        core.solver.n_steps=5 core.solver.lam=1.0
-      # both coverage fixes together
-      run_eval "G_rlp_vinit64_mppi5_a${AS}" $ES $HOR $RANGE core/solver=lip \
-        core.solver.actor_path="$ACTOR" core.solver.value_path="$COTRAIN" \
-        core.solver.init_mode=value core.solver.init_samples=64 \
-        core.solver.n_steps=5 core.solver.lam=1.0
-      # restarts: ranked last (PushT counterstrike found inference restarts
-      # plateau, and restarts hurt on v2WM) but cheap as a control.
-      run_eval "H_rlp_restart4_a${AS}" $ES $HOR $RANGE core/solver=lip \
-        core.solver.actor_path="$ACTOR" core.solver.value_path="$COTRAIN" \
-        core.solver.restarts=4 core.solver.restart_noise=0.5
+      # An MPPI polish (n_steps>0) and multi-restart were considered and
+      # deliberately EXCLUDED: n_steps=5 at 300 samples is 1,500 rollouts per
+      # decision, which would abandon the compute claim this cell exists to
+      # defend, and restarts already measured a plateau on PushT. Value-init
+      # is the coverage fix that stays inside the budget.
       # crosses the cost fix with the search fix, so the two are not confounded
       run_eval "I_rlp_vinit64_td_a${AS}" $ES $HOR $RANGE core/solver=lip \
         core.solver.actor_path="$ACTOR" core.solver.value_path="$D/value_td" \
