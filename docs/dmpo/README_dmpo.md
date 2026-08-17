@@ -157,6 +157,15 @@ Reporting protocol is the repository's: hyperparameter selection on eval seeds
 50/51, report on 42/43/44 × 50 episodes, and **three optimizer training seeds**
 per quoted cell.
 
+## Results
+
+| environment | record |
+|---|---|
+| TwoRoom | [RESULTS_dmpo_tworoom.md](RESULTS_dmpo_tworoom.md) |
+| Reacher | [RESULTS_dmpo_reacher.md](RESULTS_dmpo_reacher.md) |
+| OGBench Cube | [RESULTS_dmpo_ogbench_cube.md](RESULTS_dmpo_ogbench_cube.md) |
+| campaign protocol, wall-clock, provenance | [RESULTS_dmpo_20260816.md](RESULTS_dmpo_20260816.md) |
+
 ## Cluster campaign
 
 `scripts/sky/dmpo_campaign.yaml` runs one cell (environment × base × value
