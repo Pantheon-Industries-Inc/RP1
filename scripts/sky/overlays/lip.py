@@ -66,11 +66,22 @@ class PlannerNet(nn.Module):
 
     def __init__(self, z_dim, horizon=5, a_dim=25, hidden=512, amax=2.5,
                  feed="none", use_zg=False, use_gate=False, use_z0=False,
-                 use_grad=True, head_scale=1.0):
+                 use_grad=True, head_scale=1.0, vnorm="none"):
         super().__init__()
         self.h, self.a, self.amax, self.feed = horizon, a_dim, amax, feed
         self.use_zg, self.use_gate, self.use_z0 = use_zg, use_gate, use_z0
         self.use_grad = use_grad
+        # vnorm: conditioning of the two value-derived inputs. 'none' = the
+        # shipped behaviour (raw E, raw grad). With gamma=1 the E channel is
+        # literally steps-to-go, so a goal 4x further away presents a 4x larger
+        # unnormalised scalar to an un-normalised MLP: on TwoRoom the actor
+        # trains with E in the h25 band and h100 conditions it far outside that
+        # band. 'log' = log1p(E) compresses the band; 'loggn' additionally
+        # RMS-normalises grad_A V, making the actor invariant to any affine
+        # rescaling of V (the property that makes DMPO/CEM horizon-robust).
+        # in_dim is unchanged, so state_dicts stay interchangeable across
+        # vnorm settings.
+        self.vnorm = str(vnorm)
         extra = {"none": 0, "end": z_dim, "traj": horizon * z_dim}[feed]
         # use_zg=False ('vonly-ized' MLP): the raw goal embedding is dropped —
         # the goal reaches the actor only through the teacher's signals
@@ -105,10 +116,16 @@ class PlannerNet(nn.Module):
 
     def forward(self, A, gradA, E, z0, zg, ztraj=None, k=0, vtraj=None):
         B = A.shape[0]
+        E_in = E.reshape(B, 1)
+        if self.vnorm in ("log", "loggn"):
+            E_in = torch.log1p(E_in.clamp_min(0.0))
         parts = [A.reshape(B, -1)]
         if self.use_grad:
-            parts.append(gradA.reshape(B, -1))
-        parts.append(E.reshape(B, 1))
+            g = gradA.reshape(B, -1)
+            if self.vnorm == "loggn":
+                g = g / g.pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(1e-8)
+            parts.append(g)
+        parts.append(E_in)
         if self.use_z0:
             parts.append(z0)
         if self.use_zg:
@@ -570,7 +587,16 @@ class LIPSolver(CEMSolver):
                                     use_zg=ck.get("use_zg", not v4),
                                     use_gate=ck.get("use_gate", not v4),
                                     use_z0=ck.get("use_z0", not v4),
-                                    use_grad=ck.get("use_grad", True)).to(self.device)
+                                    use_grad=ck.get("use_grad", True),
+                                    vnorm=ck.get("vnorm", "none")).to(self.device)
+        # A vnorm actor deployed with raw E is a guaranteed silent null, so say
+        # out loud which conditioning this cell actually loaded.
+        if getattr(self.actor, "vnorm", "none") != "none":
+            print(f"[lip] actor vnorm={self.actor.vnorm}", flush=True)
+        elif ck.get("vnorm", "none") != "none":
+            raise ValueError(
+                f"checkpoint trained with vnorm={ck['vnorm']!r} but the "
+                f"reconstructed {self.kind!r} actor has no vnorm support")
         self.actor.load_state_dict(ck["sd"])
         self.actor.eval()
         self._actor_horizon = ck["horizon"]        # plan length must match the trained net

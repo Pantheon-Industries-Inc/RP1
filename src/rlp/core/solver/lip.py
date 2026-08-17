@@ -200,6 +200,16 @@ class LIPSolver(CEMSolver):
         if not isinstance(raw_checkpoint, dict):
             raise TypeError("LIP checkpoint must contain a mapping")
         ck = cast(LIPCheckpoint, raw_checkpoint)
+        if ck.get("vnorm", "none") != "none":
+            # The port's PlannerNet consumes the raw critic value E. Loading a
+            # vnorm-trained state_dict here would deploy the actor on an input
+            # scale it never saw — in_dim is identical, so it fails silently and
+            # only shows up as a mysteriously weak success rate.
+            raise ValueError(
+                f"checkpoint was trained with vnorm={ck['vnorm']!r}; this "
+                "PlannerNet has no vnorm support and would silently feed raw E. "
+                "Evaluate through scripts/sky/overlays/lip.py, or port the flag."
+            )
         self.kind = ck.get("kind")
         if self.kind not in (
             "lip",

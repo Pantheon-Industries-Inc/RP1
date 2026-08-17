@@ -65,6 +65,11 @@ envs:
   FULLCACHE: "0"           # dinowm tworoom: 1 = full 284 GB cache + fresh teacher
   BATCH: "128"             # actor batch; cube deployed recipe uses 256; dinowm K=8 needs 8 (memory)
   INCLUDE_WINNERS: "0"     # 1 = add the paper App C.1 per-cell winner configs
+  INCLUDE_BASELINE: "0"    # 1 = run the PLANNERS x OFFSETS matrix (e.g. value+CEM)
+                           #     in THIS job, against the same critic/WM/split the
+                           #     actor arms use, then fall through to the actor
+                           #     grid instead of exiting. Removes the cross-job
+                           #     confound in RLP-vs-CEM comparisons.
   ONLYCFG: ""              # restrict the grid to one config-name prefix
   PLANNERS: "cem adam mppi" # GRID=planners: sampling/gradient arms, base fixed
   PLANNER_COSTS: ""         # optional explicit subset: latent | value | "latent value"
@@ -558,6 +563,56 @@ run: |
       done
     fi
   fi
+  # ---- GRID=pldm_h25_probe: the TwoRoom/PLDM h25 optimizer-gap probe
+  # (2026-08-17). value+CEM reaches 100.0 on this cell with the same WM and a
+  # sibling critic at 9,000 rollouts/decision while RLP reaches 98.2 at 9, so
+  # the residual is attacked ONLY on the refiner side. Two dose-response
+  # ladders sharing ONE control, which is the shipped App-C.1 PLDM recipe
+  # RETRAINED IN THIS JOB (never the banked 98.2, which came from a different
+  # job, cache and TD teacher):
+  #   refinement depth K   : 8 (= ctrl) / 12 / 16   at amax 1.8
+  #   action clip amax     : 1.0 / 1.4 / 1.6 / 1.8 (= ctrl)  at K=8
+  # amax below 1.8 is the only unexplored half of that axis on this cell (the
+  # live terminal_search grid sweeps 2.4-3.2 and the shipped winner sits below
+  # all of it); K has only ever been tested DOWNWARD here (4, 2).
+  # Rows are ordered longest-cell-first so the K=16 cell starts in wave 1.
+  # Field 12 = K; field 11 carries both eval offsets as a COMMA list because
+  # the row is word-split and a space there would be eaten by field 12.
+  if [ "${GRID:-axes}" = pldm_h25_probe ]; then
+    [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] \
+      || { echo "GRID=pldm_h25_probe requires ENVNAME=tworoom BASE=pldm" >&2; exit 2; }
+    CFG=()
+    CFG+=("k16_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 16")
+    CFG+=("k12_a1.8_m0.0_l1e-3 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 12")
+    CFG+=("ctrl_a1.8_m0.0_l1e-3_k8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a1.0_m0.0_l1e-3_k8 1.0 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a1.4_m0.0_l1e-3_k8 1.4 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    CFG+=("a1.6_m0.0_l1e-3_k8 1.6 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+  fi
+  # GRID=escale (2026-08-17). TwoRoom/LeJEPA h100 deficit (94.2 vs 100.0 at
+  # h25, and behind both DMPO 99.1 and value+CEM 96.0 on the same cell).
+  # Mechanism: the v4 actor's first layer is (512,101) = [A(50), grad_A V(50),
+  # E(1)] and E is the RAW critic value -- with use_z0/use_zg off it is the
+  # ONLY channel carrying goal distance. At gamma=1 E is steps-to-go: h25
+  # collapses it within one plan, h100 holds it 4x higher for its first
+  # replans, outside the band training occupies, and ||dA|| is linear in E so
+  # the cumulative clamp amax pins a growing fraction of the plan. DMPO and CEM
+  # consume V only after z-scoring/ranking and are structurally immune.
+  # Arms: shipped control, log1p(E), log1p(E)+RMS-normalised grad, log1p(E) at
+  # a looser clamp, and the rival fix (train the goal band out to max_delta=20)
+  # to see whether widening the training range works on its own.
+  # Field 11 carries both eval offsets as a COMMA list (the row is word-split,
+  # so a space there would be eaten by the next field); field 12 = K (shared
+  # with pldm_h25_probe, so it must be spelled out here); field 13 = --vnorm.
+  if [ "${GRID:-axes}" = escale ]; then
+    [ "$ENVNAME" = tworoom ] || { echo "GRID=escale requires tworoom" >&2; exit 2; }
+    CFG=()
+    CFG+=("escale_ctrl_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 none")
+    CFG+=("escale_vlog_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
+    CFG+=("escale_vinv_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 loggn")
+    CFG+=("escale_vlog_a2.6_m0.1_l1e-4 2.6 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
+    CFG+=("escale_md20_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 20 25,100 8 none")
+  fi
   # Exact OGBench terminal replication plus a horizon-matched training arm.
   # The only intentional training difference is the fs5 goal-range cap:
   # max_delta=10 reaches 50 primitive steps (the historical h25 recipe), while
@@ -690,7 +745,7 @@ run: |
   fi
   if [ "${GRID}" = planners ] || [ "${GRID}" = latent_planners ] || \
      [ "${GRID}" = measurements ] || [ "${GRID}" = telescoping_all ] || [ "${GRID}" = cube_all ] || \
-     [ "${GRID}" = cube_measurements ]; then
+     [ "${GRID}" = cube_measurements ] || [ "${INCLUDE_BASELINE:-0}" = 1 ]; then
     export VBASE_PY="${ENVNAME}_${BASE}"
     COSTS=${PLANNER_COSTS:-value}
     [ "${GRID}" = latent_planners ] && COSTS=latent
@@ -823,7 +878,10 @@ run: |
       echo "[measurements] hard failure: $(find "$FAILDIR" -maxdepth 1 -type f -name 'planner_*' | wc -l) cells" >&2
       exit 1
     fi
-    [ "${GRID}" = cube_all ] || [ "${GRID}" = telescoping_all ] || exit 0
+    # INCLUDE_BASELINE=1 means the planner matrix is a co-measured BASELINE for
+    # the actor grid in this same job, so fall through instead of exiting.
+    [ "${GRID}" = cube_all ] || [ "${GRID}" = telescoping_all ] \
+      || [ "${INCLUDE_BASELINE:-0}" = 1 ] || exit 0
   fi
 
   # SMOKE=1 collapses the grid to one config / one seed / tiny step count. It
@@ -836,7 +894,10 @@ run: |
 
   for SEED in ${TRAIN_SEEDS}; do
   for row in "${CFG[@]}"; do
-    set -- $row; NM=$1; AM=$2; MW=$3; LR=$4; AW=$5; WF=$6; MODE=${7:-randhorizon}; AFV=${8:-off}; TOBJ=${9:-terminal}; MD=${10:-$MAX_DELTA}; EOFF=${11:-$OFFSETS}
+    set -- $row; NM=$1; AM=$2; MW=$3; LR=$4; AW=$5; WF=$6; MODE=${7:-randhorizon}; AFV=${8:-off}; TOBJ=${9:-terminal}; MD=${10:-$MAX_DELTA}; EOFF=${11:-$OFFSETS}; K=${12:-8}; VN=${13:-none}
+    # field 11 may carry several offsets as a comma list ("25,100"); the row is
+    # word-split, so a space-separated value there would be eaten by field 12.
+    EOFF=$(echo "$EOFF" | tr ',' ' ')
     OUT=$PERSIST/actors/g_${ENVNAME}_${BASE}_${NM}_s${SEED}.pt
     S=$(acquire)
     (
@@ -849,6 +910,7 @@ run: |
           TRAIN_CRIT="$CRIT"
           [ "$ENVNAME" = tworoom ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
           AFVFLAG=""; [ "$AFV" = on ] && AFVFLAG="--align-from-value"
+          VNFLAG=""; [ "$VN" != none ] && VNFLAG="--vnorm $VN"
           # warm-frac "-" means drop the closed-loop term entirely
           if [ "$WF" = "-" ]; then WARMFLAG=""; else WARMFLAG="--train-warm --warm-state-frac $WF"; fi
           cube_train_lock
@@ -857,11 +919,11 @@ run: |
           --h5 "$H5" --wm "$CK" --cache ~/gc/fs5.pt --cache-td ~/gc/fs1.pt \
           --init-value "$TRAIN_CRIT" \
           --recipe-profile "$PROFILE" \
-          --arch v4 --horizon 5 --iters 8 --max-delta "$MD" \
+          --arch v4 --horizon 5 --iters "$K" --max-delta "$MD" \
           --amax $AM --mean-weight $MW --actor-lr $LR --actor-lr-final $LRF \
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
-          ${AFVFLAG} ${WARMFLAG} ${RECIPE} ${FROZEN_ARGS} \
+          ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${FROZEN_ARGS} \
           --steps ${STEPS} --batch ${BATCH} --n-step 50 --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
@@ -876,6 +938,13 @@ run: |
         echo "GRID $ENVNAME $BASE $NM s$SEED: REUSED persistent actor" >> "$DRV"
       fi
       if [ -f "$OUT" ]; then
+        # provenance guard: a row that silently fell back to a default (K, amax,
+        # mean-weight, lr) would produce a correctly-NAMED but wrong actor, and
+        # nothing downstream would notice. Assert the checkpoint's own
+        # train_args against the row before spending an eval on it.
+        python3 -c 'import sys, torch; p,k,am,mw,lr,md,vn = sys.argv[1:8]; d = torch.load(p, map_location="cpu", weights_only=False); a = d.get("train_args", {}); want = {"iters": int(k), "amax": float(am), "mean_weight": float(mw), "actor_lr": float(lr), "max_delta": int(md)}; bad = {n:(a.get(n),v) for n,v in want.items() if a.get(n) != v}; got_vn = d.get("vnorm", "none"); bad.update({} if got_vn == vn else {"vnorm": (got_vn, vn)}); assert not bad, bad; print("[args-ok] %s iters=%s amax=%s mw=%s lr=%s md=%s vnorm=%s" % (p.split("/")[-1], a["iters"], a["amax"], a["mean_weight"], a["actor_lr"], a["max_delta"], got_vn))' \
+          "$OUT" "$K" "$AM" "$MW" "$LR" "$MD" "$VN" \
+          || { touch "$FAILDIR/args_${NM}_s${SEED}"; echo "[args-mismatch] $NM s$SEED" >&2; }
         echo "GRID $ENVNAME $BASE $NM s$SEED: OK" >> "$DRV"
         # evaluate in the SAME slot: the actor lives on node-local disk and this
         # cluster is torn down at job end, so eval cannot be a later job.
@@ -913,7 +982,7 @@ run: |
       fi
       rmdir "$SLOT/$S" 2>/dev/null
     ) &
-    echo "launched $NM seed $SEED (amax $AM, mean-w $MW, lr $LR, align-w $AW, warm $WF, afv $AFV) slot $S"
+    echo "launched $NM seed $SEED (amax $AM, mean-w $MW, lr $LR, iters $K, align-w $AW, warm $WF, afv $AFV, offsets $EOFF) slot $S"
   done
   done
   wait
