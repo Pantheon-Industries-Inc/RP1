@@ -61,7 +61,8 @@ rows in `RESULTS_REPLICATION_20260814.md`. Jobs 7689/7690, 21 cells each.
 
 | planner | roll. | LeJEPA h25 | LeJEPA h100 | PLDM h25 | PLDM h100 |
 |---|---|---|---|---|---|
-| **DMPO** | 256 | 96.7 | **99.1** | 97.3 | 54.4 |
+| **DMPO** (env action bounds) | 256 | 96.9 | **100.0** | 97.8 | 92.7 |
+| *DMPO (amax=2.5, superseded)* | *256* | *96.7* | *99.1* | *97.3* | *54.4* |
 | value MPPI | 9k | 83.3 | — | 76.0 | — |
 | RLP (held-out) | 9 | **100.0** | 94.2 | **98.2** | **96.0** |
 | value CEM (remeasured 2026-08-17) | 9k | 100.0 | 94.7 | 100.0 | 88.7 |
@@ -72,15 +73,21 @@ An earlier version of these cells ran the authors' full-pool contract
 ~2–3 points at h25 on both bases. `TWOROOM_SPLIT=0` reproduces it; the cache
 name encodes the split so the two cannot collide.
 
-Two findings survive the corrected protocol:
+> **RETRACTED (2026-08-17): the "PLDM collapses at h100" finding was a
+> clipping artifact, not a property of the base.** Those cells clipped plans
+> to a symmetric `amax=2.5` inherited from the RLP recipe, while TwoRoom's real
+> action range in z-scored units is ±1.4. DMPO was therefore proposing actions
+> the environment cannot execute *and that the world model never saw in
+> training*; the resulting out-of-distribution rollout error compounded across
+> the 8 replans of h100. Clipping to the environment's own per-dimension bounds
+> (`action_range=1.0`, jobs 7730/7731) recovers PLDM h100 from **54.4 to 92.7**
+> (+38.3) and leaves every other TwoRoom cell within ~1 point. Reacher moved
+> ≤1 point on all four τ cells because its inherited `amax=1.8` was already
+> close to its true bound. Lesson: for a *sampling* planner the clip is part of
+> the dynamics contract, not a regularizer — RLP's `amax` is a tuned residual
+> trust region and must not be reused as a bound.
 
-1. **PLDM collapses at h100** (97.3 → 54.4) while LeJEPA does not
-   (96.7 → 99.1) — consistent across all three optimizer seeds (full-pool
-   run: 57.3 / 58.0 / 60.0). Same recipe, same critic settings, same
-   planner; the difference is the world-model base. DMPO's single learned
-   iteration is trained on 5-block problems and nothing in it adapts to the
-   8-replan regime, so on a base whose imagined rollouts drift more, that
-   surfaces as long-horizon collapse. RLP holds 96.0 there.
+One finding survives the corrected protocol:
 2. **TwoRoom LeJEPA h100 is a weak RLP cell, and DMPO is the evidence.**
    Under the identical held-out protocol RLP scores 94.2 against DMPO's 99.1
    (+4.9) — the only cell in this campaign where DMPO beats RLP. value+CEM
@@ -119,12 +126,13 @@ decelerating).
    DMPO strength: value+CEM also beats RLP there. Under a shared frozen model
    and cost, the learned sampling-reduction is otherwise consistently weaker
    than the learned gradient-refinement.
-3. **Horizon degrades DMPO faster than RLP, and base-dependently.** Cube
-   h25→h100 drops DMPO ~10–17 points on both bases. On TwoRoom the split is
-   stark: LeJEPA holds (96.7→99.1) while PLDM collapses (97.3→54.4) against
-   RLP's 96.0 — consistent across all three optimizer seeds. DMPO's single
-   learned iteration was trained on 5-block problems and nothing in it
-   compensates for the 8-replan regime.
+3. **Horizon degradation is mostly an artifact of the action clip.** With the
+   environment's own bounds, TwoRoom h25→h100 costs DMPO nothing on LeJEPA
+   (96.9→100.0) and ~5 points on PLDM (97.8→92.7) — against 54.4 under the
+   inherited symmetric clip. The Cube h100 numbers in this record still use
+   the old clip and are being re-measured (jobs 7728/7729); expect them to
+   move up, since Cube LeWM's `amax=1.6` was *narrower* than its true bound
+   while PLDM's 4.5 was near it.
 4. **DMPO cannot be run at RLP's rollout budget, and loses at 28x it.**
    RLP spends 9 forward unrolls per decision; DMPO spends 256 (its reference
    operating point) and loses in 13 of 14 comparable cells. A rollout-matched
