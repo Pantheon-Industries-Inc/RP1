@@ -595,13 +595,24 @@ run: |
     [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] \
       || { echo "GRID=pldm_h25_probe requires ENVNAME=tworoom BASE=pldm" >&2; exit 2; }
     CFG=()
-    CFG+=("ctrl_a1.8_m0.0_l1e-3_k8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a1.0_m0.0_l1e-3_k8 1.0 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a1.2_m0.0_l1e-3_k8 1.2 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a1.4_m0.0_l1e-3_k8 1.4 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a1.6_m0.0_l1e-3_k8 1.6 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a2.0_m0.0_l1e-3_k8 2.0 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
-    CFG+=("a2.2_m0.0_l1e-3_k8 2.2 0.0 1e-3 0.00 - terminal off terminal 12 25,100 8")
+    # ---- h25-trained (max_delta 12), scored at 25. THE TARGET CELL: the amax
+    # dose-response, plus the conditioning lever at the ctrl clip.
+    CFG+=("pl25_ctrl_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a1.0 1.0 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a1.2 1.2 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a1.4 1.4 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a1.6 1.6 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a2.0 2.0 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_a2.2 2.2 0.0 1e-3 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("pl25_vlog_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25 8 log")
+    CFG+=("pl25_vinv_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 25 8 loggn")
+    # ---- h100-trained, scored at 100. Not the target cell (RLP already leads
+    # value+CEM there, 96.0 vs 88.7), but with horizon-matched training the
+    # h100 number can no longer be read off the h25 actor, so it needs its own
+    # arms. md12 anchors the banked 96.0 condition.
+    CFG+=("pl100_ctrl_md12_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 12 100 8 none")
+    CFG+=("pl100_ctrl_md20_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 20 100 8 none")
+    CFG+=("pl100_vlog_md20_a1.8 1.8 0.0 1e-3 0.00 - terminal off terminal 20 100 8 log")
   fi
   # GRID=escale (2026-08-17). TwoRoom/LeJEPA h100 deficit (94.2 vs 100.0 at
   # h25, and behind both DMPO 99.1 and value+CEM 96.0 on the same cell).
@@ -621,15 +632,21 @@ run: |
   if [ "${GRID:-axes}" = escale ]; then
     [ "$ENVNAME" = tworoom ] || { echo "GRID=escale requires tworoom" >&2; exit 2; }
     CFG=()
-    CFG+=("escale_ctrl_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 none")
-    CFG+=("escale_vlog_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
-    CFG+=("escale_vinv_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 loggn")
-    CFG+=("escale_vlog_a2.6_m0.1_l1e-4 2.6 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
-    CFG+=("escale_vlog_a1.4_m0.1_l1e-4 1.4 0.1 1e-4 0.00 - terminal off terminal 12 25,100 8 log")
-    CFG+=("escale_md20_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 20 25,100 8 none")
-    # both mechanisms at once: if compressing E and widening the trained goal
-    # band are independent contributions, this is the cell that should win.
-    CFG+=("escale_vlogmd20_a1.8_m0.1_l1e-4 1.8 0.1 1e-4 0.00 - terminal off terminal 20 25,100 8 log")
+    # ---- h25-trained: max_delta 12 (the shipped TwoRoom recipe), scored at 25.
+    CFG+=("es25_ctrl_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25 8 none")
+    CFG+=("es25_vlog_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25 8 log")
+    CFG+=("es25_vinv_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 12 25 8 loggn")
+    CFG+=("es25_vlog_a1.4 1.4 0.1 1e-4 0.00 - terminal off terminal 12 25 8 log")
+    # ---- h100-trained, scored at 100. A 2x2 on (goal band) x (conditioning):
+    # md12 = the band the shipped actor saw, md20 = 100 primitive steps, i.e.
+    # horizon-matched. es100_ctrl_md12 reproduces exactly the condition that
+    # produced the banked 94.2, so the factorial is anchored.
+    CFG+=("es100_ctrl_md12_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 12 100 8 none")
+    CFG+=("es100_ctrl_md20_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 20 100 8 none")
+    CFG+=("es100_vlog_md12_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 12 100 8 log")
+    CFG+=("es100_vlog_md20_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 20 100 8 log")
+    CFG+=("es100_vinv_md20_a1.8 1.8 0.1 1e-4 0.00 - terminal off terminal 20 100 8 loggn")
+    CFG+=("es100_vlog_md20_a2.6 2.6 0.1 1e-4 0.00 - terminal off terminal 20 100 8 log")
   fi
   # Exact OGBench terminal replication plus a horizon-matched training arm.
   # The only intentional training difference is the fs5 goal-range cap:

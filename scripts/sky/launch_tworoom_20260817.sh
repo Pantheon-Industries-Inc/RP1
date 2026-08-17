@@ -5,18 +5,29 @@
 #   TwoRoom LeJEPA h100   RLP 94.2  vs  CEM 96.0  (and DMPO 99.1)
 #   TwoRoom PLDM   h25    RLP 98.2  vs  CEM 100.0
 #
-# Two grids, each sharded ONE JOB PER TRAIN SEED. Sharding by seed (not by
-# arm) means every job contains the control by construction, and each job
-# trains only its own TD teacher (TDSEEDS=$TRAIN_SEEDS), so setup is cheap.
-# Replicating the control across three jobs additionally measures job-to-job
-# drift -- the exact confound that comparing against a banked number cannot.
+# h25 and h100 actors are trained SEPARATELY: every arm carries its own
+# max_delta (goal band) and is scored at its own single horizon, so an h100
+# number is never read off an h25-tuned refiner. max_delta 12 covers the h25
+# goal (5 blocks); max_delta 20 reaches the 100 primitive steps an h100 goal
+# sits at. Arms named es25_/pl25_ are h25-trained, es100_/pl100_ are
+# h100-trained; the *_md12 h100 arms deliberately keep the narrow band so the
+# banked 94.2 / 96.0 conditions stay anchored inside the factorial.
 #
-#   GRID=escale          lejepa, 7 arms: ctrl / log / loggn / log@a2.6 /
-#                        log@a1.4 / max_delta=20 / log+max_delta=20
-#   GRID=pldm_h25_probe  pldm,   7 arms: amax 1.0-2.2 at K=8, ctrl = 1.8
+#   GRID=escale          lejepa, 10 arms:  4 h25 (ctrl/log/loggn/log@a1.4)
+#                        + 6 h100 (2x2 on md{12,20} x vnorm{none,log},
+#                        plus loggn@md20 and log@md20@a2.6)
+#   GRID=pldm_h25_probe  pldm,   12 arms:  9 h25 (amax 1.0-2.2 ladder at K=8,
+#                        ctrl = 1.8, plus log and loggn at the ctrl clip)
+#                        + 3 h100 (md12 anchor, md20, md20+log)
 #
-# 6 jobs x H200:4 = 24 GPUs. Every arm is evaluated at BOTH h25 and h100 on
-# draws 50/51 (selection) and 42/43/44 (reporting), 50 episodes each.
+# Each grid is sharded ONE JOB PER TRAIN SEED. Sharding by seed (not by arm)
+# puts the control in every job by construction and keeps each job to a single
+# TD teacher (TDSEEDS=$TRAIN_SEEDS); replicating the control across seeds also
+# measures job-to-job drift, the confound that comparing against a banked
+# number cannot.
+#
+# 6 seeds x 2 grids = 12 jobs x H200:4 = 48 GPUs. Draws 50/51 (selection) and
+# 42/43/44 (reporting), 50 episodes each -> 1,500 reported episodes per arm.
 #
 # Credentials are resolved by the API server from the platform secrets manager
 # (the `secrets:NAME` reference form in tworoom_split_rerun.yaml), so nothing
@@ -44,7 +55,7 @@ launch() {           # launch <base> <grid> <seed> <cachekey>
   local NAME="rlp-tw-${CKEY}-s${SEED}${SUFFIX}"
   echo "==> $NAME"
   sky jobs launch scripts/sky/tworoom_split_rerun.yaml \
-    -n "$NAME" --priority p1 -y --async \
+    -n "$NAME" --priority p2 -y --async \
     --env ENVNAME=tworoom \
     --env BASE="$BASE" \
     --env GRID="$GRID" \
@@ -89,12 +100,13 @@ if [ "$SMOKE" = 1 ]; then
   exit 0
 fi
 
-for SEED in 0 1 2; do launch lejepa escale         "$SEED" escale;   done
-for SEED in 0 1 2; do launch pldm   pldm_h25_probe "$SEED" pldmamax; done
+SEEDS=${SEEDS:-"0 1 2 3 4 5"}
+for SEED in $SEEDS; do launch lejepa escale         "$SEED" escale;   done
+for SEED in $SEEDS; do launch pldm   pldm_h25_probe "$SEED" pldmamax; done
 
 cat <<'EOF'
 
-6 jobs submitted (24 H200s). Watch with:
+12 jobs submitted (48 H200s). Watch with:
   sky jobs queue | grep rlp-tw-
 
 Per-job sanity, in the logs:

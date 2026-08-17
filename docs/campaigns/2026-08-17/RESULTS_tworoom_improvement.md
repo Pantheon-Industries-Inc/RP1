@@ -73,29 +73,57 @@ replicated control also measures job-to-job drift). Selection draws 50/51,
 reporting draws 42/43/44, both horizons for every arm. **K is fixed at 8
 throughout — refinement depth is not a variable in this campaign.**
 
-### 3a. LeJEPA — `GRID=escale` (7 arms × 3 seeds)
+### 3a. Horizon-matched training
 
-| arm | amax | max_delta | vnorm | tests |
-|---|---|---|---|---|
-| `escale_ctrl` | 1.8 | 12 | none | shipped recipe, retrained in-job |
-| `escale_vlog` | 1.8 | 12 | log | **pre-registered primary**: `log1p(E)` |
-| `escale_vinv` | 1.8 | 12 | loggn | `log1p(E)` + RMS-normalised `grad_A V` |
-| `escale_vlog_a2.6` | 2.6 | 12 | log | clamp headroom after compression |
-| `escale_vlog_a1.4` | 1.4 | 12 | log | the other side of the clamp |
-| `escale_md20` | 1.8 | 20 | none | rival fix: widen the trained goal band |
-| `escale_vlogmd20` | 1.8 | 20 | log | both mechanisms at once |
+**h25 and h100 actors are trained separately.** Every arm carries its own goal
+band (`max_delta`) and is scored at its own single horizon, so an h100 number
+is never read off an h25-tuned refiner. `max_delta=12` covers the h25 goal
+(5 blocks); `max_delta=20` reaches the 100 primitive steps an h100 goal sits
+at. This turns the goal band from a confound into a factor.
 
-`escale_vlog` is pre-registered as primary because the LeJEPA arms are
-reported on 42/43/44; the rest are secondary.
+### 3b. LeJEPA — `GRID=escale` (10 arms x 6 seeds)
 
-### 3b. PLDM — `GRID=pldm_h25_probe` (7 arms × 3 seeds)
+h25-trained (`max_delta` 12, scored at 25):
 
-A single 7-point dose-response on `amax` at the shipped operating point
-(mean-weight 0.0, actor-lr 1e-3, max_delta 12, K=8): **1.0 / 1.2 / 1.4 / 1.6 /
-1.8 (= ctrl) / 2.0 / 2.2**. Everything below 1.8 is unexplored — the live
-`terminal_search` grid sweeps 2.4–3.2, entirely on the far side of the
-deployed winner, which itself entered via `INCLUDE_WINNERS` rather than from a
-sweep.
+| arm | amax | vnorm |
+|---|---|---|
+| `es25_ctrl_a1.8` | 1.8 | none |
+| `es25_vlog_a1.8` | 1.8 | log |
+| `es25_vinv_a1.8` | 1.8 | loggn |
+| `es25_vlog_a1.4` | 1.4 | log |
+
+h100-trained (scored at 100) — a 2x2 on goal band x conditioning, plus two
+extras. `es100_ctrl_md12_a1.8` reproduces exactly the condition behind the
+banked 94.2, so the factorial is anchored:
+
+| arm | max_delta | amax | vnorm |
+|---|---|---|---|
+| `es100_ctrl_md12_a1.8` | 12 | 1.8 | none |
+| `es100_ctrl_md20_a1.8` | 20 | 1.8 | none |
+| `es100_vlog_md12_a1.8` | 12 | 1.8 | log |
+| `es100_vlog_md20_a1.8` | 20 | 1.8 | log |
+| `es100_vinv_md20_a1.8` | 20 | 1.8 | loggn |
+| `es100_vlog_md20_a2.6` | 20 | 2.6 | log |
+
+### 3c. PLDM — `GRID=pldm_h25_probe` (12 arms x 6 seeds)
+
+h25-trained (`max_delta` 12, scored at 25) — the target cell. A 7-point amax
+dose-response (**1.0 / 1.2 / 1.4 / 1.6 / 1.8 = ctrl / 2.0 / 2.2**) plus the
+conditioning lever at the control clip (`pl25_vlog_a1.8`, `pl25_vinv_a1.8`).
+Everything below 1.8 is unexplored: the live `terminal_search` grid sweeps
+2.4-3.2, entirely on the far side of the deployed winner, which itself entered
+via `INCLUDE_WINNERS` rather than from a sweep.
+
+h100-trained (scored at 100) — not the target (RLP already leads value+CEM
+there, 96.0 vs 88.7), but with horizon-matched training the h100 number needs
+its own arms: `pl100_ctrl_md12_a1.8` (anchors the banked 96.0),
+`pl100_ctrl_md20_a1.8`, `pl100_vlog_md20_a1.8`.
+
+### 3d. Scale
+
+12 jobs x H200:4 = **48 GPUs**, one job per train seed per grid. 6 seeds x
+draws 50/51 (selection) + 42/43/44 (reporting) x 50 episodes = **1,500
+reported episodes per arm**, which is what makes a 1-2 point move resolvable.
 
 ## 4. Guards
 
