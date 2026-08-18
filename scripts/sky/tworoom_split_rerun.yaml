@@ -62,6 +62,14 @@ envs:
   RH: "5"                  # established deployment: execute each full H=5 plan
   OFFSETS: ""              # resolved below: both environments 25/100
   MAX_DELTA: "12"          # fs5 goal-range cap; terminal replication overrides per row
+  TR_GAMMA: "1.0"          # TwoRoom discount, for BOTH the offline TD teacher and the
+                           # actor/co-trained critic. TwoRoom is the ONLY environment on
+                           # gamma=1 (cube/reacher use 0.98), which is why its critic is
+                           # raw steps-to-go and its E channel runs 4x out of band at
+                           # h100. At 0.98 the value saturates at 1/(1-g)=50, so the
+                           # discount itself compresses far distances (h25->h100 becomes
+                           # 2.2x instead of 4x) -- the same job vnorm=log does, but via
+                           # the critic instead of the actor input.
   FULLCACHE: "0"           # dinowm tworoom: 1 = full 284 GB cache + fresh teacher
   BATCH: "128"             # actor batch; cube deployed recipe uses 256; dinowm K=8 needs 8 (memory)
   INCLUDE_WINNERS: "0"     # 1 = add the paper App C.1 per-cell winner configs
@@ -296,7 +304,7 @@ setup: |
 
   # ---- TD critic to warm-start the co-trained value from. Cube uses the
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
-  TDFLAGS="--expectile 0.1 --steps 6000"
+  TDFLAGS="--expectile 0.1 --steps 6000 --gamma ${TR_GAMMA:-1.0}"
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma 0.98 --steps 12000"
   if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
     TDSEEDS="0"
@@ -663,6 +671,7 @@ run: |
   # steps 6000 via STEPS. Defaults reproduce the tworoom-banked recipe, so
   # tworoom passes nothing here.
   RECIPE=""
+  [ "$ENVNAME" = tworoom ] && RECIPE="--gamma ${TR_GAMMA:-1.0}"
   [ "$ENVNAME" = cube ] && RECIPE="--gamma 0.98 --replay-prob 0.5 --expand-weight 1.0 --freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
   FROZEN_ARGS=""
   if [ "${ACTOR_ONLY:-0}" = 1 ]; then
