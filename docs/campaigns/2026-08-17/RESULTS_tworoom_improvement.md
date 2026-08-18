@@ -179,3 +179,98 @@ guard, and that a horizon-separated row evaluates at exactly one offset
   arm rather than the banked value.
 - If `vnorm=log` works, Cube h100 is the immediate next test — the same raw-`E`
   conditioning is in every RLP actor.
+
+---
+
+## 6. PLDM h25 — results (complete, 2026-08-18)
+
+Jobs 7756–7759, `GRID=pldm_h25_probe`, train seeds 0–3, reporting draws
+42/43/44, 50 episodes, held-out, RH=5. K=8 throughout.
+
+### 6a. The amax ladder is flat — amax is not the lever
+
+| amax | 1.0 | 1.2 | 1.4 | 1.6 | **1.8 (ctrl)** | 2.0 | 2.2 |
+|---|---|---|---|---|---|---|---|
+| mean | 98.50 | 97.17 | 98.67 | 98.83 | **98.17** | 98.33 | 98.33 |
+| sd | 0.84 | 1.00 | 0.77 | 0.33 | 0.33 | 0.67 | 0.86 |
+
+The in-job control reproduces the banked 98.2 almost exactly (98.17), which
+validates the pipeline. But the ladder is **non-monotone** — 1.2 dips to 97.17,
+below both neighbours — so there is no dose-response shape. A 1.66-point spread
+across seven values with per-arm sd 0.3–1.0, read as the max of eight
+comparisons, is noise. amax 1.6's +0.66 over control is **not** claimed.
+
+Conditioning is also null at h25 (`vlog` 98.33, `vinv` 98.67 vs ctrl 98.17) —
+expected, since at a 5-block goal `E` is already inside the training band.
+
+### 6b. Cost vs. search coverage (job 7878, 3 actors × 3 draws, n=9)
+
+Crosses planner × critic on the vendored actors, no retraining.
+
+| arm | n | mean | sd | per-actor |
+|---|---|---|---|---|
+| **A** CEM + TD teacher | 3 | **100.00** | 0.00 | — |
+| **B** CEM + co-trained critic | 9 | **99.11** | 1.45 | 98.0/99.3/100.0 |
+| **C** RLP + co-trained (shipped) | 9 | 97.11 | 3.62 | 98.0/97.3/96.0 |
+| **D** RLP + TD teacher | 9 | **98.00** | 2.24 | 99.3/97.3/97.3 |
+| **E** RLP + value-init 16 | 9 | 92.22 | 2.91 | 94.7/91.3/90.7 |
+| **E** RLP + value-init 64 | 9 | 95.33 | 4.12 | 94.7/94.7/96.7 |
+| **E** RLP + value-init 256 | 9 | 94.44 | 2.79 | 94.0/93.3/96.0 |
+| **I** RLP + value-init 64 + TD | 9 | 94.89 | 2.26 | 95.3/93.3/96.0 |
+
+1. **Search coverage is refuted.** Every value-init arm is BELOW the zero-init
+   control, at all three candidate counts and on both critics, consistently
+   across all three actor seeds. The refiner is trained to refine from A=0, so
+   a value-selected start is off-distribution — the same train/deploy mismatch
+   family as the raw-`E` problem, not a fix for it. `_value_init` should stay
+   off unless an actor is *trained* with it.
+2. **The cost is real, worth ~1 point.** CEM loses 0.89 on the co-trained
+   critic (100.00 → 99.11) and RLP gains 0.89 on the teacher (97.11 → 98.00) —
+   same magnitude, opposite directions. `freeze_critic_frac=0.8` co-training
+   mildly degrades the cost. **`D` is a free +0.9 at zero deploy cost: point
+   `core.solver.value_path` at the offline teacher.**
+3. **~2 points are genuinely the optimizer.** On the identical good critic RLP
+   is 98.00 vs CEM's 100.00, and none of amax, `vnorm` or value-init touched
+   that residual.
+
+**Correction to §1.** This campaign opened by asserting RLP and value+CEM
+shared a critic, so the gap "had to be" the optimizer. That was wrong:
+`LIPSolver` deploys `load_metric(ck["value"])` — the co-trained critic — while
+value+CEM used the untouched TD teacher. Arms A–D are the corrected comparison.
+
+### 6c. Where the remaining ~2 points are not
+
+Four levers tested on this cell, three null and one worth ~1 point:
+
+| lever | result |
+|---|---|
+| action clip `amax` (7 values) | flat, non-monotone — null |
+| value conditioning `vnorm` | null at h25 (in-band by construction) |
+| deploy-time search coverage (value-init ×3) | **harmful**, −2 to −5 |
+| critic: co-trained → offline teacher | **+0.9**, free |
+
+Reaching CEM's 100.0 therefore needs a change to how the refiner is *trained*
+(e.g. freezing the critic outright, or training with the deployment init), not
+to how it is clipped, conditioned or initialised at deploy.
+
+## 7. Ops — the seed-linked training hang
+
+`escale` seeds 0/1/2 hung **6 times out of 6** across six distinct nodes
+(GPU UUIDs verified different each time), while seed 3 completed 10/10 cells on
+its first attempt. The hang signature: training reaches `step 500` of 8000,
+writes ~2.2 KB of log, then nothing — no error, no non-zero exit, so no
+`FAILDIR` entry. The stalled processes hold all 4 slots, the mkdir allocator
+blocks forever, and the remaining 6 cells never launch. Two jobs sat like this
+for 7 h and 1.5 h respectively before being killed.
+
+Not a bad node (six different ones) and not the vnorm change (the arm that
+hangs is `es25_ctrl_a1.8`, `vnorm=none`, the unmodified path, which seed 3 ran
+fine). Root cause unresolved; it tracks the train seed. Worked around by
+running seeds 4–7 instead — actor seeds are exchangeable, and the final LeJEPA
+table will state which seeds it used rather than implying 0–3.
+
+**Detection lesson:** a hang is invisible to the harness's failure accounting,
+which only catches non-zero exits. The cheap signal is per-job
+(cells dispatched, cells completed): a job sitting at 4 dispatched / 0
+completed for >1 h is stalled. That check would have caught this at ~40 min
+instead of 7 h.

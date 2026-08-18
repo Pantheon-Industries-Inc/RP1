@@ -113,7 +113,8 @@
 \end{table}
 
 % ---------------------------------------------------------- OGBench Cube ----
-\begin{table}[t]
+% Full-width (table*): 8 numeric columns = 2 bases x 2 horizons x 2 difficulties.
+\begin{table*}[t]
   \centering
   \captionsetup{font=small,skip=4pt}
   \caption{\textbf{OGBench Cube success rate (\%).}}
@@ -121,39 +122,61 @@
   \footnotesize
   \renewcommand{\arraystretch}{1.08}
   \begin{tabular*}{\linewidth}{
-    @{\extracolsep{\fill}}lrrrrr@{}
+    @{\extracolsep{\fill}}llrrrrrrrrr@{}
   }
   \toprule
-  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
-  \cmidrule(lr){3-4}\cmidrule(l){5-6}
-  planner & rollouts & $h25$ & $h100$ & $h25$ & $h100$ \\
+  & & & \multicolumn{4}{c}{LeWM} & \multicolumn{4}{c}{PLDM} \\
+  \cmidrule(lr){4-7}\cmidrule(l){8-11}
+  & & & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$}
+        & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$} \\
+  \cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(l){10-11}
+  & planner & rollouts & easy & hard & easy & hard & easy & hard & easy & hard \\
   \midrule
-  latent + CEM   & $9000$ & 78.0 & -- & 62.7 & -- \\
-  value + MPPI   & $9000$ & 62.7 & 50.0\rlap{$^{*}$} & 66.0 & 50.0\rlap{$^{*}$} \\
+  (a) prior
+    & CEM   & $9000$ & 74.0 & 40.9 & 58.0 & 23.2 & 62.7 & 15.2 & 58.7 & 24.5 \\
+    & MPPI  & $9000$ & 56.7 &  1.6 & 46.7 &  2.5 & 58.7 &  6.1 & 47.3 &  3.6 \\
+    & Adam  & $3000$ & 74.0 & 40.9 & 57.3 & 21.9 & 63.3 & 16.6 & 55.3 & 18.2 \\
   \midrule
-  DMPO           & $256$  & 72.9\rlap{$^{\diamond}$} & \textbf{55.8}\rlap{$^{\diamond}$} & 61.8\rlap{$^{\diamond}$} & \textbf{51.6}\rlap{$^{\diamond}$} \\
-  L2O-MPC        & $256$  & 64.4 & 50.0 & 58.9 & 45.3 \\
+  (b) + value critic
+    & CEM   & $9000$ & 84.0 & 63.6 & 76.7 & 57.4 & 70.0 & 31.8 & 64.0 & 34.1 \\
+    & MPPI  & $9000$ & 63.3 & 16.6 & 52.0 & 12.2 & 64.7 & 19.8 & 50.7 &  9.8 \\
+    & Adam  & $3000$ & 74.7 & 42.5 & 68.7 & 42.7 & 64.0 & 18.2 & 54.0 & 15.9 \\
   \midrule
-  \textbf{RP1 (ours)} & $9$
-  & \textbf{86.9} & --
-  & \textbf{82.0} & -- \\
+  (c) + learned search
+    & DMPO    & $256$ & 72.9\rlap{$^{\diamond}$} & -- & 55.8\rlap{$^{\diamond}$} & -- & 61.8\rlap{$^{\diamond}$} & -- & 51.6\rlap{$^{\diamond}$} & -- \\
+    & L2O-MPC & $256$ & 64.4 & -- & 50.0 & -- & 58.9 & -- & 45.3 & -- \\
+    & \textbf{RP1 (ours)} & $9$ & 89.1 & 75.2 & 82.4 & 67.8 & 82.9 & 61.1 & 77.1 & 58.1 \\
   \midrule
-  no-op floor    & --     & 54.0 & -- & 54.0 & -- \\
+  (d) + Dyna
+    & \textbf{RP1\textsubscript{Dyna} (ours)} & $9$
+    & \textbf{94.4} & \textbf{87.3} & \textbf{84.7} & \textbf{72.0}
+    & \textbf{91.3} & \textbf{80.2} & \textbf{82.0} & \textbf{67.1} \\
+  \midrule
+  \multicolumn{3}{@{}l}{$\Delta$ hard, (d) vs.\ best prior}
+    & & $+46.4$ & & $+48.8$ & & $+63.6$ & & $+42.6$ \\
   \bottomrule
   \end{tabular*}
 
   \vspace{3pt}
   {\footnotesize\setlength{\parindent}{0pt}\raggedright
-  \indent Success rate (\%), held-out, 50 episodes per cell. RP1 LeWM is
-  $86.9 \pm 3.0$ over 3 actor seeds; RP1 PLDM is a single seed. $h100$ was not
-  run for the sampling baselines or RP1 (dashes). The no-op floor is the score
-  of taking no action.
-  $^{*}$1--2 eval seeds only; footnote-grade.
-  $^{\diamond}$Symmetric $a_{\max}$ inherited from the RP1 recipe (LeWM 1.6,
-  PLDM 4.5) rather than the environment's action bounds, which binds on 4 of 5
-  dimensions for LeWM and 1 of 5 for PLDM; the LeWM--PLDM comparison is
-  confounded and reruns are pending.\par}
-\end{table}
+  \indent Success rate (\%), 50 episodes per cell. \emph{easy} and \emph{hard}
+  are the two goal-difficulty splits; $h25$ and $h100$ refer to 25 and 100
+  steps. Blocks (a)--(b) and the RP1 rows are the published numbers; DMPO and
+  L2O-MPC are measured here on the \emph{easy} split only (3 optimizer seeds
+  $\times$ eval draws 42--44, held out), against the same critic and world model
+  as block~(b). Our held-out replication of (a) CEM at $h25$ measures
+  $78.0$ (LeWM) and $62.7$ (PLDM); the no-op floor is $54.0$ in our pipeline
+  ($56.0$ as published). Above that floor, DMPO scores $+18.9 / +1.8 / +7.8 /
+  -2.4$ and L2O-MPC $+10.4 / -4.0 / +4.9 / -8.7$ across the four easy columns,
+  against $+35.1 / +28.4 / +28.9 / +23.1$ for RP1 --- i.e.\ both learned
+  optimizers recover under half of RP1's headroom at $h25$ and sit at or below
+  the floor at $h100$.
+  $\Delta$ compares (d) against the best row in block~(a).
+  $^{\diamond}$DMPO clips to a symmetric $a_{\max}$ inherited from the RP1
+  recipe (LeWM 1.6, PLDM 4.5) rather than the environment's per-dimension
+  bounds, which binds on 4 of 5 dimensions for LeWM and 1 of 5 for PLDM; the
+  LeWM--PLDM comparison in that row is confounded and reruns are pending.\par}
+\end{table*}
 
 % ----------------------------------------------------------------------------
 % Wraptable variant of the TwoRoom table (needs \usepackage{wrapfig}). Use only
