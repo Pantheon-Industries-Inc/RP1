@@ -335,3 +335,50 @@ the clip is not a lever here either.
   60 s grace, SIGKILL — the cell fails loudly, the slot frees, the grid
   continues, and the next stall leaves an autopsy. Trainer calls also carry a
   4 h hard timeout.
+
+## 10. gamma=0.98 on TwoRoom — falsified, and it explains the mechanism
+
+Job 7913, seed 3, `TR_GAMMA=0.98` applied to BOTH the offline TD teacher and
+the actor/co-trained critic. Paired against the §8 gamma=1.0 seed-3 data: same
+seed, same grid, gamma the only variable. Diagnostic (seed 3), not reportable.
+
+| arm | gamma=1.0 | gamma=0.98 | delta |
+|---|---|---|---|
+| `es25_ctrl` (h25) | 100.00 | 100.00 | 0.0 |
+| `es100_ctrl_md12` | 88.67 | **49.33** | **−39.3** |
+| `es100_ctrl_md20` | 88.67 | **50.67** | **−38.0** |
+| `es100_vlog_md20` | 97.33 | 86.00 | −11.3 |
+
+**The hypothesis was that gamma=0.98 would do vnorm's job through the critic
+(h25->h100 input shift 4.0x -> 2.2x). It does the opposite.** At gamma=0.98 the
+quasimetric saturates at 1/(1-gamma)=50, so V is nearly identical (~43-50) for
+every far state. That flattens **grad V**, which is what the refiner descends —
+so the discount does not merely rescale the input, it destroys the planning
+signal. h25 is untouched (100.0) because nothing saturates at 5 blocks; the
+damage is precisely where the goal is far.
+
+This is the **critic-saturation** hypothesis, which was correctly refuted for
+gamma=1.0 early in the campaign. At gamma=0.98 it is real and severe.
+
+**Why `vnorm=log` is the principled fix and the discount is not:**
+
+| | compresses | gradient |
+|---|---|---|
+| gamma=0.98 | the **value itself** | flattened -> planner blind at range |
+| `vnorm=log` | only the actor's **scalar input channel** | preserved (`grad_A V` still from raw V) |
+
+`log1p` is monotone and applied *after* the critic, so the refiner keeps full
+gradient information while receiving a well-scaled scalar. Hence gamma=1.0 +
+`vnorm=log` (97.33) is the right pairing: keep the value informative at range,
+fix the conditioning separately. `vlog` at gamma=0.98 reaches only 86.0 — it
+cannot rescue a saturated critic.
+
+**TwoRoom's bespoke gamma=1.0 is therefore load-bearing, not an oversight.**
+Retiring it in favour of the cross-environment default would cost ~39 points at
+h100.
+
+**Forward implication:** Cube and Reacher run gamma=0.98 and would carry the
+same saturation ceiling on any long-horizon cell. Consistent with DMPO dropping
+~17 pts h25->h100 on Cube. **RLP Cube h100 has never been measured** (the
+replication table is h25-only; the DMPO table's RLP row is `—` at h100) — worth
+measuring before assuming Cube is healthy at range.
