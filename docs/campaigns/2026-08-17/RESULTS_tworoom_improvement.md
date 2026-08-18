@@ -382,3 +382,28 @@ same saturation ceiling on any long-horizon cell. Consistent with DMPO dropping
 ~17 pts h25->h100 on Cube. **RLP Cube h100 has never been measured** (the
 replication table is h25-only; the DMPO table's RLP row is `—` at h100) — worth
 measuring before assuming Cube is healthy at range.
+
+### 10a. gamma=0.98 at protocol seeds 0/1/2 (jobs 7917-7919, complete)
+
+| arm | mean | sd | per-seed (0/1/2) |
+|---|---|---|---|
+| `es25_ctrl` (h25) | **100.00** | 0.00 | 100 / 100 / 100 |
+| `es100_ctrl_md12` | 73.11 | **24.57** | 45.3 / 82.0 / 92.0 |
+| `es100_ctrl_md20` | 66.22 | **21.71** | 45.3 / 64.7 / 88.7 |
+| `es100_vlog_md20` | 81.78 | **3.67** | 80.0 / 86.0 / 79.3 |
+
+Confirms §10 at the reporting seeds: h100 collapses (73.11 vs 88.67 at
+gamma=1.0) while h25 is a flat 100.0 on every seed — the signature of critic
+saturation, which only bites when the goal is far.
+
+**New finding: `vnorm=log` is a variance fix as much as a mean fix.** The raw-`E`
+actor swings 45.3 → 92.0 across seeds (sd 24.6); `vlog` holds 79.3 → 86.0
+(sd 3.7), a **6.7x reduction**. An ill-scaled input channel does not merely cost
+mean accuracy, it makes training unstable seed-to-seed. This was not predicted
+and supports the conditioning story independently of the mean.
+
+**Caveat on the seed-3 diagnostics (§8, §10).** With sd ~25 on the raw-`E` arms,
+any single-seed contrast is weak. The clean paired comparison (gamma=1.0 vs
+gamma=0.98, both at seeds 0/1/2) requires the escale rerun (7914-7916), in
+flight — wave 1 of 3 complete, no watchdog fires, so the seed-0/1/2 hang did not
+recur.
