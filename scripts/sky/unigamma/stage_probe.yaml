@@ -1,0 +1,25 @@
+# Verify the staged checkpoints (TwoRoom + Cube) are REAL files on the shared
+# volume (not symlinks into a dead cluster's file mounts). Run from a fresh node.
+name: stage-probe
+resources:
+  cpus: 2
+volumes:
+  /checkpoints: checkpoints
+run: |
+  set -euo pipefail
+  probe_dir() {  # probe_dir <dir>
+    local D=$1 W SZ
+    [ ! -L "$D" ] || { echo "PROBE_BAD: $D is a symlink"; exit 1; }
+    W=$(ls "$D"/*.pt 2>/dev/null | head -1)
+    [ -n "$W" ] && [ -f "$W" ] && [ ! -L "$W" ] || { echo "PROBE_BAD: no regular .pt in $D"; exit 1; }
+    SZ=$(stat -c %s "$W")
+    [ "$SZ" -gt 50000000 ] || { echo "PROBE_BAD: $W only ${SZ}B"; exit 1; }
+    echo "PROBE $(basename "$D"): regular file ${SZ}B"
+  }
+  T=/checkpoints/armin@pantheon.inc/lfs_stage/tworoom_matrix_20260727/checkpoints
+  C=/checkpoints/armin@pantheon.inc/lfs_stage/swm_checkpoints
+  [ -f "$T/.staged" ] || { echo "PROBE_BAD: tworoom .staged missing"; exit 1; }
+  [ -f "$C/.staged" ] || { echo "PROBE_BAD: cube .staged missing"; exit 1; }
+  for B in lejepa_tworoom pldm_tworoom; do probe_dir "$T/$B"; done
+  for B in ogbench_cube_single_v2WM PLDM_OgBench; do probe_dir "$C/$B"; done
+  echo STAGE_PROBE_OK

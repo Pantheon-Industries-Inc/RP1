@@ -1,0 +1,44 @@
+# One-shot: stage the TwoRoom base WM checkpoints AND the Cube (OGBench)
+# checkpoints on the cluster volume so jobs can bypass the exhausted GitHub
+# LFS budget of Value_Metric_LeWM. cp -rL dereferences the SkyPilot file
+# mounts (plain cp -r copies them as symlinks that dangle once this job's
+# cluster dies — the 2026-08-18 v3 fleet failure).
+name: lfs-stage
+resources:
+  cpus: 2
+volumes:
+  /checkpoints: checkpoints
+file_mounts:
+  /stage/lejepa_tworoom: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/tworoom_matrix_20260727/checkpoints/lejepa_tworoom
+  /stage/pldm_tworoom: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/tworoom_matrix_20260727/checkpoints/pldm_tworoom
+  /stage/ogbench_cube_single_v2WM: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/stable-worldmodel/checkpoints/ogbench_cube_single_v2WM
+  /stage/PLDM_OgBench: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/stable-worldmodel/checkpoints/PLDM_OgBench
+run: |
+  set -euo pipefail
+  check_dir() {  # check_dir <dir>: real dir, one real .pt > 50 MB
+    local D=$1 W SZ
+    [ ! -L "$D" ] || { echo "STAGE_BAD: $D is a symlink"; exit 1; }
+    W=$(ls "$D"/*.pt 2>/dev/null | head -1)
+    [ -n "$W" ] && [ -f "$W" ] && [ ! -L "$W" ] || { echo "STAGE_BAD: no regular .pt in $D"; exit 1; }
+    SZ=$(stat -c %s "$W")
+    [ "$SZ" -gt 50000000 ] || { echo "STAGE_BAD: $W only ${SZ}B"; exit 1; }
+  }
+
+  D=/checkpoints/armin@pantheon.inc/lfs_stage/tworoom_matrix_20260727/checkpoints
+  rm -rf "$D"    # purge any earlier bad upload and its stale marker
+  mkdir -p "$D"
+  cp -rL /stage/lejepa_tworoom "$D/"
+  cp -rL /stage/pldm_tworoom "$D/"
+  for B in lejepa pldm; do check_dir "$D/${B}_tworoom"; done
+  du -sh "$D"/*
+  touch "$D/.staged"
+
+  C=/checkpoints/armin@pantheon.inc/lfs_stage/swm_checkpoints
+  rm -rf "$C"
+  mkdir -p "$C"
+  cp -rL /stage/ogbench_cube_single_v2WM "$C/"
+  cp -rL /stage/PLDM_OgBench "$C/"
+  for B in ogbench_cube_single_v2WM PLDM_OgBench; do check_dir "$C/$B"; done
+  du -sh "$C"/*
+  touch "$C/.staged"
+  echo LFS_STAGE_DONE
