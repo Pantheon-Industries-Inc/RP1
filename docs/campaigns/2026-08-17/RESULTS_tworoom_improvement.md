@@ -274,3 +274,49 @@ which only catches non-zero exits. The cheap signal is per-job
 (cells dispatched, cells completed): a job sitting at 4 dispatched / 0
 completed for >1 h is stalled. That check would have caught this at ~40 min
 instead of 7 h.
+
+## 8. LeJEPA h100 — the 2x2, seed 3 (PROVISIONAL, 1 of 4 seeds)
+
+Job 7755, `GRID=escale`, train seed 3, draws 42/43/44, 50 episodes, held-out,
+RH=5, K=8. Horizon-matched: every arm trained for the horizon it is scored at.
+
+| arm | max_delta | vnorm | h100 | per-draw |
+|---|---|---|---|---|
+| `es100_ctrl_md12` | 12 | none | 88.67 | 86/84/96 |
+| `es100_ctrl_md20` | 20 | none | 88.67 | 86/86/94 |
+| `es100_vlog_md12` | 12 | log | 94.67 | 96/90/98 |
+| **`es100_vlog_md20`** | 20 | log | **97.33** | 100/96/96 |
+| `es100_vinv_md20` | 20 | loggn | 92.67 | 94/88/96 |
+| `es100_vlog_md20_a2.6` | 20 | log | 91.33 | 88/88/98 |
+
+Main effects, from the 2x2 on (goal band) x (conditioning):
+
+| effect | value |
+|---|---|
+| `max_delta` 12 → 20, alone | **+0.00** |
+| `vnorm` none → log, alone | **+6.00** |
+| both | **+8.67** (⇒ interaction **+2.67**) |
+
+**The goal-band hypothesis is null on its own and only pays off through the
+interaction.** That is precisely what the mechanism predicts: widening the
+trained goal band cannot help while the actor's sole distance channel (raw `E`)
+is saturated out of band at h100; compress `E` and the wider band becomes
+usable. The two are sequential, not rival.
+
+`loggn` (92.67) is worse than plain `log` (94.67) — normalising the gradient as
+well overshoots. A looser clip under `log` (a2.6, 91.33) is worse than a1.8, so
+the clip is not a lever here either.
+
+**h25 does not regress**: all four h25 arms score 100.0/100.0/100.0.
+
+### Caveats
+
+- **One seed.** n=150 episodes per arm. Seeds 4–7 in flight (7904–7907).
+  Do not quote +8.67 until at least three seeds agree.
+- **Anchor on the in-job control, not the banked 94.2.** `es100_ctrl_md12`
+  reads 88.67 because these are separately-trained horizon-matched actors (the
+  banked number came from ONE actor scored at both horizons), plus the
+  unresolved cross-pipeline level discrepancy in §5. The defensible claim is
+  the within-job **+8.67**; against the banked 94.2 it is +3.1. Either way
+  97.33 clears remeasured value+CEM (94.7) and closes most of the gap to
+  DMPO (99.1).

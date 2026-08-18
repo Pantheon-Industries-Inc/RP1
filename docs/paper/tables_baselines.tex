@@ -113,7 +113,14 @@
 \end{table}
 
 % ---------------------------------------------------------- OGBench Cube ----
-% Full-width (table*): 8 numeric columns = 2 bases x 2 horizons x 2 difficulties.
+% Full-width (table*): 8 numeric columns = 2 bases x 2 horizons x 2 scorings.
+%
+% "hard" is NOT a separate task split: it is the same run normalized against
+% the no-op floor, (s - f) / (100 - f) * 100, with f = 56.00 at h25 and
+% f = 45.33 at h100 (the "skill" normalization of REPLICATION_RLP.md).
+% Both floors were recovered by fitting all 32 published easy/hard pairs
+% (max residual 0.05 pt), so the DMPO and L2O-MPC hard cells below are computed
+% with the same two constants -- no new evaluation was run for them.
 \begin{table*}[t]
   \centering
   \captionsetup{font=small,skip=4pt}
@@ -130,7 +137,7 @@
   & & & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$}
         & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$} \\
   \cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(l){10-11}
-  & planner & rollouts & easy & hard & easy & hard & easy & hard & easy & hard \\
+  & planner & rollouts & raw & norm. & raw & norm. & raw & norm. & raw & norm. \\
   \midrule
   (a) prior
     & CEM   & $9000$ & 74.0 & 40.9 & 58.0 & 23.2 & 62.7 & 15.2 & 58.7 & 24.5 \\
@@ -143,8 +150,8 @@
     & Adam  & $3000$ & 74.7 & 42.5 & 68.7 & 42.7 & 64.0 & 18.2 & 54.0 & 15.9 \\
   \midrule
   (c) + learned search
-    & DMPO    & $256$ & 72.9\rlap{$^{\diamond}$} & -- & 55.8\rlap{$^{\diamond}$} & -- & 61.8\rlap{$^{\diamond}$} & -- & 51.6\rlap{$^{\diamond}$} & -- \\
-    & L2O-MPC & $256$ & 64.4 & -- & 50.0 & -- & 58.9 & -- & 45.3 & -- \\
+    & DMPO    & $256$ & 72.9\rlap{$^{\diamond}$} & 38.4\rlap{$^{\diamond}$} & 55.8\rlap{$^{\diamond}$} & 19.2\rlap{$^{\diamond}$} & 61.8\rlap{$^{\diamond}$} & 13.2\rlap{$^{\diamond}$} & 51.6\rlap{$^{\diamond}$} & 11.5\rlap{$^{\diamond}$} \\
+    & L2O-MPC & $256$ & 64.4 & 19.1 & 50.0 &  8.5 & 58.9 &  6.6 & 45.3 &  0.0 \\
     & \textbf{RP1 (ours)} & $9$ & 89.1 & 75.2 & 82.4 & 67.8 & 82.9 & 61.1 & 77.1 & 58.1 \\
   \midrule
   (d) + Dyna
@@ -152,26 +159,25 @@
     & \textbf{94.4} & \textbf{87.3} & \textbf{84.7} & \textbf{72.0}
     & \textbf{91.3} & \textbf{80.2} & \textbf{82.0} & \textbf{67.1} \\
   \midrule
-  \multicolumn{3}{@{}l}{$\Delta$ hard, (d) vs.\ best prior}
+  \multicolumn{3}{@{}l}{$\Delta$ norm., (d) vs.\ best prior}
     & & $+46.4$ & & $+48.8$ & & $+63.6$ & & $+42.6$ \\
   \bottomrule
   \end{tabular*}
 
   \vspace{3pt}
   {\footnotesize\setlength{\parindent}{0pt}\raggedright
-  \indent Success rate (\%), 50 episodes per cell. \emph{easy} and \emph{hard}
-  are the two goal-difficulty splits; $h25$ and $h100$ refer to 25 and 100
-  steps. Blocks (a)--(b) and the RP1 rows are the published numbers; DMPO and
-  L2O-MPC are measured here on the \emph{easy} split only (3 optimizer seeds
-  $\times$ eval draws 42--44, held out), against the same critic and world model
-  as block~(b). Our held-out replication of (a) CEM at $h25$ measures
-  $78.0$ (LeWM) and $62.7$ (PLDM); the no-op floor is $54.0$ in our pipeline
-  ($56.0$ as published). Above that floor, DMPO scores $+18.9 / +1.8 / +7.8 /
-  -2.4$ and L2O-MPC $+10.4 / -4.0 / +4.9 / -8.7$ across the four easy columns,
-  against $+35.1 / +28.4 / +28.9 / +23.1$ for RP1 --- i.e.\ both learned
-  optimizers recover under half of RP1's headroom at $h25$ and sit at or below
-  the floor at $h100$.
-  $\Delta$ compares (d) against the best row in block~(a).
+  \indent Success rate (\%), 50 episodes per cell; $h25$ and $h100$ refer to 25
+  and 100 steps. \emph{raw} is the success rate; \emph{norm.} is the same run
+  normalized against the no-op floor $f$, $(s-f)/(100-f)$, with $f=56.0$ at
+  $h25$ and $f=45.3$ at $h100$ --- a zero-action policy already satisfies the
+  goal in over half the $h25$ episodes, so the normalized column is what
+  separates planners. Blocks (a)--(b) and the RP1 rows are the published
+  numbers. DMPO and L2O-MPC are measured here (3 optimizer seeds $\times$ eval
+  draws 42--44, held out) against the same critic and world model as
+  block~(b), and normalized with the same two floors; our own no-op run at
+  $h25$ measures $54.0$ rather than $56.0$, which would raise their $h25$
+  normalized cells by $\approx 2.7$ points. $\Delta$ compares (d) against the
+  best row in block~(a).
   $^{\diamond}$DMPO clips to a symmetric $a_{\max}$ inherited from the RP1
   recipe (LeWM 1.6, PLDM 4.5) rather than the environment's per-dimension
   bounds, which binds on 4 of 5 dimensions for LeWM and 1 of 5 for PLDM; the
