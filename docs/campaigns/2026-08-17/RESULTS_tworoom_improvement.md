@@ -320,3 +320,18 @@ the clip is not a lever here either.
   the within-job **+8.67**; against the banked 94.2 it is +3.1. Either way
   97.33 clears remeasured value+CEM (94.7) and closes most of the gap to
   DMPO (99.1).
+
+## 9. Protocol note (2026-08-18)
+
+**All reported cells must use train seeds 0/1/2** (user decision). Consequences:
+- The §8 seed-3 2x2 is **diagnostic evidence only**, never a reportable number.
+- The seeds-4–7 fleet (7904–7907) and g98 seeds 8/9 (7911/7912) were cancelled.
+- `rlp-tw-g98-s3` (7913) is kept as a **diagnostic pair** for §8's γ=1.0 seed-3
+  data — same seed, same grid, γ the only variable — and is likewise not
+  reportable.
+- Seeds 0/1/2 are exactly the seeds that hang (§7), so the harness now carries
+  a silent-hang watchdog: a train log untouched >25 min while its trainer
+  lives gets SIGUSR1 (faulthandler dumps all Python stacks into that log),
+  60 s grace, SIGKILL — the cell fails loudly, the slot frees, the grid
+  continues, and the next stall leaves an autopsy. Trainer calls also carry a
+  4 h hard timeout.

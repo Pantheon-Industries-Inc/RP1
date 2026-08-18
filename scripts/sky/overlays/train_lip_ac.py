@@ -36,12 +36,22 @@ the same value file can be CEM-evaluated via `+metric=` for apples-to-apples.
 """
 import argparse
 import copy
+import faulthandler
+import signal as _hang_signal
 import gc
 import math
 import os
 import pathlib
 import shutil
 import time
+
+# 2026-08-18 silent-hang forensics: six identical stalls (train seeds 0/1/2,
+# six distinct nodes) stopped writing at ~step 500 with no error and no exit,
+# so nothing ever reached the harness's failure accounting. SIGUSR1 now dumps
+# every thread's Python stack to stderr (-> the cell's train log); the harness
+# watchdog sends it before killing a stalled trainer, so the next stall leaves
+# an autopsy instead of a mystery.
+faulthandler.register(_hang_signal.SIGUSR1, all_threads=True)
 
 import h5py
 

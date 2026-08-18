@@ -62,6 +62,10 @@ envs:
   RH: "5"                  # established deployment: execute each full H=5 plan
   OFFSETS: ""              # resolved below: both environments 25/100
   MAX_DELTA: "12"          # fs5 goal-range cap; terminal replication overrides per row
+  TRAIN_STALL_SEC: "1500" # silent-hang watchdog: a train log untouched this long
+                           # while its trainer still lives gets stack-dumped
+                           # (SIGUSR1 -> faulthandler) and killed, turning a
+                           # silent stall into a loud per-cell failure
   TR_GAMMA: "1.0"          # TwoRoom discount, for BOTH the offline TD teacher and the
                            # actor/co-trained critic. TwoRoom is the ONLY environment on
                            # gamma=1 (cube/reacher use 0.98), which is why its critic is
@@ -928,6 +932,35 @@ run: |
       || [ "${INCLUDE_BASELINE:-0}" = 1 ] || exit 0
   fi
 
+  # ---- silent-hang watchdog (2026-08-18). escale train seeds 0/1/2 stalled
+  # 6/6 across six distinct nodes at ~step 500: the trainer stops writing, never
+  # exits, and holds its slot forever -- invisible to the failure accounting,
+  # which only sees non-zero exits. Any g_*_train.log untouched for
+  # >TRAIN_STALL_SEC while its trainer process still exists gets SIGUSR1 (the
+  # overlay's faulthandler dumps all Python stacks into that same log), a 60 s
+  # grace, then SIGKILL -- which trips the normal || train-fail path, records
+  # the failure, and frees the slot so the rest of the grid proceeds.
+  (
+    declare -A DUMPED
+    while sleep 120; do
+      NOW=$(date +%s)
+      for f in "$PERSIST"/logs/g_*_train.log; do
+        [ -e "$f" ] || continue
+        [ -n "${DUMPED[$f]:-}" ] && continue
+        AGE=$(( NOW - $(stat -c %Y "$f") ))
+        [ "$AGE" -gt "${TRAIN_STALL_SEC:-1500}" ] || continue
+        CELL=$(basename "$f" _train.log)
+        PIDS=$(pgrep -f "${CELL#g_}\.pt" || true)
+        [ -n "$PIDS" ] || continue          # trainer done (cell is in eval) -- healthy
+        DUMPED[$f]=1
+        echo "[watchdog] $CELL stalled ${AGE}s; stack-dumping + killing pids: $PIDS" | tee -a "$DRV"
+        for pid in $PIDS; do kill -USR1 "$pid" 2>/dev/null || true; done
+        sleep 60
+        for pid in $PIDS; do kill -9 "$pid" 2>/dev/null || true; done
+      done
+    done
+  ) & WD_PID=$!
+
   # SMOKE=1 collapses the grid to one config / one seed / tiny step count. It
   # exercises the exact code path -- cache, critic, train, artifact, eval, wandb --
   # so a wrong flag fails in minutes instead of after a 46 GB download.
@@ -959,7 +992,7 @@ run: |
           if [ "$WF" = "-" ]; then WARMFLAG=""; else WARMFLAG="--train-warm --warm-state-frac $WF"; fi
           cube_train_lock
           CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
-          python3 scripts/plan/train_lip_ac.py \
+          timeout 14400 python3 scripts/plan/train_lip_ac.py \
           --h5 "$H5" --wm "$CK" --cache ~/gc/fs5.pt --cache-td ~/gc/fs1.pt \
           --init-value "$TRAIN_CRIT" \
           --recipe-profile "$PROFILE" \
@@ -1029,6 +1062,10 @@ run: |
     echo "launched $NM seed $SEED (amax $AM, mean-w $MW, lr $LR, iters $K, align-w $AW, warm $WF, afv $AFV, offsets $EOFF) slot $S"
   done
   done
+  # every slot free == every cell's subshell has finished; retire the watchdog
+  # first or the bare wait below blocks forever on its infinite loop
+  while [ -n "$(ls -A "$SLOT" 2>/dev/null)" ]; do sleep 30; done
+  kill "$WD_PID" 2>/dev/null || true
   wait
   echo "[grid] $ENVNAME/$BASE complete"; sort "$DRV" | uniq -c
   if find "$FAILDIR" -type f -print -quit | grep -q .; then
