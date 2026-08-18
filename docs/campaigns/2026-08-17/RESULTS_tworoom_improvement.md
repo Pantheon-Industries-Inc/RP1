@@ -377,11 +377,22 @@ cannot rescue a saturated critic.
 Retiring it in favour of the cross-environment default would cost ~39 points at
 h100.
 
-**Forward implication:** Cube and Reacher run gamma=0.98 and would carry the
-same saturation ceiling on any long-horizon cell. Consistent with DMPO dropping
-~17 pts h25->h100 on Cube. **RLP Cube h100 has never been measured** (the
-replication table is h25-only; the DMPO table's RLP row is `—` at h100) — worth
-measuring before assuming Cube is healthy at range.
+**Forward implication — CORRECTED.** An earlier draft of this section claimed
+RLP Cube h100 had never been measured, on the basis that the DMPO and L2O
+tables both carry `—` in the RLP h100 column. That was wrong: it is recorded in
+`docs/campaigns/2026-08-11/RESULTS.md` (row "RLP terminal, previous campaign"),
+**LeWM 89.1 / 82.4 and PLDM 82.9 / 77.1** at h25 / h100 — a drop of only 6.7 and
+5.8 points, i.e. no saturation collapse. That row used separate h25/h100 actors
+at max-delta 10/20 (horizon-matched, the structure added to TwoRoom only on
+2026-08-17) against the standard cube critic: single-frame quasimetric,
+**gamma=0.98**, expectile 0.03, n-step 50, 12k steps, batch 1024.
+
+So gamma=0.98 is *not* harmful per se. Saturation depends on goal distance in
+STEPS against the ceiling 1/(1-gamma)=50, not on the label "h100": Cube's h100
+goals stay inside the informative band, while TwoRoom's 100-step goals sit past
+it. **The rule is: gamma=0.98 is safe while goal distance < ~1/(1-gamma); use
+gamma=1.0 plus `vnorm=log` beyond it.** This is presumably why the authors gave
+TwoRoom gamma=1.0 in the first place.
 
 ### 10a. gamma=0.98 at protocol seeds 0/1/2 (jobs 7917-7919, complete)
 
