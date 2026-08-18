@@ -84,23 +84,24 @@ launch_re() {  # launch_re <gtag> <gamma> <vnorm> <smoke>
   sleep 20
 }
 
-if [ "$STAGE" = smoke ]; then
-  launch_tw g99 0.99 "0" 1 "42"
-  launch_cu g99 0.99 1 "42"
-  launch_re g99 0.99 log 1
-  echo "3 smoke canaries submitted (12 GPUs). Gate the fleet on all three SUCCEEDED."
-else
-  for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do
-    set -- $GT_G
-    for S in 0 1 2; do launch_tw "$1" "$2" "$S" 0; done
-  done
-  for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do
-    set -- $GT_G
-    launch_cu "$1" "$2" 0
-  done
-  for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do
-    set -- $GT_G
-    for VN in none log; do launch_re "$1" "$2" "$VN" 0; done
-  done
-  echo "18 fleet jobs submitted (72 GPUs)."
-fi
+# STAGE selects a slice so each environment's fleet can gate on its own smoke:
+#   smoke | tw | cu | re | fleet (= tw + cu + re)
+run_tw() { for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do set -- $GT_G
+  for S in 0 1 2; do launch_tw "$1" "$2" "$S" 0; done; done; }
+run_cu() { for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do set -- $GT_G
+  launch_cu "$1" "$2" 0; done; }
+run_re() { for GT_G in "g98 0.98" "g99 0.99" "g100 1.0"; do set -- $GT_G
+  for VN in none log; do launch_re "$1" "$2" "$VN" 0; done; done; }
+
+case "$STAGE" in
+  smoke)
+    launch_tw g99 0.99 "0" 1 "42"
+    launch_cu g99 0.99 1 "42"
+    launch_re g99 0.99 log 1
+    echo "3 smoke canaries submitted (12 GPUs). Gate each slice on its smoke." ;;
+  tw) run_tw; echo "9 tworoom jobs submitted (36 GPUs)." ;;
+  cu) run_cu; echo "3 cube jobs submitted (12 GPUs)." ;;
+  re) run_re; echo "6 reacher jobs submitted (24 GPUs)." ;;
+  fleet) run_tw; run_cu; run_re; echo "18 fleet jobs submitted (72 GPUs)." ;;
+  *) echo "unknown STAGE=$STAGE" >&2; exit 2 ;;
+esac
