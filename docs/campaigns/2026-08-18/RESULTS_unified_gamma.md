@@ -282,6 +282,27 @@ horizon-matched); the protocol-seed anchor for that recipe was never
 banked. Unified seeds 0/1 reach 95–96 at deploy 1.8 — the gap is seed
 variance, not configuration.
 
+### Beat portfolio (jobs 8596–8607) — scale falsified, replay free, selection survives
+
+Three candidate stabilizers at the unified base (γ=0.98/md20/a2.5):
+
+| arm | TwoRoom h100 | note |
+|---|---|---|
+| ctrl (reference, md12) | 88.0 ± 9.2 | |
+| S: vnorm=scale (E·(1−γ)) | **74.2 ± 3.4** | stable but stably WORSE |
+| R: replay 0.5 | 85.1 ± 9.8 | ≈ free; same weak-seed pattern |
+| SR: scale+replay+og | 70.4 ± 4.7 | dominated by scale's damage |
+
+**The linear interface normalization is falsified alongside log**: at γ=0.98
+the refiner needs the raw E magnitude — every compression of the
+already-discount-compressed channel (log −13, scale −14) trades the same
+~14 points of mean for its variance cut. The conditioning story therefore
+explains the *variance*, but no input transform converts it into mean at
+γ<1; the mean-preserving stabilizer is selection, not normalization.
+On Reacher, scale is par (latched 99.8 / 92.2 vs raw-E 99.6 / 93.3) — no
+cross-env harm. Replay 0.5 can be adopted for uniformity at ~no cost
+(−2.9, within noise) but does not stabilize.
+
 ### Seed selection on val draws (user-approved protocol extension)
 
 Train seeds unchanged (0/1/2); each cell's seed is picked on draws **50/51**
