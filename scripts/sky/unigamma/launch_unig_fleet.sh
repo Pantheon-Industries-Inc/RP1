@@ -156,5 +156,82 @@ case "$STAGE" in
       launch_re_bnd "$1" "$2" g99 0.99
     done
     echo "8 gamma=0.99 boundary jobs submitted (32 GPUs)." ;;
+  md20)  # the unified horizon-covering band: gamma=0.98, md=20, amax=2.5.
+         # Hypothesis (Section 6a interaction): the 0.98 discount plays the
+         # E-compressor role vlog played at a1.8, making the wide band usable
+         # with raw E. Smooth-boundary probe carried because md20's band
+         # (100 steps) straddles the n=50 seam.
+    for S in 0 1 2; do
+      NAME="rlp-tw-unig-g98md20-s${S}"
+      echo "==> $NAME"
+      sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
+        -n "$NAME" --priority p1 -y --async \
+        --env ENVNAME=tworoom --env BASE=lejepa --env GRID=unig \
+        --env SPLIT=1 --env SMOKE=0 --env ONLYCFG="" \
+        --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
+        --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 \
+        --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
+        --env TR_GAMMA=0.98 --env TR_NSTEP=50 --env UNIG_MD=20 \
+        --env CACHE_VERSION="tw-unig-g98-s${S}-v1" \
+        --env EXPERIMENT_TAG="${NAME}-20260819" \
+        --env TRAIN_SEEDS="$S" --env EVAL_SEEDS="42 43 44" \
+        --env STEPS=8000 --env BATCH=128 --env MAXPAR=4 --env RH=5 \
+        --env MAX_DELTA=12 --env OFFSETS="25 100" \
+        --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+        --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+      sleep 20
+      NAME="rlp-tw-unig-g98md20sm-s${S}"
+      echo "==> $NAME"
+      sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
+        -n "$NAME" --priority p1 -y --async \
+        --env ENVNAME=tworoom --env BASE=lejepa --env GRID=unig \
+        --env SPLIT=1 --env SMOKE=0 --env ONLYCFG="unig_ctrl" \
+        --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
+        --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 \
+        --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
+        --env TR_GAMMA=0.98 --env TR_NSTEP=50 --env UNIG_MD=20 --env BOUNDARY=smooth \
+        --env CACHE_VERSION="tw-unig-g98sm-s${S}-v1" \
+        --env EXPERIMENT_TAG="${NAME}-20260819" \
+        --env TRAIN_SEEDS="$S" --env EVAL_SEEDS="42 43 44" \
+        --env STEPS=8000 --env BATCH=128 --env MAXPAR=4 --env RH=5 \
+        --env MAX_DELTA=12 --env OFFSETS="25 100" \
+        --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+        --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+      sleep 20
+    done
+    NAME="rlp-cu-unig-g98md20"
+    echo "==> $NAME"
+    sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
+      -n "$NAME" --priority p1 -y --async \
+      --env ENVNAME=cube --env BASE=lewm --env GRID=unig \
+      --env SPLIT=0 --env SMOKE=0 --env ONLYCFG="" \
+      --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
+      --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 \
+      --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
+      --env TR_GAMMA=1.0 --env CU_GAMMA=0.98 --env TR_NSTEP=50 --env UNIG_MD=20 \
+      --env CACHE_VERSION="cu-unig-g98-v1" \
+      --env EXPERIMENT_TAG="${NAME}-20260819" \
+      --env TRAIN_SEEDS="0 1 2" --env EVAL_SEEDS="42 43 44" \
+      --env STEPS=6000 --env BATCH=256 --env MAXPAR=4 --env RH=5 \
+      --env MAX_DELTA=12 --env OFFSETS="25 100" \
+      --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+      --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+    sleep 20
+    for VN in none log; do
+      NAME="rlp-re-unig-g98md20-${VN}"
+      echo "==> $NAME"
+      sky jobs launch scripts/sky/unigamma/reacher_gamma.yaml \
+        -n "$NAME" --priority p1 -y --async \
+        --env BASE=lejepa --env GRID=cross \
+        --env AMFIX=2.5 --env CROSS_EXPANDS="0" --env CROSS_REPLAYS="0.5" \
+        --env RS_GAMMA=0.98 --env RS_VNORM="$VN" --env RS_MD=20 \
+        --env SMOKE=0 --env REPORT_ONLY=1 \
+        --env TRAIN_SEEDS="0 1 2" \
+        --env EXPERIMENT_TAG="${NAME}-20260819" \
+        --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+        --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+      sleep 20
+    done
+    echo "9 md20 jobs submitted (36 GPUs)." ;;
   *) echo "unknown STAGE=$STAGE" >&2; exit 2 ;;
 esac

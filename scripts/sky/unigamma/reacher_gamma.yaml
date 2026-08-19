@@ -78,6 +78,8 @@ envs:
   RS_VNORM: "none"         # actor E-channel conditioning: none | log | loggn
   RS_BOUNDARY: "legacy"    # n-step seam at gamma<1 (legacy | smooth | disc), for
                            # BOTH the window teacher and the co-trained critic
+  RS_MD: "12"              # actor goal band (fs5 blocks); 20 = the unified
+                           # horizon-covering band
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
@@ -857,7 +859,7 @@ run: |
           --cache "$C5" --cache-td "$C1" --h5 "$SLIM" --wm "$WM" --pad-context ${DGFLAG} \
           --init-value "$W3" \
           --recipe-profile "$PROFILE" \
-          --arch v4 --iters 8 --horizon 5 --max-delta 12 --n-step 50 \
+          --arch v4 --iters 8 --horizon 5 --max-delta ${RS_MD:-12} --n-step 50 \
           --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
           --replay-prob $RP --expand-weight $XW --freeze-critic-frac 0.5 ${FROZEN_ARGS} \

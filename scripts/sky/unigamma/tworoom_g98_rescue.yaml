@@ -78,6 +78,8 @@ envs:
   VNHALF: "all"            # g1actor shard: none | log | all
   SCHED_MW: "0.1"          # g98sched: mean-weight for the schedule block
   SWEEP_VN: ""             # g98sweep: force one vnorm for both bases (empty = per-base default)
+  UNIG_MD: "12"            # GRID=unig goal band in fs5 blocks (12 = 60 primitive
+                           # steps; 20 covers the h100 deployment horizon)
   BOUNDARY: "legacy"       # n-step seam at gamma<1 (legacy | smooth | disc), for
                            # BOTH the offline TD teacher and the co-trained critic.
                            # legacy trains a NON-MONOTONE target at delta=n
@@ -790,8 +792,9 @@ run: |
     [ "$ENVNAME" = cube ] && { MWX=0.1; LRX=3e-4; }
     [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] && { MWX=0.0; LRX=1e-3; }
     CFG=()
-    CFG+=("unig_ctrl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal 12 25,100 8 none")
-    CFG+=("unig_vlog_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal 12 25,100 8 log")
+    UMD=${UNIG_MD:-12}
+    CFG+=("unig_ctrl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} 25,100 8 none")
+    CFG+=("unig_vlog_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} 25,100 8 log")
   fi
   # GRID=g98matrix (2026-08-18, expansion). Full TwoRoom matrix for the
   # gamma-unification sweep: h25 and h100 actors trained INDIVIDUALLY per
