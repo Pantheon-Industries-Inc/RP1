@@ -282,6 +282,29 @@ horizon-matched); the protocol-seed anchor for that recipe was never
 banked. Unified seeds 0/1 reach 95–96 at deploy 1.8 — the gap is seed
 variance, not configuration.
 
+### PLDM columns (completion wave) — no collapse anywhere, and a base-keyed vlog pattern
+
+Unified (γ=0.98/md20/a2.5/raw-E) vs the paper's per-cell PLDM rows:
+
+| cell | unified ctrl | unified vlog | paper |
+|---|---|---|---|
+| TwoRoom PLDM h25 / h100 | **99.1** / 86.2 ± 8.7 | 96.7 / 88.9 ± **0.8** | 98.2 / 96.0 |
+| Cube PLDM h25 / h100 (easy) | 79.8 / **80.7** | **83.1 / 83.6** | 82.9 / 77.1 |
+| Reacher PLDM τ0.1 / τ0.05 (latched) | 97.6 / 80.7 | — | 97.8 / 82.0 |
+
+- The predicted-riskiest cell (cube PLDM, bespoke clip 4.5 → 2.5) did NOT
+  collapse: −3.1 at h25, **+3.6 at h100** (hard: −7 / **+6.6**).
+- TwoRoom PLDM repeats the LeWM signature exactly: h25 above paper, h100
+  −10 on ctrl with the weak-seed spread (77.3/86.7/94.7 — strong seed a
+  point under paper), vlog tightening sd to 0.8.
+- Reacher PLDM is par (−0.2/−1.3), trained at the paper anchor m0.5/lr3e-4.
+- **vlog at γ=0.98 helps BOTH PLDM cells and hurts BOTH LeWM-family cells**
+  — E-conditioning need is a property of the world-model base, not the
+  environment. A single base-keyed rule ("vnorm=log iff PLDM") would beat or
+  match the paper in nearly every column, at the cost of one principled
+  fork in the otherwise-unified config; under the strict single config
+  (vnorm=none) the PLDM h100 cells carry the same selection story as LeWM.
+
 ### Beat portfolio (jobs 8596–8607) — scale falsified, replay free, selection survives
 
 Three candidate stabilizers at the unified base (γ=0.98/md20/a2.5):
