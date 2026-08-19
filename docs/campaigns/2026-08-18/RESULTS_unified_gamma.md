@@ -282,6 +282,21 @@ horizon-matched); the protocol-seed anchor for that recipe was never
 banked. Unified seeds 0/1 reach 95–96 at deploy 1.8 — the gap is seed
 variance, not configuration.
 
+### Seed selection on val draws (user-approved protocol extension)
+
+Train seeds unchanged (0/1/2); each cell's seed is picked on draws **50/51**
+(the repo's sanctioned selection draws, never reported) and the pick's
+already-banked 42–44 number is quoted. Val pass (jobs 8608–8613, eval-only):
+the weak actor ranks LAST on val in both families (md12: val 95/96/86 vs
+report 93.3/93.3/77.3; md20: 95/79/90 vs 93.3/80.0/88.0), so selection
+avoids it without touching report draws. **Selected-of-3 TwoRoom h100 =
+93.3 vs paper 94.2 — the unified deficit shrinks from −6/−7 to −0.9.**
+Fairness note: the banked shipping protocol itself selected on draw 42 and
+reported 43/44, so the paper number is also a selected quantity; this
+protocol (selection on held-back draws, report untouched) is the stricter
+of the two. Reported as its own row — the estimand is selected-of-3, not
+mean-of-3.
+
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
 falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
