@@ -228,6 +228,10 @@ def main():
                         "e.g. 0.1 -> 0.03: smooth teacher early, sharp shortest-path late")
     p.add_argument("--n-step", type=int, default=None)
     p.add_argument("--gamma", type=float, default=None)
+    p.add_argument("--squash", choices=["hard", "tanh"], default="hard",
+                   help="plan box enforcement: hard clamp (zero grad when "
+                        "saturated) or amax*tanh(u/amax) (gradient flows "
+                        "everywhere). Saved into the checkpoint.")
     p.add_argument("--boundary", choices=["legacy", "smooth", "disc"], default="legacy",
                    help="n-step seam at gamma<1: legacy = raw in-window label vs "
                         "discounted bootstrap (non-monotone at delta=n); smooth = "
@@ -616,7 +620,8 @@ def main():
                          amax=a.amax, use_zg=False, use_gate=False, use_z0=False,
                          use_grad=not a.drop_grad,
                          head_scale=a.head_scale, vnorm=a.vnorm,
-                         vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01).to(dev)
+                         vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01,
+                         squash=a.squash).to(dev)
         print(f"[vnorm] {a.vnorm}", flush=True)
     else:
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
@@ -935,6 +940,7 @@ def main():
                         "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                         "vnorm": getattr(net, "vnorm", "none"),
                 "vnorm_k": getattr(net, "vnorm_k", 1.0),
+                "squash": getattr(net, "squash", "hard"),
                         "value": a.out_value, "train_args": vars(a)}, _snap)
 
         if (a.save_train_state and a.state_every
@@ -984,6 +990,7 @@ def main():
                 "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                 "vnorm": getattr(net, "vnorm", "none"),
                 "vnorm_k": getattr(net, "vnorm_k", 1.0),
+                "squash": getattr(net, "squash", "hard"),
                 "temporal_objective": a.temporal_objective,
                 "value": a.out_value, "train_args": vars(a)}, a.out)
     print(f"saved learned planner -> {a.out}", flush=True)

@@ -66,7 +66,7 @@ class PlannerNet(nn.Module):
 
     def __init__(self, z_dim, horizon=5, a_dim=25, hidden=512, amax=2.5,
                  feed="none", use_zg=False, use_gate=False, use_z0=False,
-                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0):
+                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0, squash="hard"):
         super().__init__()
         self.h, self.a, self.amax, self.feed = horizon, a_dim, amax, feed
         self.use_zg, self.use_gate, self.use_z0 = use_zg, use_gate, use_z0
@@ -87,6 +87,12 @@ class PlannerNet(nn.Module):
         # discounted cost-to-go). Preserves resolution where log1p over-
         # compresses an already-discount-compressed E (gamma < 1).
         self.vnorm_k = float(vnorm_k)
+        # 'tanh': A = amax * tanh(u / amax) — same box as the hard clamp but
+        # gradients stay nonzero for saturated coordinates (torch.clamp has
+        # zero grad outside the box, so boundary-pinned plan entries receive
+        # NO learning signal — the mechanistic root of the gamma x clip
+        # collapse at tight clips).
+        self.squash = str(squash)
         extra = {"none": 0, "end": z_dim, "traj": horizon * z_dim}[feed]
         # use_zg=False ('vonly-ized' MLP): the raw goal embedding is dropped —
         # the goal reaches the actor only through the teacher's signals
@@ -145,7 +151,11 @@ class PlannerNet(nn.Module):
         if self.use_gate:
             dA = out[:, :-1].view(B, self.h, self.a)
             gate = torch.sigmoid(out[:, -1:]).unsqueeze(-1)
+            if self.squash == "tanh":
+                return self.amax * torch.tanh((A + gate * dA) / self.amax)
             return (A + gate * dA).clamp(-self.amax, self.amax)
+        if self.squash == "tanh":
+            return self.amax * torch.tanh((A + out.view(B, self.h, self.a)) / self.amax)
         return (A + out.view(B, self.h, self.a)).clamp(-self.amax, self.amax)
 
 
@@ -596,7 +606,8 @@ class LIPSolver(CEMSolver):
                                     use_z0=ck.get("use_z0", not v4),
                                     use_grad=ck.get("use_grad", True),
                                     vnorm=ck.get("vnorm", "none"),
-                                    vnorm_k=ck.get("vnorm_k", 1.0)).to(self.device)
+                                    vnorm_k=ck.get("vnorm_k", 1.0),
+                                    squash=ck.get("squash", "hard")).to(self.device)
         # A vnorm actor deployed with raw E is a guaranteed silent null, so say
         # out loud which conditioning this cell actually loaded.
         if getattr(self.actor, "vnorm", "none") != "none":

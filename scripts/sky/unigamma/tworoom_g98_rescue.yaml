@@ -87,6 +87,12 @@ envs:
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
+  SQUASH: "hard"           # plan box enforcement: hard clamp | tanh
+                           # (amax*tanh(u/amax): gradient flows through
+                           # saturated coordinates)
+  DEPLOY_ITERS: ""         # eval-only: rewrite imported actors' top-level
+                           # 'iters' (refinement depth at deploy); requires
+                           # REUSE_ONLY=1
   BOUNDARY: "legacy"       # n-step seam at gamma<1 (legacy | smooth | disc), for
                            # BOTH the offline TD teacher and the co-trained critic.
                            # legacy trains a NON-MONOTONE target at delta=n
@@ -456,13 +462,15 @@ run: |
   if [ -n "${ACTOR_IMPORT_TAG:-}" ]; then
     [ "${REUSE_ONLY:-0}" = 1 ] \
       || { echo "ACTOR_IMPORT_TAG requires REUSE_ONLY=1" >&2; exit 2; }
-    case "$ACTOR_IMPORT_TAG" in
-      *[!A-Za-z0-9._-]*) echo "unsafe ACTOR_IMPORT_TAG: $ACTOR_IMPORT_TAG" >&2; exit 2;;
-    esac
-    IMPORT_ROOT=/checkpoints/${PANTHEON_USER}/${ACTOR_IMPORT_TAG}
-    [ -d "$IMPORT_ROOT/actors" ] \
-      || { echo "missing actor import directory: $IMPORT_ROOT/actors" >&2; exit 2; }
-    cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
+    for _t in ${ACTOR_IMPORT_TAG}; do   # space-separated tags allowed
+      case "$_t" in
+        *[!A-Za-z0-9._-]*) echo "unsafe ACTOR_IMPORT_TAG: $_t" >&2; exit 2;;
+      esac
+      IMPORT_ROOT=/checkpoints/${PANTHEON_USER}/${_t}
+      [ -d "$IMPORT_ROOT/actors" ] \
+        || { echo "missing actor import directory: $IMPORT_ROOT/actors" >&2; exit 2; }
+      cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
+    done
     printf 'source_tag=%s\nmode=final-actor-copy\n' "$ACTOR_IMPORT_TAG" \
       > "$PERSIST/actor_import.txt"
   fi
@@ -470,19 +478,23 @@ run: |
   # deploy clamp reads ck['amax'] exclusively (no config path exists), while
   # train_args stays untouched so [args-ok] still verifies training
   # provenance. Eval-only deploy-clip sweep on frozen actors.
-  if [ -n "${DEPLOY_AMAX:-}" ]; then
-    [ "${REUSE_ONLY:-0}" = 1 ] || { echo "DEPLOY_AMAX requires REUSE_ONLY=1" >&2; exit 2; }
-    PERSIST="$PERSIST" DEPLOY_AMAX="$DEPLOY_AMAX" python3 - <<'PYDA'
+  if [ -n "${DEPLOY_AMAX:-}${DEPLOY_ITERS:-}" ]; then
+    [ "${REUSE_ONLY:-0}" = 1 ] || { echo "deploy rewrite requires REUSE_ONLY=1" >&2; exit 2; }
+    PERSIST="$PERSIST" DEPLOY_AMAX="${DEPLOY_AMAX:-}" DEPLOY_ITERS="${DEPLOY_ITERS:-}" python3 - <<'PYDA'
   import glob, os, torch
-  v = float(os.environ["DEPLOY_AMAX"])
+  va = os.environ.get("DEPLOY_AMAX") or None
+  vi = os.environ.get("DEPLOY_ITERS") or None
   fs = sorted(glob.glob(os.path.join(os.environ["PERSIST"], "actors", "*.pt")))
-  assert fs, "DEPLOY_AMAX: no imported actors to rewrite"
+  assert fs, "deploy rewrite: no imported actors"
   for f in fs:
       ck = torch.load(f, map_location="cpu", weights_only=False)
-      old = ck.get("amax")
-      ck["amax"] = v
+      msg = []
+      if va is not None:
+          msg.append(f"amax {ck.get('amax')} -> {float(va)}"); ck["amax"] = float(va)
+      if vi is not None:
+          msg.append(f"iters {ck.get('iters')} -> {int(vi)}"); ck["iters"] = int(vi)
       torch.save(ck, f)
-      print(f"[deploy-amax] {os.path.basename(f)}: {old} -> {v}", flush=True)
+      print(f"[deploy-rewrite] {os.path.basename(f)}: {'; '.join(msg)}", flush=True)
   PYDA
   fi
   # EXPERIMENT_TAG reuse is intentional for managed-job recovery and priority
@@ -1244,7 +1256,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
