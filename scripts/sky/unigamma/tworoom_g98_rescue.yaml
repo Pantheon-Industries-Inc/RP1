@@ -1138,7 +1138,11 @@ run: |
         AGE=$(( NOW - $(stat -c %Y "$f") ))
         [ "$AGE" -gt "${TRAIN_STALL_SEC:-1500}" ] || continue
         CELL=$(basename "$f" _train.log)
-        PIDS=$(pgrep -f "${CELL#g_}\.pt" || true)
+        # Match the TRAINER only: the eval command also embeds the actor
+        # filename, and cube's node-serialized evals queue >TRAIN_STALL_SEC
+        # with a stale train log — the bare filename pattern killed those
+        # healthy evals (the 2026-08-19 cube g99/g100 failures).
+        PIDS=$(pgrep -f "train_lip_ac\.py.*${CELL#g_}\.pt" || true)
         [ -n "$PIDS" ] || continue          # trainer done (cell is in eval) -- healthy
         DUMPED[$f]=1
         echo "[watchdog] $CELL stalled ${AGE}s; stack-dumping + killing pids: $PIDS" | tee -a "$DRV"
