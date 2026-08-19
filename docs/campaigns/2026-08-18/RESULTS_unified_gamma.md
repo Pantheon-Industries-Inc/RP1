@@ -266,7 +266,16 @@ campaign's protocol, seeds 0/1/2 × draws 42/43/44):
 |---|---|---|---|
 | TwoRoom h25 / h100 | 100.0 / ~88 | 100.0 / 97.3† | 0 / −9† |
 | Cube h25 / h100 | 87.3 / 81.1 | 89.1 / 82.4 | −1.8 / −1.3 |
-| Reacher τ0.1 / τ0.05 (held) | 95.8 / 55.1 | ≈ par (convention caveat) | ~0 |
+| Reacher τ0.1 / τ0.05 (**latched**, paper convention) | **99.6 / 93.3** | 98.7 / 88.7 (paper) | **+0.9 / +4.6** |
+| Reacher τ0.1 / τ0.05 (held, in-campaign) | 95.8 / 55.1 | — | — |
+
+The latched pass (job 8590, frozen unified md20 actors re-evaluated under
+`RS_LATCHED=1`) shows the earlier held-at-end row was a convention
+artifact: under the paper's first-hit metric the unified config **beats the
+paper's tuned Reacher recipe, +4.6 at the tight tolerance** (per-seed
+τ0.05: 94.7/94.0/91.3 — the md20 band's precision gain carries through).
+Protocol caveat: 3 train seeds × draws 42–44 vs the paper's 6 × 42–47 —
+extend seeds before quoting in the paper.
 
 † the banked 97.3 is a seed-3 diagnostic (γ=1.0+vlog+md20+a1.8,
 horizon-matched); the protocol-seed anchor for that recipe was never
