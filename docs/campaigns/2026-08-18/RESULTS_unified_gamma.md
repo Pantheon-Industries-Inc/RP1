@@ -72,9 +72,12 @@ cells but consistent with the LeJEPA ordering.
 
 ## Fleet (in flight)
 
-18 jobs × H200:4 = 72 GPUs, p1: 9 TwoRoom (γ × seed sharded), 3 Cube
-(γ, seeds packed), 6 Reacher (γ × vnorm, seeds in-job). Smoke canaries
-(one per environment, γ=0.99) gate the fleet.
+18 jobs × H200:4 = 72 GPUs, p1: 9 TwoRoom (γ × seed sharded; jobs
+8269–8281), 3 Cube (γ, seeds packed; 8305–8307), 6 Reacher (γ × vnorm,
+seeds in-job; 8277–8293). Smoke canaries (one per environment, γ=0.99;
+8257/8258/8260, all SUCCEEDED) gated each slice; the reacher smoke's
+checkpoint was torch.loaded to prove vnorm=log/amax=2.5/gamma=0.99
+round-tripped (reacher has no [args-ok] guard).
 
 Tags: `rlp-tw-unig-{g98,g99,g100}-s{0,1,2}-20260818`,
 `rlp-cu-unig-{g98,g99,g100}-20260818`,
@@ -82,13 +85,74 @@ Tags: `rlp-tw-unig-{g98,g99,g100}-s{0,1,2}-20260818`,
 
 ## Results
 
-(pending — filled as jobs land)
+### TwoRoom LeWM (h25 / h100) — jobs 8269–8281, complete
 
-### TwoRoom LeWM (h25 / h100)
+One actor per arm at amax=2.5/md12, evaluated at both horizons; seeds 0/1/2,
+draws 42/43/44 (450 episodes per cell):
+
+| arm | h25 | h100 | h100 per-seed |
+|---|---|---|---|
+| γ=0.98 ctrl | 100.0 | **88.0** ± 9.2 | 93.3 / 93.3 / 77.3 |
+| γ=0.98 vlog | 99.8 | 74.9 ± 8.4 | 73.3 / 84.0 / 67.3 |
+| γ=0.99 ctrl | 100.0 | **88.0** ± 8.7 | 92.0 / 78.0 / 94.0 |
+| γ=0.99 vlog | 100.0 | 85.8 ± **0.8** | 86.7 / 85.3 / 85.3 |
+| γ=1.0 ctrl | 100.0 | **87.8** ± 3.9 | 90.7 / 83.3 / 89.3 |
+| γ=1.0 vlog | 99.8 | 88.4 ± 3.4 | 84.7 / 91.3 / 89.3 |
+
+**Headline: at amax=2.5 the three discounts are indistinguishable at h100
+(88.0 / 88.0 / 87.8 raw-E), and h25 is at ceiling everywhere.** The §10/§10a
+γ=0.98 collapse (66–73) does not reproduce at the wider clip — with means
+±5 at 3 seeds, the arms are within noise of each other.
+
+**Reinterpretation of the §10 falsification: it was a γ × clip interaction,
+not pure critic saturation.** The §2 mechanism (actor response ‖dA‖ linear
+in E; the clamp applied to the cumulative plan) predicts failure when E's
+drive pushes plan entries onto the ±amax boundary. At γ=0.98 the critic's
+E ≈ 43–50 everywhere far; at amax=1.8 that drive pins the plan (collapse);
+at amax=2.5 the boundary is out of reach and the same critic plans fine.
+Consequences:
+- "TwoRoom's bespoke γ=1.0 is load-bearing" holds **only at the bespoke
+  a1.8 clip**. Under the unified clip, γ genuinely unifies on TwoRoom.
+- `vnorm=log`'s banked +8.7 (and the 6.7× variance cut) was likewise
+  clip-specific: at a2.5 it is neutral at γ=1.0 (88.4 vs 87.8), **harmful
+  at γ=0.98 (74.9 vs 88.0)** — log1p on an already-discount-compressed E
+  over-compresses. γ=0.99+vlog is the variance pick (sd 0.8 vs 8.7 raw).
+- The unified config costs ~9 pts at h100 against the banked tuned best
+  (97.3 at a1.8/md20/vlog/γ1.0, horizon-matched training) and 0 at h25.
+  How much of that is the md12 band vs the clip is not resolved here — the
+  banked 97.3 carried an md20 goal band that covers the 100-step goal.
+
+### Reacher LeWM (tau 0.1 / 0.05) — jobs 8277–8293, complete
+
+One actor per arm at amax=2.5 (mw 0.3, lr 1e-4, expand 0, replay 0.5 — the
+paper LeWM shape at the unified clip), seeds 0/1/2, draws 42/43/44.
+**Convention: held-at-end** (held10 ≈ tau 0.1 worst-joint sweep, held05 =
+qpos-in-ball residency ≈ dm_control's 0.05 geom) — `GRID=cross` routes actor
+evals through `evone`, not the latched-first-hit passes (those are gated to
+the latched grids). Do not compare these numbers against latched-protocol
+tables.
+
+| arm | tau 0.05 (held) | tau 0.1 (held) | seed means (0.05) |
+|---|---|---|---|
+| γ=0.98 ctrl (bespoke γ) | **55.1** ± 6.5 | **94.0** ± 0.7 | 51.3 / 62.7 / 51.3 |
+| γ=0.98 vlog | 57.6 ± 6.2 | 94.7 ± 5.3 | 54.0 / 54.0 / 64.7 |
+| γ=0.99 ctrl | 40.9 ± 9.7 | 85.3 ± 12.2 | 30.7 / 50.0 / 42.0 |
+| γ=0.99 vlog | 40.9 ± 23.2 | 83.1 ± 17.4 | 14.7 / 58.7 / 49.3 |
+| γ=1.0 ctrl | 46.7 ± 9.8 | 87.6 ± 7.3 | 35.3 / 52.7 / 52.0 |
+| γ=1.0 vlog | 34.2 ± 23.0 | 76.9 ± 22.8 | 8.7 / 40.7 / 53.3 |
+
+**Reacher runs opposite to TwoRoom: the bespoke γ=0.98 wins outright** —
+raising γ costs 7–9 points at tau 0.1, ~10–14 at tau 0.05, and inflates seed
+variance (seed 0 craters to 8.7–14.7 under γ≥0.99+vlog). Mechanism reading:
+Reacher has no far field for a discount to protect (d_max ≈ tens of steps),
+so γ→1 buys nothing on target spacing and loses the per-hop bootstrap
+contraction — the co-trained critic drifts, and precision at the goal
+(exactly what tau 0.05 scores) degrades first. The horizon-budget rule
+γ ≈ 1 − 1.5/d_max with a small d_max in fact prescribes γ ≤ 0.98 here; the
+unification failure is in forcing γ *up*, not down. vnorm=log is neutral at
+γ=0.98 and amplifies the γ≥0.99 instability.
 
 ### OGBench Cube LeWM (h25 / h100)
-
-### Reacher LeWM (tau 0.1 / 0.05, latched first-hit)
 
 ### Deploy-amax pass
 
