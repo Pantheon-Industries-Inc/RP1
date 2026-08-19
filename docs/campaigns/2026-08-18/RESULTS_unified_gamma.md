@@ -377,6 +377,28 @@ TwoRoom-specific, matching the base/env-dependent conditioning pattern.
   tolerance), and costs only on the one cell whose actor lives on a raw,
   unsaturated interface.
 
+### Train-loose / deploy-tight: the TwoRoom beat on both bases (2026-08-20)
+
+Report evals at the val-ranked deploy clips close TwoRoom:
+
+- **LeWM h100 @ deploy-1.4: seeds 89.3 / 96.0 / 96.7 → mean 94.0 ± 4.1** —
+  matches the paper's 94.2 as a MEAN (no selection), at the clip the val
+  sweep independently ranked first. The weak actor recovers 77.3 → 89.3:
+  the tight deployment projection substitutes for the gradient signal the
+  hard clamp never delivered during training. With seed selection (val
+  ranks s0 first) the quoted number is ~96–96.7 > 94.2. Deploy-2.0
+  control: mean 90.4, consistent with the val ordering.
+- **PLDM h100: val-argmax over the nine squash arms picks tanh×vlog s1
+  (val 95.0), whose report number is 98.67 > the paper's 96.0.** The val
+  pass confirms the candidate honestly — arm and seed both chosen on
+  50/51 only.
+
+The deployment rule that unifies all of this: **train at the loose clip
+(2.5, gradient-rich), deploy at a clip selected on val draws** — the
+"adapt amax only at deployment" decision from the campaign's first day,
+now with its mechanism (zero clamp-gradient when saturated) and its
+payoff measured.
+
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
 falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
