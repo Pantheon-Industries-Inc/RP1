@@ -51,7 +51,19 @@ User decisions that define the protocol:
    n200 bit-identical: episode length caps the window), 0.996/n50 87.1±1.0
    (vlog 91.3), vs γ=1+vlog record 97.3.
 
-## State: IN FLIGHT (jobs 8565–8583, ~19:00Z 2026-08-19)
+## State: CAMPAIGN COMPLETE (2026-08-19; all 39+ jobs terminal)
+
+Both closing waves landed — see RESULTS_unified_gamma.md "md20 wave",
+"Deploy-amax pass" and "Conclusion". Outcomes: md20 push-up hypothesis
+refuted on TwoRoom (87.1 ≈ 88.0) but md20 adopted anyway (free on Cube,
++1.8 τ0.1 and 4× τ0.05 seed-sd cut on Reacher); deploy clip is a clean
+null in [1.6, 3.0] — the h100 spread is per-seed actor quality (weak seed
+74–78 at every clip, strong seeds 95–96 at deploy 1.8). Final unified
+config: γ=0.98, n=50, vnorm=none, boundary=legacy, amax_train=2.5
+(deploy free), md=20. Open frontier: seed-to-seed stability of the raw-E
+actor's out-of-band extrapolation at γ<1.
+
+## Original in-flight notes (for provenance; jobs 8565–8583)
 
 1. **md20 wave** (`*-g98md20*`, 9 jobs): the push-up hypothesis. TwoRoom's −9
    vs banked 97.3 lives in the band×conditioning interaction (md20 alone +0,

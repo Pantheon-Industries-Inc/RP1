@@ -218,8 +218,68 @@ avoid. The boundary fix also does NOT rescue Reacher's γ=0.99 gap (disc
 anchoring/contraction mechanism, not the cliff. **Keep `boundary=legacy`;
 the γ-correlated-confound worry about the fleet table is discharged.**
 
-### Deploy-amax pass
+### md20 wave — the discount-as-compressor hypothesis, refuted; md20 still adopted
 
-(post-hoc: checkpoint `amax` rewritten to {recipe, 3.0}; training amax fixed
-at 2.5 — in flight, jobs `*-g98da*`; md20 horizon-covering-band arms also in
-flight, jobs `*-g98md20*`)
+γ=0.98 / raw E / md=20 / a2.5 (jobs 8565–8575), vs the md12 fleet:
+
+| cell | md12 (fleet) | md20 | md20+smooth | md20+vlog |
+|---|---|---|---|---|
+| TwoRoom h100 | 88.0 ± 9.2 | 87.1 ± 6.7 | 85.6 ± 6.0 | 75.6 ± 9.7 |
+| Cube h100 | 81.1 ± 0.8 | 81.1 ± 1.4 | — | 81.6 ± 1.0 |
+| Reacher τ0.05 / τ0.1 | 55.1 ± 6.5 / 94.0 ± 0.7 | **55.1 ± 1.7 / 95.8 ± 2.1** | — | **58.9 ± 1.0** / 95.6 |
+
+The TwoRoom push-up hypothesis is **refuted**: the wide band does not
+unlock at γ=0.98 with raw E (87.1 ≈ 88.0) — the banked band×conditioning
+synergy (+8.7) was specific to vlog at γ=1.0/a1.8 and does not transfer.
+But md20 is **free on Cube and positive on Reacher** (τ0.05 seed sd 6.5 →
+1.7; τ0.1 +1.8), so the unified config adopts **md=20** as the
+horizon-covering constant. (Reacher vlog at 0.98/md20 posts the best τ0.05
+measured, 58.9 ± 1.0 — but TwoRoom vetoes vlog at γ=0.98 twice over, so
+`none` stays the unified choice.)
+
+### Deploy-amax pass — a clean null: the deploy clip is a free knob
+
+Frozen γ=0.98 fleet actors, top-level `amax` rewritten (jobs 8572–8583):
+
+| cell | deploy 1.6/1.8/2.2 (recipe) | deploy 2.5 (native) | deploy 3.0 |
+|---|---|---|---|
+| TwoRoom h100 | 88.7 ± 12.1 (@1.8) | 88.0 ± 9.2 | 87.6 ± 8.3 |
+| Cube h100 | 80.0 ± 1.2 (@1.6) | 81.1 ± 0.8 | 81.1 ± 1.5 |
+| Reacher τ0.05 / τ0.1 | 54.4 / 94.4 (@2.2) | 55.1 / 94.0 | 54.9 / 94.0 |
+
+At train-amax 2.5, deployment clip anywhere in [1.6, 3.0] moves nothing
+beyond noise. The per-seed decomposition is the telling part: TwoRoom's
+weak actor (seed 2: 74.7 / 77.3 / 78.0 across clips) and strong actors
+(seeds 0/1: 95.3–96.0 at deploy 1.8) keep their identity at every clip —
+**the h100 spread is actor-training quality, not a deployment-projection
+artifact**. Note the strong seeds at 95–96 already touch the banked-best
+level; the frontier is seed-to-seed training stability, not any of γ /
+band / clip / boundary.
+
+## Conclusion — the unified configuration and what it costs
+
+**Supported single config: γ=0.98, n=50, vnorm=none, boundary=legacy,
+amax=2.5 (train; deploy free in [1.6, 3.0]), max_delta=20.** Scores (this
+campaign's protocol, seeds 0/1/2 × draws 42/43/44):
+
+| cell | unified | bespoke banked | Δ |
+|---|---|---|---|
+| TwoRoom h25 / h100 | 100.0 / ~88 | 100.0 / 97.3† | 0 / −9† |
+| Cube h25 / h100 | 87.3 / 81.1 | 89.1 / 82.4 | −1.8 / −1.3 |
+| Reacher τ0.1 / τ0.05 (held) | 95.8 / 55.1 | ≈ par (convention caveat) | ~0 |
+
+† the banked 97.3 is a seed-3 diagnostic (γ=1.0+vlog+md20+a1.8,
+horizon-matched); the protocol-seed anchor for that recipe was never
+banked. Unified seeds 0/1 reach 95–96 at deploy 1.8 — the gap is seed
+variance, not configuration.
+
+Mechanism summary: (1) γ is a **horizon budget** in both directions —
+TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
+falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
+ceiling 1/(1−γ)=50 anchors the never-exactly-labeled cross-episode pairs at
+the env diameter; (2) the TD-seam non-monotonicity is real in target space
+and cosmetic in behaviour; (3) band and deploy-clip are free knobs at the
+wide training clip; (4) the remaining unified-vs-tuned gap on TwoRoom h100
+is per-seed actor-training variance — the open frontier is stabilizing the
+raw-E actor's out-of-band extrapolation (vlog does it at γ=1, nothing
+measured does it at γ=0.98 without costing mean).
