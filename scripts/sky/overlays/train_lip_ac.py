@@ -164,7 +164,7 @@ def main():
                    help="mlp arch: ABLATION — drop grad_A V from the actor input; "
                         "it plans from [A, E, z0, zg] with no value-gradient signal. "
                         "Only informative with z0/zg kept (a full-input actor).")
-    p.add_argument("--vnorm", choices=["none", "log", "loggn"], default="none",
+    p.add_argument("--vnorm", choices=["none", "log", "loggn", "scale"], default="none",
                    help="v4: conditioning of the value-derived actor inputs. "
                         "'none' = shipped raw E (steps-to-go at gamma=1) and raw "
                         "grad; 'log' = log1p(E); 'loggn' = log1p(E) + "
@@ -574,7 +574,8 @@ def main():
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
                          amax=a.amax, use_zg=False, use_gate=False, use_z0=False,
                          use_grad=not a.drop_grad,
-                         head_scale=a.head_scale, vnorm=a.vnorm).to(dev)
+                         head_scale=a.head_scale, vnorm=a.vnorm,
+                         vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01).to(dev)
         print(f"[vnorm] {a.vnorm}", flush=True)
     else:
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
@@ -839,6 +840,7 @@ def main():
                 "use_z0": getattr(net, "use_z0", not a.drop_z0),
                 "use_grad": getattr(net, "use_grad", not a.drop_grad),
                 "vnorm": getattr(net, "vnorm", "none"),
+                "vnorm_k": getattr(net, "vnorm_k", 1.0),
                 "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                 "temporal_objective": a.temporal_objective,
                 "value": a.out_value,

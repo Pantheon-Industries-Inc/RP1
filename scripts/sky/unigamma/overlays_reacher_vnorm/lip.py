@@ -91,7 +91,7 @@ class PlannerNet(nn.Module):
 
     def __init__(self, z_dim, horizon=5, a_dim=25, hidden=512, amax=2.5,
                  feed="none", use_zg=True, use_gate=True, use_z0=True,
-                 use_grad=True, head_scale=1.0, vnorm="none"):
+                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0):
         super().__init__()
         self.h, self.a, self.amax, self.feed = horizon, a_dim, amax, feed
         self.use_zg, self.use_gate, self.use_z0 = use_zg, use_gate, use_z0
@@ -102,6 +102,11 @@ class PlannerNet(nn.Module):
         # log1p(E) + RMS-normalised grad_A V. in_dim is unchanged, so
         # state_dicts stay interchangeable across vnorm settings.
         self.vnorm = str(vnorm)
+        # 'scale': E_in * vnorm_k, with k = (1 - gamma) at training time — the
+        # linear interface normalization (v * (1-gamma) lives in [0,1] for a
+        # discounted cost-to-go). Preserves resolution where log1p over-
+        # compresses an already-discount-compressed E (gamma < 1).
+        self.vnorm_k = float(vnorm_k)
         extra = {"none": 0, "end": z_dim, "traj": horizon * z_dim}[feed]
         # use_zg=False ('vonly-ized' MLP): the raw goal embedding is dropped —
         # the goal reaches the actor only through the teacher's signals
@@ -132,6 +137,8 @@ class PlannerNet(nn.Module):
         E_in = E.reshape(B, 1)
         if self.vnorm in ("log", "loggn"):
             E_in = torch.log1p(E_in.clamp_min(0.0))
+        elif self.vnorm == "scale":
+            E_in = E_in * self.vnorm_k
         parts = [A.reshape(B, -1)]
         if self.use_grad:
             g = gradA.reshape(B, -1)
@@ -628,7 +635,8 @@ class LIPSolver(CEMSolver):
                                     use_gate=ck.get("use_gate", not v4),
                                     use_z0=ck.get("use_z0", not v4),
                                     use_grad=ck.get("use_grad", True),
-                                    vnorm=ck.get("vnorm", "none")).to(self.device)
+                                    vnorm=ck.get("vnorm", "none"),
+                                    vnorm_k=ck.get("vnorm_k", 1.0)).to(self.device)
         # A vnorm actor deployed with raw E is a guaranteed silent null, so say
         # out loud which conditioning this cell actually loaded.
         if getattr(self.actor, "vnorm", "none") != "none":

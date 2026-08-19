@@ -162,7 +162,7 @@ def main():
                         "--zero-init the refiner starts as normalized GD (L2O warm start)")
     p.add_argument("--feat-norm", action="store_true",
                    help="v3 vonly: rms-normalize grad feature, V/25, LayerNorm tokens")
-    p.add_argument("--vnorm", choices=["none", "log", "loggn"], default="none",
+    p.add_argument("--vnorm", choices=["none", "log", "loggn", "scale"], default="none",
                    help="v4: conditioning of the value-derived actor inputs "
                         "(ported 2026-08-18 from the tworoom/cube overlay). "
                         "'none' = shipped raw E and raw grad; 'log' = log1p(E); "
@@ -615,7 +615,8 @@ def main():
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
                          amax=a.amax, use_zg=False, use_gate=False, use_z0=False,
                          use_grad=not a.drop_grad,
-                         head_scale=a.head_scale, vnorm=a.vnorm).to(dev)
+                         head_scale=a.head_scale, vnorm=a.vnorm,
+                         vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01).to(dev)
         print(f"[vnorm] {a.vnorm}", flush=True)
     else:
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
@@ -933,6 +934,7 @@ def main():
                         "use_grad": getattr(net, "use_grad", not a.drop_grad),
                         "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                         "vnorm": getattr(net, "vnorm", "none"),
+                "vnorm_k": getattr(net, "vnorm_k", 1.0),
                         "value": a.out_value, "train_args": vars(a)}, _snap)
 
         if (a.save_train_state and a.state_every
@@ -981,6 +983,7 @@ def main():
                 "use_grad": getattr(net, "use_grad", not a.drop_grad),
                 "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                 "vnorm": getattr(net, "vnorm", "none"),
+                "vnorm_k": getattr(net, "vnorm_k", 1.0),
                 "temporal_objective": a.temporal_objective,
                 "value": a.out_value, "train_args": vars(a)}, a.out)
     print(f"saved learned planner -> {a.out}", flush=True)
