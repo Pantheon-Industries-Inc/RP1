@@ -341,6 +341,15 @@ protocol (selection on held-back draws, report untouched) is the stricter
 of the two. Reported as its own row — the estimand is selected-of-3, not
 mean-of-3.
 
+**Extending selection to the deploy clip closes it (jobs 8631–8633).** The
+deploy clip is a deployment choice like the seed; over 6 val candidates
+(3 seeds × deploy ∈ {2.5, 1.8}, all scored only on 50/51) the winner is
+s0@1.8 (val 97.0), whose untouched report number is **95.3 — the strict
+unified config beats the paper's 94.2 on TwoRoom h100**. Per-cell selection
+keeps h25 at 100.0. Also: `vnorm=scale` on Cube came in mildly positive
+(88.9 ± 1.4 / 82.0 ± 0.7 vs raw-E 87.3 / 81.1) — scale's −14 is
+TwoRoom-specific, matching the base/env-dependent conditioning pattern.
+
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
 falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
