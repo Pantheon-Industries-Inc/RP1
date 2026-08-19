@@ -233,5 +233,73 @@ case "$STAGE" in
       sleep 20
     done
     echo "9 md20 jobs submitted (36 GPUs)." ;;
+  damax)  # deploy-clip sweep on the frozen gamma=0.98 fleet actors (eval-only):
+          # imported checkpoints get top-level amax rewritten; training amax
+          # stays 2.5 in train_args. Values: per-env recipe clip + 3.0 probe.
+    for AMX in 1.8 3.0; do
+      AT=${AMX/./p}
+      for S in 0 1 2; do
+        NAME="rlp-tw-unig-g98da${AT}-s${S}"
+        echo "==> $NAME"
+        sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
+          -n "$NAME" --priority p1 -y --async \
+          --env ENVNAME=tworoom --env BASE=lejepa --env GRID=unig \
+          --env SPLIT=1 --env SMOKE=0 --env ONLYCFG="unig_ctrl" \
+          --env INCLUDE_WINNERS=0 --env REUSE_ONLY=1 --env ACTOR_ONLY=0 \
+          --env STAGED=0 --env ACTOR_IMPORT_TAG="rlp-tw-unig-g98-s${S}-20260818" \
+          --env DEPLOY_AMAX="$AMX" --env FULLCACHE=0 \
+          --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
+          --env TR_GAMMA=0.98 --env TR_NSTEP=50 \
+          --env CACHE_VERSION="tw-unig-g98-s${S}-v1" \
+          --env EXPERIMENT_TAG="${NAME}-20260819" \
+          --env TRAIN_SEEDS="$S" --env EVAL_SEEDS="42 43 44" \
+          --env STEPS=8000 --env BATCH=128 --env MAXPAR=4 --env RH=5 \
+          --env MAX_DELTA=12 --env OFFSETS="25 100" \
+          --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+          --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+        sleep 20
+      done
+    done
+    for AMX in 1.6 3.0; do
+      AT=${AMX/./p}
+      NAME="rlp-cu-unig-g98da${AT}"
+      echo "==> $NAME"
+      sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
+        -n "$NAME" --priority p1 -y --async \
+        --env ENVNAME=cube --env BASE=lewm --env GRID=unig \
+        --env SPLIT=0 --env SMOKE=0 --env ONLYCFG="unig_ctrl" \
+        --env INCLUDE_WINNERS=0 --env REUSE_ONLY=1 --env ACTOR_ONLY=0 \
+        --env STAGED=0 --env ACTOR_IMPORT_TAG="rlp-cu-unig-g98-20260818" \
+        --env DEPLOY_AMAX="$AMX" --env FULLCACHE=0 \
+        --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
+        --env TR_GAMMA=1.0 --env CU_GAMMA=0.98 --env TR_NSTEP=50 \
+        --env CACHE_VERSION="cu-unig-g98-v1" \
+        --env EXPERIMENT_TAG="${NAME}-20260819" \
+        --env TRAIN_SEEDS="0 1 2" --env EVAL_SEEDS="42 43 44" \
+        --env STEPS=6000 --env BATCH=256 --env MAXPAR=4 --env RH=5 \
+        --env MAX_DELTA=12 --env OFFSETS="25 100" \
+        --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+        --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+      sleep 20
+    done
+    for AMX in 2.2 3.0; do
+      AT=${AMX/./p}
+      NAME="rlp-re-unig-g98da${AT}"
+      echo "==> $NAME"
+      sky jobs launch scripts/sky/unigamma/reacher_gamma.yaml \
+        -n "$NAME" --priority p1 -y --async \
+        --env BASE=lejepa --env GRID=cross \
+        --env AMFIX=2.5 --env CROSS_EXPANDS="0" --env CROSS_REPLAYS="0.5" \
+        --env RS_GAMMA=0.98 --env RS_VNORM=none \
+        --env REUSE_ONLY=1 --env ACTOR_IMPORT_TAG="rlp-re-unig-g98-none-20260818" \
+        --env DEPLOY_AMAX="$AMX" \
+        --env SMOKE=0 --env REPORT_ONLY=1 \
+        --env TRAIN_SEEDS="0 1 2" \
+        --env EXPERIMENT_TAG="${NAME}-20260819" \
+        --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer \
+        --env PANTHEON_USER=armin@pantheon.inc 2>&1 | tail -1
+      sleep 20
+    done
+    echo "10 deploy-amax jobs submitted (40 GPUs, eval-only)." ;;
   *) echo "unknown STAGE=$STAGE" >&2; exit 2 ;;
 esac

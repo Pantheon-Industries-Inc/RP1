@@ -97,6 +97,8 @@ envs:
   REPORT_ONLY: "0"         # 1 = draws 42-44 only; suppress 50/51
   REUSE_ONLY: "0"          # 1 = missing final actor is fatal; never retrain
   ACTOR_IMPORT_TAG: ""     # reuse-only: copy final actors from these persist tags (space-separated)
+  DEPLOY_AMAX: ""          # eval-only: rewrite imported actors' deploy clamp
+                           # (top-level ck['amax']); requires REUSE_ONLY=1
   GRAPHED_MODE: "false"    # lip eval: false | true | verify (CUDA-graphed inference)
   HELD_AT_END: "0"         # 1 = score the latched grid held-at-end (evone; no early termination)
   W1_AMS: "0.6 1.0 1.4 1.8 2.4"  # GRID=w1_grid: amax axis (one value per shard job)
@@ -324,6 +326,23 @@ run: |
       cp -n /checkpoints/${PANTHEON_USER}/${_t}/actors/*.pt "$ACTORS"/ 2>/dev/null || true
     done
     echo "[import] $(ls "$ACTORS" | wc -l) actors from: ${ACTOR_IMPORT_TAG}"
+  fi
+  # DEPLOY_AMAX: rewrite imported actors' TOP-LEVEL amax (deploy clamp) --
+  # see tworoom_g98_rescue.yaml for the rationale. Eval-only.
+  if [ -n "${DEPLOY_AMAX:-}" ]; then
+    [ "${REUSE_ONLY:-0}" = 1 ] || { echo "DEPLOY_AMAX requires REUSE_ONLY=1" >&2; exit 2; }
+    ACTORS="$ACTORS" DEPLOY_AMAX="$DEPLOY_AMAX" python3 - <<'PYDA'
+  import glob, os, torch
+  v = float(os.environ["DEPLOY_AMAX"])
+  fs = sorted(glob.glob(os.path.join(os.environ["ACTORS"], "*.pt")))
+  assert fs, "DEPLOY_AMAX: no imported actors to rewrite"
+  for f in fs:
+      ck = torch.load(f, map_location="cpu", weights_only=False)
+      old = ck.get("amax")
+      ck["amax"] = v
+      torch.save(ck, f)
+      print(f"[deploy-amax] {os.path.basename(f)}: {old} -> {v}", flush=True)
+  PYDA
   fi
   LOGDIR=$PERSIST/logs
   FAILDIR=$RESULTS/failures

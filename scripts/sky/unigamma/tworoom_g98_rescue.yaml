@@ -54,6 +54,8 @@ envs:
   ACTOR_ONLY: "0"          # full actor+critic training; actor-only is an explicit ablation
   REUSE_ONLY: "0"          # 1 = missing final actor is fatal; never retrain
   ACTOR_IMPORT_TAG: ""      # reuse-only repair: copy final actors from this persistent tag
+  DEPLOY_AMAX: ""           # eval-only: rewrite imported actors' deploy clamp
+                            # (top-level ck['amax']); requires REUSE_ONLY=1
   STAGED: "0"              # Cube only: seed-0 screen, top-3 seeds 1/2
   STAGE_TOPK: "3"
   SHARD_INDEX: "0"
@@ -458,6 +460,25 @@ run: |
     cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
     printf 'source_tag=%s\nmode=final-actor-copy\n' "$ACTOR_IMPORT_TAG" \
       > "$PERSIST/actor_import.txt"
+  fi
+  # DEPLOY_AMAX: rewrite the imported actors' TOP-LEVEL amax — the solver's
+  # deploy clamp reads ck['amax'] exclusively (no config path exists), while
+  # train_args stays untouched so [args-ok] still verifies training
+  # provenance. Eval-only deploy-clip sweep on frozen actors.
+  if [ -n "${DEPLOY_AMAX:-}" ]; then
+    [ "${REUSE_ONLY:-0}" = 1 ] || { echo "DEPLOY_AMAX requires REUSE_ONLY=1" >&2; exit 2; }
+    PERSIST="$PERSIST" DEPLOY_AMAX="$DEPLOY_AMAX" python3 - <<'PYDA'
+  import glob, os, torch
+  v = float(os.environ["DEPLOY_AMAX"])
+  fs = sorted(glob.glob(os.path.join(os.environ["PERSIST"], "actors", "*.pt")))
+  assert fs, "DEPLOY_AMAX: no imported actors to rewrite"
+  for f in fs:
+      ck = torch.load(f, map_location="cpu", weights_only=False)
+      old = ck.get("amax")
+      ck["amax"] = v
+      torch.save(ck, f)
+      print(f"[deploy-amax] {os.path.basename(f)}: {old} -> {v}", flush=True)
+  PYDA
   fi
   # EXPERIMENT_TAG reuse is intentional for managed-job recovery and priority
   # relaunches.  Failure sentinels describe only the current attempt; retaining
