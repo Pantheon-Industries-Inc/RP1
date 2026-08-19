@@ -350,6 +350,28 @@ keeps h25 at 100.0. Also: `vnorm=scale` on Cube came in mildly positive
 (88.9 ± 1.4 / 82.0 ± 0.7 vs raw-E 87.3 / 81.1) — scale's −14 is
 TwoRoom-specific, matching the base/env-dependent conditioning pattern.
 
+### Granular deploy sweep, deploy-K probe, tanh squash (2026-08-19/20 wave)
+
+- **Deploy-K is a clean negative**: rewriting checkpoint `iters` to 12/16
+  hurts on val (LeWM h100 92.3 → 87.7/85.3; PLDM likewise). The K=8-trained
+  refiner does not extrapolate to deeper application — test-time compute
+  does not scale this planner.
+- **Fine deploy-clip grid (val h100 means, LeWM)**: 1.4 → **94.7** > 1.8 ≈
+  2.0–2.5 ≈ 92 > 2.8 → 90.3, and the weak seed recovers at 1.4 (val 92).
+  PLDM flat (85–87.7). Report evals at 1.4/2.0 in flight to check whether
+  the tight-clip gain is a mean effect.
+- **Clip selection at 2 val draws is noisy**: PLDM's val-argmax (s2@1.8, val
+  92 vs 91 native) reported 91.3 — WORSE than native s2's 94.7. **Seed-only
+  selection is the robust rule** (LeWM 93.3, PLDM 94.7, both ≈ −1 vs paper);
+  the LeWM seed+clip beat (95.3) stands but clip-selection needs more val
+  draws to be a protocol.
+- **tanh squash** (gradient flows through the box): **harmful on LeWM**
+  (h100 68.7/73.3 — the raw-interface lesson a third time) but on PLDM
+  `tanh×vlog` posts 93.3/**98.7**/61.3 — a seed above the paper's 96.0.
+  PLDM-squash val pass in flight for honest selection. Gradient flow
+  matters exactly where saturation pressure is highest (PLDM's demo actions
+  reach 4.5σ against the 2.5 box).
+
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
 falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
