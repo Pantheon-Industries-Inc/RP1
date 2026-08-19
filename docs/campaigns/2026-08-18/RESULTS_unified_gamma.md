@@ -152,7 +152,32 @@ contraction — the co-trained critic drifts, and precision at the goal
 unification failure is in forcing γ *up*, not down. vnorm=log is neutral at
 γ=0.98 and amplifies the γ≥0.99 instability.
 
-### OGBench Cube LeWM (h25 / h100)
+### OGBench Cube LeWM (h25 / h100) — jobs 8477–8479 (+watchdog fix)
+
+The first cube wave (8305–8307) failed on a harness bug, not science: the
+silent-hang watchdog's `pgrep -f '<cell>.pt'` also matched eval commands
+(they embed the actor filename), and cube's node-serialized evals queue past
+`TRAIN_STALL_SEC` — healthy queued evals were stack-dumped and killed. Fixed
+(match `train_lip_ac.py` only) and rerun; all actors had trained fine and
+were reused.
+
+| arm | h25 | h100 |
+|---|---|---|
+| γ=0.98 ctrl (bespoke γ) | **87.0** ± 1.4 | **81.3** ± 0.9 |
+| γ=0.98 vlog | 89.0 ± 0.5 | 81.3 ± 2.8 |
+| γ=0.99 ctrl | 86.0 ± 1.2 | 78.4 ± 2.1 |
+| γ=0.99 vlog | 87.1 ± 1.5 | 80.0 ± 0.7 |
+| γ=1.0 ctrl | 86.7 ± 1.3 | 80.0 ± 0.7 |
+| γ=1.0 vlog | 86.9 ± 1.4 | 81.6 ± 1.4 |
+
+(γ=0.98 row: seeds 0/1 at collection time; seed 2 in flight in the rerun.)
+
+**Cube is γ-flat under the unified clip** (spread ≤ 3 pts, bespoke 0.98
+nominally best), and γ=1.0 shows no collapse at h100 — cube's operating
+range sits inside every convention's informative band, so the exact branch
+dominates. Against the banked tuned reference (89.1 / 82.4 at amax 1.6,
+md 10/20, 12k-critic), the unified config costs only ~2 / 1 pts — far
+gentler than TwoRoom's −9.
 
 ### Deploy-amax pass
 
