@@ -365,12 +365,17 @@ TwoRoom-specific, matching the base/env-dependent conditioning pattern.
   selection is the robust rule** (LeWM 93.3, PLDM 94.7, both ≈ −1 vs paper);
   the LeWM seed+clip beat (95.3) stands but clip-selection needs more val
   draws to be a protocol.
-- **tanh squash** (gradient flows through the box): **harmful on LeWM**
-  (h100 68.7/73.3 — the raw-interface lesson a third time) but on PLDM
-  `tanh×vlog` posts 93.3/**98.7**/61.3 — a seed above the paper's 96.0.
-  PLDM-squash val pass in flight for honest selection. Gradient flow
-  matters exactly where saturation pressure is highest (PLDM's demo actions
-  reach 4.5σ against the 2.5 box).
+- **tanh squash** (gradient flows through the box) splits by cell, not
+  globally: **TwoRoom-LeWM harmful** (h100 68.7/73.3/74.0, the raw-interface
+  lesson a third time); **TwoRoom-PLDM `tanh×vlog`** posts 93.3/**98.7**/61.3
+  — a seed above the paper's 96.0 (val pass in flight); **Reacher-PLDM
+  mean-beats the paper at both taus with no selection** (latched 98.7 /
+  **82.9** vs paper 97.8 / 82.0); **Reacher-LeWM** has a τ0.05 = **98.0**
+  seed (draws 98/98/98; paper 88.7) with mean 89.6 dragged by seed 0.
+  Gradient flow through the box pays exactly where saturation pressure or
+  terminal precision binds (PLDM's 4.5σ demo actions; reacher's tight
+  tolerance), and costs only on the one cell whose actor lives on a raw,
+  unsaturated interface.
 
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
