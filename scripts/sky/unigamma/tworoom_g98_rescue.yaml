@@ -78,6 +78,14 @@ envs:
   VNHALF: "all"            # g1actor shard: none | log | all
   SCHED_MW: "0.1"          # g98sched: mean-weight for the schedule block
   SWEEP_VN: ""             # g98sweep: force one vnorm for both bases (empty = per-base default)
+  BOUNDARY: "legacy"       # n-step seam at gamma<1 (legacy | smooth | disc), for
+                           # BOTH the offline TD teacher and the co-trained critic.
+                           # legacy trains a NON-MONOTONE target at delta=n
+                           # (raw in-window label vs discounted bootstrap:
+                           # g=0.98/n=50 -> V(50)=50, V(51)~32); smooth uses
+                           # boot = n_eff + g^n_eff*d_next (continuous seam,
+                           # per-window discounting, ceiling n/(1-g^n)); disc
+                           # discounts the exact branch too. No effect at g=1.
   CU_GAMMA: "0.98"         # Cube discount, for BOTH the offline TD teacher and the
                            # actor/co-trained critic (the unified-gamma arms; the
                            # banked cube recipe is 0.98)
@@ -145,6 +153,8 @@ file_mounts:
   /tmp/codex-overlays/latent_cache.py: ./scripts/sky/overlays/latent_cache.py
   /tmp/codex-overlays/lip.py: ./scripts/sky/overlays/lip.py
   /tmp/cube_staged.sh: ./scripts/sky/overlays/cube_staged.sh
+  /tmp/codex-overlays/train_metric.py: ./scripts/sky/unigamma/overlays_boundary/train_metric.py
+  /tmp/codex-overlays/td.py: ./scripts/sky/unigamma/overlays_boundary/td.py
 
 
 setup: |
@@ -225,6 +235,8 @@ setup: |
   cp /tmp/codex-overlays/train_lip_ac.py "$HOME/repo/stable-worldmodel/scripts/plan/train_lip_ac.py"
   cp /tmp/codex-overlays/latent_cache.py "$HOME/repo/stable-worldmodel/stable_worldmodel/trm/latent_cache.py"
   cp /tmp/codex-overlays/lip.py "$HOME/repo/stable-worldmodel/stable_worldmodel/solver/lip.py"
+  cp /tmp/codex-overlays/train_metric.py "$HOME/repo/stable-worldmodel/scripts/plan/train_metric.py"
+  cp /tmp/codex-overlays/td.py "$HOME/repo/stable-worldmodel/stable_worldmodel/trm/learners/td.py"
 
   python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
 
@@ -368,6 +380,7 @@ setup: |
     for TDS in $TDSEEDS; do
       CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
         --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step ${TR_NSTEP:-50} \
+        --boundary ${BOUNDARY:-legacy} \
         --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
         > ~/gl/td_critic_s${TDS}.log 2>&1
     done
@@ -1200,7 +1213,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \

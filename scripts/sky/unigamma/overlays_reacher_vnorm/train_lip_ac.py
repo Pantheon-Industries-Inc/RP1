@@ -228,6 +228,11 @@ def main():
                         "e.g. 0.1 -> 0.03: smooth teacher early, sharp shortest-path late")
     p.add_argument("--n-step", type=int, default=None)
     p.add_argument("--gamma", type=float, default=None)
+    p.add_argument("--boundary", choices=["legacy", "smooth", "disc"], default="legacy",
+                   help="n-step seam at gamma<1: legacy = raw in-window label vs "
+                        "discounted bootstrap (non-monotone at delta=n); smooth = "
+                        "boot n_eff + g^n_eff*d_next (continuous, per-window "
+                        "discounting); disc = discount the exact branch too")
     p.add_argument("--td-batch", type=int, default=1024)
     p.add_argument("--td-p-cross", type=float, default=0.3)
     p.add_argument("--td-max-delta", type=int, default=None)
@@ -502,7 +507,8 @@ def main():
         plan_cost, plan_disc = float(n_plan), 1.0
     else:
         plan_disc = a.gamma ** n_plan
-        plan_cost = (1.0 - plan_disc) / (1.0 - a.gamma)
+        plan_cost = (float(n_plan) if a.boundary == "smooth"
+                     else (1.0 - plan_disc) / (1.0 - a.gamma))
 
 
     def _wstate(traj):
@@ -566,8 +572,11 @@ def main():
                 cost, disc = ne, torch.ones_like(ne)
             else:
                 disc = a.gamma ** ne
-                cost = (1.0 - disc) / (1.0 - a.gamma)
-            tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
+                cost = ne if a.boundary == "smooth" else (1.0 - disc) / (1.0 - a.gamma)
+            dist_t = dist
+            if a.gamma < 1.0 and a.boundary == "disc":
+                dist_t = (1.0 - a.gamma ** dist) / (1.0 - a.gamma)
+            tgt = reached * dist_t + (1.0 - reached) * (cost + disc * d_next)
         loss = _expectile_loss(
             (critic(_wrow(b['t_idx']).to(dev), _wrow(b['g_idx']).to(dev))
              if vframes > 1 else critic(z_t, z_g)) - tgt, tau, a.huber_beta)

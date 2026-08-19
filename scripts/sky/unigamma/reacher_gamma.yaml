@@ -76,6 +76,8 @@ envs:
                            # actor/co-trained critic (unified-gamma arms;
                            # the banked reacher recipe is 0.98)
   RS_VNORM: "none"         # actor E-channel conditioning: none | log | loggn
+  RS_BOUNDARY: "legacy"    # n-step seam at gamma<1 (legacy | smooth | disc), for
+                           # BOTH the window teacher and the co-trained critic
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
@@ -144,6 +146,8 @@ file_mounts:
   /tmp/codex-overlays/eval_wm.py: ./scripts/sky/overlays_reacher/eval_wm.py
   /tmp/codex-overlays/world.py: ./scripts/sky/overlays_reacher/world.py
   /tmp/codex-overlays/make_l2window_n.py: ./scripts/sky/overlays_reacher/make_l2window_n.py
+  /tmp/codex-overlays/td.py: ./scripts/sky/unigamma/overlays_boundary/td.py
+  /tmp/codex-overlays/train_window.py: ./scripts/sky/unigamma/overlays_boundary/train_window.py
 
 setup: |
   set -euo pipefail
@@ -169,6 +173,8 @@ setup: |
   cp /tmp/codex-overlays/policy.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/policy.py"
   cp /tmp/codex-overlays/eval_wm.py "$HOME/repo/reacher/pod_src_20260804/scripts/plan/eval_wm.py"
   cp /tmp/codex-overlays/world.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/world/world.py"
+  cp /tmp/codex-overlays/td.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/trm/learners/td.py"
+  cp /tmp/codex-overlays/train_window.py "$HOME/repo/reacher/pod_src_20260804/workspace_drivers/train_window.py"
   python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
 
   WANDB_ROOT=/mnt/raid0/rlp-wandb/${EXPERIMENT_TAG}
@@ -273,10 +279,11 @@ setup: |
   fi
 
   # window value, STANDARDIZED numbers on the clean split
-  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
   WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
   [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
     --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-3} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} \
+    --boundary ${RS_BOUNDARY:-legacy} \
     --n-step 50 --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
   [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
   echo "[setup] reacher/${BASE} ready"
@@ -305,7 +312,7 @@ run: |
   export EXPAND
   C1=/workspace/caches/tr_${BASE}_fs1.pt
   C5=/workspace/caches/tr_${BASE}_fs5.pt
-  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
   PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
   export PERSIST
   ACTORS=$PERSIST/actors; METRICS=$PERSIST/metrics; RESULTS=$PERSIST/results
@@ -851,7 +858,7 @@ run: |
           --init-value "$W3" \
           --recipe-profile "$PROFILE" \
           --arch v4 --iters 8 --horizon 5 --max-delta 12 --n-step 50 \
-          --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --expectile 0.1 --expectile-final 0.03 \
+          --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
           --replay-prob $RP --expand-weight $XW --freeze-critic-frac 0.5 ${FROZEN_ARGS} \
           --lambda-schedule uniform --mean-weight $MW --amax $AMAX \
