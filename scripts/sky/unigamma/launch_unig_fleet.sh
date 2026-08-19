@@ -84,10 +84,10 @@ launch_re() {  # launch_re <gtag> <gamma> <vnorm> <smoke>
   sleep 20
 }
 
-launch_tw_bnd() {  # launch_tw_bnd <btag> <boundary> <seed>
-  local BT=$1 BND=$2 S=$3
-  local NAME="rlp-tw-unig-g98${BT}-s${S}"
-  echo "==> $NAME (tworoom lejepa gamma=0.98 boundary=$BND seed=$S)"
+launch_tw_bnd() {  # launch_tw_bnd <btag> <boundary> <seed> [gtag] [gamma]
+  local BT=$1 BND=$2 S=$3 GT=${4:-g98} GAMMA=${5:-0.98}
+  local NAME="rlp-tw-unig-${GT}${BT}-s${S}"
+  echo "==> $NAME (tworoom lejepa gamma=$GAMMA boundary=$BND seed=$S)"
   sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml \
     -n "$NAME" --priority p1 -y --async \
     --env ENVNAME=tworoom --env BASE=lejepa --env GRID=unig \
@@ -95,8 +95,8 @@ launch_tw_bnd() {  # launch_tw_bnd <btag> <boundary> <seed>
     --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
     --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 \
     --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
-    --env TR_GAMMA=0.98 --env TR_NSTEP=50 --env BOUNDARY="$BND" \
-    --env CACHE_VERSION="tw-unig-g98${BT}-s${S}-v1" \
+    --env TR_GAMMA="$GAMMA" --env TR_NSTEP=50 --env BOUNDARY="$BND" \
+    --env CACHE_VERSION="tw-unig-${GT}${BT}-s${S}-v1" \
     --env EXPERIMENT_TAG="${NAME}-20260819" \
     --env TRAIN_SEEDS="$S" --env EVAL_SEEDS="42 43 44" \
     --env STEPS=8000 --env BATCH=128 --env MAXPAR=4 --env RH=5 \
@@ -106,15 +106,15 @@ launch_tw_bnd() {  # launch_tw_bnd <btag> <boundary> <seed>
   sleep 20
 }
 
-launch_re_bnd() {  # launch_re_bnd <btag> <boundary>
-  local BT=$1 BND=$2
-  local NAME="rlp-re-unig-g98${BT}"
-  echo "==> $NAME (reacher lejepa gamma=0.98 boundary=$BND)"
+launch_re_bnd() {  # launch_re_bnd <btag> <boundary> [gtag] [gamma]
+  local BT=$1 BND=$2 GT=${3:-g98} GAMMA=${4:-0.98}
+  local NAME="rlp-re-unig-${GT}${BT}"
+  echo "==> $NAME (reacher lejepa gamma=$GAMMA boundary=$BND)"
   sky jobs launch scripts/sky/unigamma/reacher_gamma.yaml \
     -n "$NAME" --priority p1 -y --async \
     --env BASE=lejepa --env GRID=cross \
     --env AMFIX=2.5 --env CROSS_EXPANDS="0" --env CROSS_REPLAYS="0.5" \
-    --env RS_GAMMA=0.98 --env RS_VNORM=none --env RS_BOUNDARY="$BND" \
+    --env RS_GAMMA="$GAMMA" --env RS_VNORM=none --env RS_BOUNDARY="$BND" \
     --env SMOKE=0 --env REPORT_ONLY=1 \
     --env TRAIN_SEEDS="0 1 2" \
     --env EXPERIMENT_TAG="${NAME}-20260819" \
@@ -148,5 +148,13 @@ case "$STAGE" in
       launch_re_bnd "$1" "$2"
     done
     echo "8 boundary jobs submitted (32 GPUs)." ;;
+  bnd99)   # boundary-fixed gamma=0.99 arms (gamma=1.0 needs no rerun: both
+           # fixes reduce to the identical target at g=1, so the fleet g100
+           # arms already ARE the boundary-fixed gamma=1 points)
+    for BT_B in "sm smooth" "dc disc"; do set -- $BT_B
+      for S in 0 1 2; do launch_tw_bnd "$1" "$2" "$S" g99 0.99; done
+      launch_re_bnd "$1" "$2" g99 0.99
+    done
+    echo "8 gamma=0.99 boundary jobs submitted (32 GPUs)." ;;
   *) echo "unknown STAGE=$STAGE" >&2; exit 2 ;;
 esac
