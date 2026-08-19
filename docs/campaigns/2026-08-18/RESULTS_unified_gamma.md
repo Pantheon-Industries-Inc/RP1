@@ -179,7 +179,47 @@ dominates. Against the banked tuned reference (89.1 / 82.4 at amax 1.6,
 md 10/20, 12k-critic), the unified config costs only ~2 / 1 pts — far
 gentler than TwoRoom's −9.
 
+### TD-target seam (user observation): real in target space, cosmetic in behaviour
+
+The n-step target is **non-monotone at the window boundary for γ<1**: the
+sampler labels in-window goals with RAW delta (`dist[b] = float(delta)`,
+`trm/samplers.py`) while the out-of-window branch bootstraps with DISCOUNTED
+accumulation — at γ=0.98/n=50 the trained target is V(50)=50 vs V(51)≈32.2,
+a −17.8 cliff exactly at the seam (γ=0.99: −9.9; γ=1: none). Note the cliff
+is γ-correlated, so the legacy γ dose–response carried it as a potential
+confound. Two fixes implemented behind `--boundary` in both teachers and
+both co-train trainers (`overlays_boundary/`): **smooth** = `boot = n_eff +
+γ^n_eff·d_next` (continuous seam, per-window discounting, ceiling
+n/(1−γⁿ) = 78.6 at 0.98/n50, 126.6 at 0.99); **disc** = discount the exact
+branch too (the textbook discounted quasimetric).
+
+Results (ctrl arms, unified config; jobs 8511–8543):
+
+| cell | legacy | smooth | disc |
+|---|---|---|---|
+| TwoRoom h100, γ=0.98 | **88.0** ± 9.2 | 85.8 ± 5.0 | 85.8 ± 1.9 |
+| TwoRoom h100, γ=0.99 | **88.0** ± 8.7 | 82.7 ± 2.3 | 86.7 ± 1.8 |
+| Reacher τ0.05/τ0.1, γ=0.98 | **55.1**/**94.0** | 55.1/90.0 | 51.8/90.2 |
+| Reacher τ0.05/τ0.1, γ=0.99 | 40.9/85.3 | 32.0/77.1 | **43.3**/**85.8** |
+
+(TwoRoom h25 is 100.0 everywhere; γ=1.0 needs no arms — both fixes reduce
+to the identical target at γ=1.)
+
+**Verdict: the seam is behaviorally cosmetic — no fix beats legacy anywhere,
+and smooth is mildly harmful** (worst at γ=0.99 on Reacher). Reading:
+(1) the expectile-Huber fit plus the MRN's subadditivity already smooth over
+the cliff in function space; (2) the eval-relevant queries rarely straddle
+the seam (Reacher's operating range is in-window; TwoRoom's refiner descends
+local grad V at plan sites); (3) smooth's continuity is bought by extending
+the target ceiling (50 → 78.6/126.6), which re-widens the raw-E range the
+actor must digest — re-importing the conditioning problem it was meant to
+avoid. The boundary fix also does NOT rescue Reacher's γ=0.99 gap (disc
+85.8 vs legacy 85.3 at τ0.1), which pins Reacher's γ-sensitivity on the
+anchoring/contraction mechanism, not the cliff. **Keep `boundary=legacy`;
+the γ-correlated-confound worry about the fleet table is discharged.**
+
 ### Deploy-amax pass
 
 (post-hoc: checkpoint `amax` rewritten to {recipe, 3.0}; training amax fixed
-at 2.5)
+at 2.5 — in flight, jobs `*-g98da*`; md20 horizon-covering-band arms also in
+flight, jobs `*-g98md20*`)
