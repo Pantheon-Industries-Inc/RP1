@@ -80,6 +80,10 @@ envs:
                            # BOTH the window teacher and the co-trained critic
   RS_MD: "12"              # actor goal band (fs5 blocks); 20 = the unified
                            # horizon-covering band
+  RS_LATCHED: "0"          # 1 = force the latched first-hit evaluator (the
+                           # paper's tau convention) on any grid
+  CROSS_MW: ""             # optional cross-grid mean-weight override
+  CROSS_LR: ""             # optional cross-grid actor-lr override
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
@@ -386,7 +390,8 @@ run: |
     AF=${AMFIX:-2.2}
     [ "$BASE" = pldm ] && AF=${AMFIX:-1.4}
     CO_MW=0.3; CO_LR=1e-4
-    [ "$BASE" = pldm ] && { CO_MW=0.1; CO_LR=3e-4; }
+    [ "$BASE" = pldm ] && { CO_MW=0.5; CO_LR=3e-4; }   # paper PLDM anchor m0.5
+    CO_MW=${CROSS_MW:-$CO_MW}; CO_LR=${CROSS_LR:-$CO_LR}
     CFG=()
     for XW in ${CROSS_EXPANDS:-0 0.5 1.0 3.0}; do
       for RP in ${CROSS_REPLAYS:-0 0.25 0.5}; do
@@ -954,7 +959,7 @@ run: |
             echo "[cell] ${nm} latched10=${v10} latched05=${v05}" >&2
           fi
         }
-        if [ "${GRID}" = latched_terminal_search ] || [ "${GRID}" = w1_diagnosis ] || [ "${GRID}" = w1_grid ]; then
+        if [ "${GRID}" = latched_terminal_search ] || [ "${GRID}" = w1_diagnosis ] || [ "${GRID}" = w1_grid ] || [ "${RS_LATCHED:-0}" = 1 ]; then
           # The 6k training budget fixes the checkpoint. Tau only changes the
           # first-hit evaluator, never the learned actor. HELD_AT_END=1 scores
           # the same actors without early termination (held10/held05 keys).
