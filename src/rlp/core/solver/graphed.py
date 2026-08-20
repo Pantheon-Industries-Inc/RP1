@@ -9,9 +9,8 @@ at batch 1, final-plan deviation vs the eager production path 5.96e-8 (one
 float32 ulp; identical to the trajectory-reuse deviation — capture itself adds
 zero), fp32 throughout.
 
-Semantics: replaying the gradient unroll's trajectory for the actor features
-is the trajectory-REUSE decision (9 fwd + 8 bwd instead of 17 fwd + 8 bwd) —
-the duplicate scoring unroll the audit flagged as dead work is never executed.
+The gradient unroll also produces the actor's value input, so the duplicate
+scoring unroll the audit flagged as dead work is never executed.
 
 Constraints inherited from CUDA graphs:
   * Static shapes: one capture per (batch, horizon, action_dim). New batch

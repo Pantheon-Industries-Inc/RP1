@@ -1,7 +1,12 @@
 # @package _global_
 # Composed RLP replication pipeline: latent caches -> offline value -> planner.
-# Stage defaults are the paper's OGBench Cube recipe; override per environment
-# through the value.* / planner.* subtrees (see docs/replication/REPLICATION_RLP.md).
+# Stage defaults are **config B** (docs/campaigns/2026-08-27/HANDOFF_CONFIGS_20260903.md):
+# gamma 0.98, teacher n-step 1, expectile 0.03, amax 2.5, max-delta 20, K 8,
+# depth 2 at 1x budgets, acr 0.5, fine ES, ema 0.005 -- the single recipe that
+# covers TwoRoom, Cube, Reacher and PushT. Per-environment properties that
+# config B does not unify (window frames, step budgets, replay_prob,
+# expand_weight) are overridden through the value.* / planner.* subtrees; see
+# docs/replication/REPLICATION_RLP.md.
 defaults:
   - /utils/logging: default
   - _self_
@@ -20,17 +25,24 @@ training:
   cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
   skip: []
 
-# Stage 4 — offline quasimetric critic (train/metric, learner=td).
+# Stage 4 -- offline quasimetric critic (training/metric, learner=td).
 # Keys are forwarded verbatim onto configs/training/metric.yaml.
   value:
     steps: 12000
     batch_size: 1024
     gamma: 0.98
     expectile: 0.03
-    n_step: 50
+    n_step: 1
     p_cross: 0.3
+    depth: null           # MRN value-head depth (null = core default 2)
+    window_frames: null   # m-frame window teacher (null = single frame); the
+                          # planner stage inherits the window automatically
+    window_lag: null      # window frame spacing in primitive steps; required
+                          # (= frameskip) whenever window_frames >= 2
+    near_frac: null       # near-goal hindsight oversampling fraction
+    near_max: null
 
-# Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
+# Stage 5 -- RLP plan refiner (training/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/training/lip_ac.yaml.
   planner:
     steps: 6000
@@ -38,17 +50,22 @@ training:
     actor_lr: 3e-4
     actor_lr_final: 3e-5
     mean_weight: 0.1
-    max_delta: 10
+    max_delta: 20
     p_cross: 0.3
     replay_prob: 0.5
     gamma: 0.98
     n_step: 50
     expectile: 0.1
     expectile_final: 0.03
+    ac_weight: 0.5
     critic_lr: 1e-3
     critic_lr_final: 1e-4
     td_batch: 1024
     freeze_critic_frac: 0.5
     expand_weight: 1.0
     temporal_objective: terminal
-    amax: 1.6
+    action_limit: 2.5
+    iterations: null
+    ckpt_every: null
+    near_frac: null
+    near_max: null

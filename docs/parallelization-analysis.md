@@ -51,21 +51,18 @@ independent things are all true and all fixable, and they are not in the same su
 
 ## 0.5 Update 2026-08-12/13 — the launch-bound diagnosis, cashed
 
-Fixes #3 and #17 of §7 have landed in the LIPv4 (kind `lip4`) solve path; measured on an
+Fixes #3 and #17 of §7 have landed in the RLP solve path; measured on an
 architecture-matched benchmark, job 4840, 1×H200, fp32, B=1:
 
-| LIPv4 decision | ms/decision | vs eager |
+| RLP decision | ms/decision | vs eager |
 |---|---|---|
 | eager, duplicate rollout (the audited path) | 272.6 | 1.0× |
 | **CUDA-graphed** (`core.solver.graphed=true`) | **29.3** | **9.3×** |
 
-- **Trajectory reuse (#3) is now the solver default** (`core.solver.reuse_trajectory=true`,
-  since 2026-08-12): the gradient unroll's trajectory doubles as the actor features, so one
-  decision costs **9 forward + 8 backward unrolls** instead of 17 fwd + 8 bwd. Bit-exact:
-  `reuse_trajectory="verify"` logs `max_difference == 0` per iteration, and end-task parity
-  held on the reacher winners (jobs 4927/4930 — 3 of 4 report cells identical, the fourth
-  differs by a single episode in 450). `reuse_trajectory=false` reproduces pre-2026-08-12 evals.
-- **CUDA graphs (#17) are implemented opt-in** (`rlp/core/solver/graphed.py`,
+- **The duplicate scoring rollout (#3) has been removed**: the differentiated rollout's
+  score is the actor's value input, so one decision costs **9 forward + 8 backward unrolls**
+  instead of 17 forward + 8 backward unrolls.
+- **CUDA graphs (#17) are implemented opt-in** (`src/rlp/core/solver/graphed.py`,
   `core.solver.graphed = false | true | "verify"`): the per-iteration score computation
   (WM unroll → trajectory value, forward AND backward) is graph-captured once per batch size
   and replayed per refinement iteration. Final-plan deviation vs the eager path: **5.96e-8**
@@ -73,14 +70,14 @@ architecture-matched benchmark, job 4840, 1×H200, fp32, B=1:
   zero). Capture costs seconds, once per (batch, horizon, action_dim); shrinking eval batches
   must be padded by the caller or left on the eager path (the #12 constraint, handled at the
   capture boundary). Covered by `tests/core/test_graphed_refinement.py`.
-- **Planner-vs-planner, same benchmark** (H200, fp32): LIPv4 graphed **30.7 ms/decision** vs
+- **Planner-vs-planner, same benchmark** (H200, fp32): RLP graphed **30.7 ms/decision** vs
   CEM 218.6 ms graphed / 241.9 ms eager — the ~530× rollout advantage now cashes at **~7.1×**
   wall-clock at B=1 instead of the ~1× this audit measured, and the gap widens with batch
   (the samplers' 9,000 rollouts scale with controllers; LIP's 9 do not).
 
 The remaining §7 items on the LIP path (#7, #8, #9, #10) are subsumed for *inference* by the
 graph capture (a replayed graph has no per-kernel launch or sync cost) but still stand for
-*training* (`rlp/train/lip_ac.py`), which reuses the scoring rollout
+*training* (`src/rlp/training/lip_ac.py`), which reuses the scoring rollout
 (`reuse_refinement_rollouts=true`, same 2026-08-12 default) but is not graph-captured.
 
 ---

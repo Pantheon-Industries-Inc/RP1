@@ -56,7 +56,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from rlp.core.planner import PlannerNet, PlannerNetRec, PlannerNetV3
+from rlp.core.planner import PlannerNet
 from rlp.core.rollout import rollout_traj
 from rlp.core.solver.lip import ValueFunction
 from rlp.core.temporal import trajectory_value, window_pair, windowed_trajectory_value
@@ -103,31 +103,6 @@ def _parse_bands(v):
 
 def _run(cfg: DictConfig) -> None:
     a = phase_config(cfg, "training", cfg.core.planner, cfg.core.value)
-    a.embed_dim = a.embedding_dim
-    aliases = {
-        "arch": "architecture",
-        "iters": "iterations",
-        "amax": "action_limit",
-        "s_dim": "recurrent_state_dim",
-        "s0_mode": "recurrent_state_init",
-        "rec_hidden": "recurrent_hidden_dim",
-        "width": "transformer_width",
-        "layers": "transformer_layers",
-        "gd_init": "gradient_descent_init",
-        "feat_norm": "feature_normalization",
-        "iter_mode": "iteration_mode",
-        "p0": "preconditioner_init",
-        "zproj": "projection_dim",
-        "vscale": "value_scale",
-        "pre_ln": "pre_layer_norm",
-        "drop_zg": "drop_goal",
-        "drop_z0": "drop_state",
-        "drop_grad": "drop_gradient",
-        "no_gate": "use_gate",
-        "cond_mode": "conditioning_mode",
-    }
-    for old, new in aliases.items():
-        a[old] = not a[new] if old == "no_gate" else a[new]
     if a.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
         raise ValueError(f"unsupported temporal objective: {a.temporal_objective}")
     if a.actor_only and not a.init_value:
@@ -329,7 +304,7 @@ def _run(cfg: DictConfig) -> None:
                 "head": a.head,
                 "hidden_dim": a.hidden_dim,
                 "depth": a.depth,
-                "embed_dim": a.embed_dim,
+                "embed_dim": a.embedding_dim,
                 "softplus": True,
                 "symmetric": False,
             },
@@ -345,8 +320,6 @@ def _run(cfg: DictConfig) -> None:
             )
         if a.expand_traj:
             raise ValueError("expand_traj is not supported with a windowed init_value (vframes > 1)")
-        if a.goal_mode == "sep" or (a.goal_mode == "vonly" and a.cond_mode == "token"):
-            raise ValueError("windowed init_value does not support per-step value conditioning (goal_mode=sep/vonly)")
         logger.info(f"LIP-AC consuming a {vframes}-frame window value (lag {value_window_lag})")
     critic.train()
     teacher = copy.deepcopy(critic).to(dev)
@@ -471,76 +444,13 @@ def _run(cfg: DictConfig) -> None:
                 tp.mul_(1.0 - a.ema_tau).add_(a.ema_tau * sp)
         return float(loss.item())
 
-    net: PlannerNet | PlannerNetRec | PlannerNetV3
-    if a.arch == "traj":
-        if (a.gd_init > 0 or a.feat_norm or a.cond_mode == "global") and a.goal_mode != "vonly":
-            raise ValueError(
-                "gradient_descent_init/feature_normalization/conditioning_mode=global need goal_mode=vonly"
-            )
-        net = PlannerNetV3(
-            z.shape[-1],
-            horizon=a.horizon,
-            a_dim=a_dim,
-            width=a.width,
-            layers=a.layers,
-            amax=a.amax,
-            n_iters=a.iters,
-            goal_mode=a.goal_mode,
-            zero_init=a.zero_init,
-            gd_init=a.gd_init,
-            feat_norm=a.feat_norm,
-            iter_mode=a.iter_mode,
-            head_mode=a.head_mode,
-            p0=a.p0,
-            zproj=a.zproj,
-            vscale=a.vscale,
-            head_scale=a.head_scale,
-            cond_mode=a.cond_mode,
-            use_gate=not a.no_gate,
-            pre_ln=a.pre_ln,
-        ).to(dev)
-    elif a.arch == "minimal_recurrent":
-        net = PlannerNetRec(
-            z.shape[-1],
-            horizon=a.horizon,
-            a_dim=a_dim,
-            hidden=a.rec_hidden,
-            s_dim=a.s_dim,
-            amax=a.amax,
-            use_z0=False,
-            use_zg=False,
-            use_grad=not a.drop_grad,
-            s0_mode=a.s0_mode,
-            head_scale=a.head_scale,
-        ).to(dev)
-    elif a.arch == "minimal":
-        net = PlannerNet(
-            z.shape[-1],
-            horizon=a.horizon,
-            a_dim=a_dim,
-            hidden=a.hidden_dim,
-            feed=a.feed,
-            amax=a.amax,
-            use_zg=False,
-            use_gate=False,
-            use_z0=False,
-            use_grad=not a.drop_grad,
-            head_scale=a.head_scale,
-        ).to(dev)
-    else:
-        net = PlannerNet(
-            z.shape[-1],
-            horizon=a.horizon,
-            a_dim=a_dim,
-            hidden=a.hidden_dim,
-            feed=a.feed,
-            amax=a.amax,
-            use_zg=not a.drop_zg,
-            use_gate=not a.no_gate,
-            use_z0=not a.drop_z0,
-            use_grad=not a.drop_grad,
-            head_scale=a.head_scale,
-        ).to(dev)
+    net = PlannerNet(
+        horizon=a.horizon,
+        action_dim=a_dim,
+        hidden_dim=a.hidden_dim,
+        action_limit=a.action_limit,
+        head_scale=a.head_scale,
+    ).to(dev)
     a_opt = torch.optim.AdamW(net.parameters(), lr=a.actor_lr, weight_decay=a.actor_weight_decay)
 
     replay_buf: dict[str, torch.Tensor | None] = {
@@ -586,7 +496,6 @@ def _run(cfg: DictConfig) -> None:
             return energy
 
         A = torch.zeros(a.batch, a.horizon, a_dim, device=dev)
-        s = net.init_state(a.batch, z0) if isinstance(net, PlannerNetRec) else None
         e_path: list[torch.Tensor] = []
         zT: torch.Tensor | None = None
         tr: torch.Tensor | None = None
@@ -596,14 +505,13 @@ def _run(cfg: DictConfig) -> None:
         if a.reuse_refinement_rollouts:
             rollout_action = A.detach().requires_grad_(True)
             rollout_trajectory = rollout_traj(wm, zh, ah, rollout_action)
-            rollout_score = score_trajectory(rollout_trajectory, rollout_action)
-        for k in range(a.iters):
+            rollout_score = score_trajectory(rollout_trajectory)
+        for k in range(a.iterations):
             # gradient feature (detached — input to the learned rule, not the training path)
             if a.reuse_refinement_rollouts:
                 if rollout_action is None or rollout_trajectory is None or rollout_score is None:
                     raise RuntimeError("refinement rollout was not initialized")
                 (gA,) = torch.autograd.grad(rollout_score.sum(), rollout_action, retain_graph=k > 0)
-                traj_f = rollout_trajectory.detach()
                 E_feat = rollout_score.detach()
             else:
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
@@ -611,29 +519,13 @@ def _run(cfg: DictConfig) -> None:
                     traj = rollout_traj(wm, zh, ah, A_in)
                     score = score_trajectory(traj, A_in)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
-                traj_f = traj.detach()
                 E_feat = score.detach()
-            vtraj = None
-            if a.goal_mode == "sep" or (a.goal_mode == "vonly" and a.cond_mode == "token"):
-                vtraj = (
-                    teacher_fn(
-                        traj_f.reshape(-1, traj_f.shape[-1]),  # per-step V(z_t, zg)
-                        zg.repeat_interleave(a.horizon, dim=0),
-                    )
-                    .view(a.batch, a.horizon)
-                    .detach()
-                )
-            if isinstance(net, PlannerNetRec):
-                if s is None:
-                    raise RuntimeError("recurrent actor state is unavailable")
-                A, s = net(A, gA.detach(), E_feat, z0, zg, s, traj_f, k=k, vtraj=vtraj)
-            else:
-                A = net(A, gA.detach(), E_feat, z0, zg, traj_f, k=k, vtraj=vtraj)
+            A = net(A, gA.detach(), E_feat)
             tr = rollout_traj(wm, zh, ah, A)
             zT = tr[:, -1]
             score = score_trajectory(tr, A)
             e_path.append(score.mean())
-            if a.reuse_refinement_rollouts and k + 1 < a.iters:
+            if a.reuse_refinement_rollouts and k + 1 < a.iterations:
                 rollout_action, rollout_trajectory, rollout_score = A, tr, score
         if a.replay_prob > 0:
             if tr is None:
@@ -684,46 +576,16 @@ def _run(cfg: DictConfig) -> None:
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
     value_checkpoint = Path(str(a.run.directory)).resolve() / "checkpoints" / str(a.output.value_checkpoint)
 
-    def deployable_planner(sd: dict[str, torch.Tensor]) -> dict[str, object]:
+    def deployable_planner(state_dict: dict[str, torch.Tensor]) -> dict[str, object]:
         """The full deployable planner payload around an actor state dict."""
-        if a.arch == "traj":
-            kind = "lip3"
-        elif a.arch == "minimal_recurrent":
-            kind = "lip4r"
-        elif a.arch == "minimal":
-            kind = "lip4"
-        else:
-            kind = "lip" if a.feed == "none" else "lip2"
         return {
-            "kind": kind,
-            "feed": a.feed,
-            "sd": sd,
-            "z_dim": z.shape[-1],
+            "state_dict": state_dict,
             "horizon": a.horizon,
-            "iters": a.iters,
-            "a_dim": a_dim,
-            "amax": a.amax,
-            "width": a.width,
-            "layers": a.layers,
-            "zproj": a.zproj,
-            "s_dim": a.s_dim,
-            "s0_mode": a.s0_mode,
-            "hidden": a.rec_hidden if a.arch == "minimal_recurrent" else a.hidden_dim,
-            "goal_mode": a.goal_mode,
-            "zero_init": a.zero_init,
-            "gd_init": a.gd_init,
-            "feat_norm": a.feat_norm,
-            "vscale": a.vscale,
-            "iter_mode": a.iter_mode,
-            "head_mode": a.head_mode,
-            "p0": a.p0,
-            "cond_mode": a.cond_mode,
-            "use_gate": getattr(net, "use_gate", not a.no_gate),
-            "use_zg": getattr(net, "use_zg", not a.drop_zg),
-            "use_z0": getattr(net, "use_z0", not a.drop_z0),
-            "use_grad": getattr(net, "use_grad", not a.drop_grad),
+            "iterations": a.iterations,
+            "action_dim": a_dim,
+            "action_limit": a.action_limit,
+            "hidden_dim": a.hidden_dim,
             "head_scale": a.head_scale,
-            "pre_ln": a.pre_ln,
             "value": str(value_checkpoint),
             "temporal_objective": a.temporal_objective,
             "window_frames": vframes,

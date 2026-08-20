@@ -1,33 +1,6 @@
-"""LIPSolver — plan with a trained LIP checkpoint against a frozen value fn.
-
-Two world-model families are supported, selected by the ``kind`` field of the
-actor checkpoint (written by the training scripts):
-
-- ``kind='lip'``      pooled-latent WMs (e.g. LeWM): state = (B, 3, D) pooled
-  history, rollout via :func:`rlp.core.rollout.rollout_terminal`.
-- ``kind='lip4'``     LIPv4 (current default): same rollout as ``lip`` but the
-  minimal-input, gate-free update rule — f_theta sees only [A, grad_A V, E];
-  state and goal reach the planner exclusively through the value function.
-- ``kind='lip_dino'`` patch-token WMs (PreJEPA/DINO): state = (B, 3, P, D)
-  patch tokens, action embeddings injected per block, rollout via
-  :func:`rlp.core.rollout.rollout_terminal_dino`. Plans are trained/rolled in
-  normalized action units and denormalized (stats stored in the checkpoint)
-  before execution.
-
-At plan time one refinement pass costs 1 differentiated WM unroll per
-iteration (trajectory reuse, default since 2026-08-12): 9 forward + 8 backward
-unrolls at K=8 versus 9000 forward for the repo's CEM defaults (300 samples x
-30 iterations) — a ~360x compute reduction at equal or better success rate.
-Measured wall-clock (H200, fp32): 30.7 ms/decision with graphed=true vs CEM's
-218.6 ms graphed / 241.9 ms eager (see docs/lip/README_lip.md).
-
-Trainer: ``rlp/training/lip_ac.py`` (see ``rlp/training/rlp.py`` for the composed
-replication pipeline).
-"""
-
 import time
 from pathlib import Path
-from typing import Any, NotRequired, Protocol, TypedDict, cast
+from typing import Any, Protocol, cast
 
 import numpy as np
 import torch
@@ -35,11 +8,10 @@ from stable_worldmodel.solver.cem import CEMSolver
 
 from rlp.utils.logging import logger
 
-from ..grounding import ACTION_SCALE, GroundingPenalty
-from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
-from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
+from ..planner import PlannerNet
+from ..rollout import rollout_terminal, rollout_traj
 from ..temporal import trajectory_value, window_pair, windowed_trajectory_value
-from ..world_model.protocols import LatentWorldModel, TokenWorldModel
+from ..world_model.protocols import LatentWorldModel
 
 
 class ValueFunction(Protocol):
@@ -54,52 +26,16 @@ class EncoderWorldModel(LatentWorldModel, Protocol):
     def encode(self, info: dict[str, torch.Tensor], **kwargs: Any) -> dict[str, torch.Tensor]: ...
 
 
-class TokenEncoderWorldModel(TokenWorldModel, Protocol):
-    def encode(self, info: dict[str, torch.Tensor], **kwargs: Any) -> dict[str, torch.Tensor]: ...
-
-
 class EnvironmentCost(Protocol):
     def get_cost(self, info: dict[str, Any], actions: torch.Tensor) -> torch.Tensor: ...
 
 
-class LIPCheckpoint(TypedDict):
-    kind: str
-    z_dim: int
-    horizon: int
-    iters: int
-    value: str
-    sd: dict[str, torch.Tensor]
-    a_dim: NotRequired[int]
-    amax: NotRequired[float]
-    feed: NotRequired[str]
-    hidden: NotRequired[int]
-    s_dim: NotRequired[int]
-    s0_mode: NotRequired[str]
-    width: NotRequired[int]
-    layers: NotRequired[int]
-    zproj: NotRequired[int]
-    goal_mode: NotRequired[str]
-    zero_init: NotRequired[bool]
-    gd_init: NotRequired[float]
-    feat_norm: NotRequired[bool]
-    grounding: NotRequired[dict[str, Any] | None]
-    vscale: NotRequired[float]
-    iter_mode: NotRequired[str]
-    head_mode: NotRequired[str]
-    p0: NotRequired[float]
-    head_scale: NotRequired[float]
-    cond_mode: NotRequired[str]
-    pre_ln: NotRequired[bool]
-    use_zg: NotRequired[bool]
-    use_gate: NotRequired[bool]
-    use_z0: NotRequired[bool]
-    use_grad: NotRequired[bool]
-    amu5: NotRequired[torch.Tensor]
-    ast5: NotRequired[torch.Tensor]
-    temporal_objective: NotRequired[str]
-    vnorm: NotRequired[str]
-    window_frames: NotRequired[int]
-    window_lag: NotRequired[int | None]
+def _checkpoint_value(checkpoint: dict[str, Any], key: str, legacy_key: str) -> Any:
+    if key in checkpoint:
+        return checkpoint[key]
+    if legacy_key in checkpoint:
+        return checkpoint[legacy_key]
+    raise KeyError(f"planner checkpoint is missing {key!r}")
 
 
 # Mech-interp hook: ``probe_directory`` dumps per-replan
@@ -142,8 +78,7 @@ class LIPSolver(CEMSolver):
 
     With ``n_steps=0`` (the benchmarked configuration) the solver is fully
     deterministic: one pass of K learned refinement iterations from a single
-    initialization, then execute the plan -- there are no deploy-time restarts
-    (2026-09-04 directive). ``n_steps > 0`` additionally runs MPPI
+    initialization, then execute the plan. ``n_steps > 0`` additionally runs MPPI
     (softmax-weighted, temperature ``lam``) seeded from the LIP plan.
 
     The plan length (horizon) always comes from the actor checkpoint.
@@ -161,7 +96,6 @@ class LIPSolver(CEMSolver):
         init_scale: float,
         cem_init_steps: int,
         iters_override: int | None,
-        reuse_trajectory: bool | str,
         graphed: bool | str,
         graph_warmup_iters: int,
         record_probes: bool,
@@ -211,31 +145,22 @@ class LIPSolver(CEMSolver):
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
         # before refinement. Selection happens on UNREFINED samples, exactly
         # CEM's iteration-0, so the refinement trajectory itself stays single
-        # and deterministic (no deploy-time restarts).
+        # and deterministic.
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
         # init_mode="cem": A(0) = the mean of a CEM run on the solver's planning
-        # cost (num_samples x cem_init_steps, topk elites -- the cem_latent
-        # arm's own update rule), then the K learned refinements as usual. An
-        # oracle-initialisation diagnostic: separates "the refiner cannot find
-        # the basin" from "the refiner cannot hold a good plan".
+        # cost (num_samples x cem_init_steps, topk elites), then the K learned
+        # refinements as usual. An oracle-initialisation diagnostic: separates
+        # "the refiner cannot find the basin" from "the refiner cannot hold a
+        # good plan".
         self.cem_init_steps = int(cem_init_steps)
         # iters_override: deploy-time K (None = the checkpoint's trained K).
-        # 0 = emit the initial plan untouched (control arm); >K = continuation
-        # diagnostic. Diagnostic only -- the shipped protocol is one K=8 pass.
+        # 0 = emit the initial plan untouched; >K = continuation diagnostic.
         self.iters_override = None if iters_override is None else int(iters_override)
-        # Default TRUE since 2026-08-12: the gradient unroll's trajectory is
-        # reused as the actor features (9 fwd + 8 bwd instead of 17 fwd +
-        # 8 bwd). The discarded unroll was a bit-exact duplicate — verified by
-        # reuse_trajectory="verify" (max_difference == 0 per iteration) and by
-        # end-task parity on the reacher winners (jobs 4927/4930: 3 of 4
-        # report cells identical, 1 differs by a single episode in 450).
-        # Pass reuse_trajectory=false to reproduce pre-2026-08-12 evals.
-        self.reuse_trajectory = reuse_trajectory
         # Opt-in CUDA-graphed inference (see solver/graphed.py). False = the
-        # untouched eager path; True = graph-captured refinement (implies
-        # trajectory reuse); "verify" = graphed, plus an eager recomputation
+        # untouched eager path; True = graph-captured refinement;
+        # "verify" = graphed, plus an eager recomputation
         # each iteration with the max deviation logged. Lazily initialised on
         # first solve so construction stays checkpoint-only.
         self.graphed = graphed
@@ -244,114 +169,40 @@ class LIPSolver(CEMSolver):
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
             self.probe_directory.mkdir(parents=True, exist_ok=True)
+
         raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw_checkpoint, dict):
             raise TypeError("LIP checkpoint must contain a mapping")
-        ck = cast(LIPCheckpoint, raw_checkpoint)
-        if ck.get("vnorm", "none") != "none":
-            # The port's PlannerNet consumes the raw critic value E. Loading a
-            # vnorm-trained state_dict here would deploy the actor on an input
-            # scale it never saw — in_dim is identical, so it fails silently and
-            # only shows up as a mysteriously weak success rate.
+        checkpoint = cast(dict[str, Any], raw_checkpoint)
+        if checkpoint.get("vnorm", "none") != "none":
+            # PlannerNet consumes the raw critic value E; a vnorm-trained
+            # state_dict has the same in_dim, so it would load and silently
+            # deploy on an input scale it never saw.
             raise ValueError(
-                f"checkpoint was trained with vnorm={ck['vnorm']!r}; this "
-                "PlannerNet has no vnorm support and would silently feed raw E. "
-                "Evaluate through scripts/sky/overlays/lip.py, or port the flag."
+                f"checkpoint was trained with vnorm={checkpoint['vnorm']!r}, which PlannerNet does not support"
             )
-        self.kind = ck.get("kind")
-        if self.kind not in (
-            "lip",
-            "lip2",
-            "lip3",
-            "lip4",
-            "lip4r",
-            "lip_dino",
-        ):
-            raise ValueError(f"LIPSolver: unsupported checkpoint kind {self.kind!r}")
-        self.feed = ck.get("feed", "none") if self.kind == "lip2" else "none"
-        self.actor: PlannerNet | PlannerNetRec | PlannerNetV3
-        if self.kind == "lip4r":
-            self.actor = PlannerNetRec(
-                ck["z_dim"],
-                horizon=ck["horizon"],
-                a_dim=ck.get("a_dim", 25),
-                hidden=ck.get("hidden", 512),
-                s_dim=ck.get("s_dim", 256),
-                amax=ck.get("amax", 2.5),
-                use_z0=ck.get("use_z0", False),
-                use_zg=ck.get("use_zg", False),
-                use_grad=ck.get("use_grad", True),
-                s0_mode=ck.get("s0_mode", "zero"),
-                head_scale=ck.get("head_scale", 1.0),
-            ).to(self.device)
-        elif self.kind == "lip3":
-            self.actor = PlannerNetV3(
-                ck["z_dim"],
-                horizon=ck["horizon"],
-                a_dim=ck.get("a_dim", 25),
-                width=ck.get("width", 256),
-                layers=ck.get("layers", 2),
-                amax=ck.get("amax", 2.5),
-                n_iters=ck["iters"],
-                zproj=ck.get("zproj", 64),
-                goal_mode=ck.get("goal_mode", "diff"),
-                zero_init=ck.get("zero_init", False),
-                gd_init=ck.get("gd_init", 0.0),
-                feat_norm=ck.get("feat_norm", False),
-                vscale=ck.get("vscale", 25.0),
-                iter_mode=ck.get("iter_mode", "emb"),
-                head_mode=ck.get("head_mode", "gate"),
-                p0=ck.get("p0", 0.05),
-                head_scale=ck.get("head_scale", 1.0),
-                cond_mode=ck.get("cond_mode", "token"),
-                use_gate=ck.get("use_gate", True),
-                pre_ln=ck.get("pre_ln", False),
-            ).to(self.device)
-        else:
-            # lip4 checkpoints store the flags explicitly; the flipped ck.get
-            # defaults only guard hand-rolled checkpoints of each kind
-            v4 = self.kind == "lip4"
-            self.actor = PlannerNet(
-                ck["z_dim"],
-                horizon=ck["horizon"],
-                a_dim=ck.get("a_dim", 25),
-                hidden=ck.get("hidden", 512),
-                amax=ck.get("amax", 2.5),
-                feed=self.feed,
-                use_zg=ck.get("use_zg", not v4),
-                use_gate=ck.get("use_gate", not v4),
-                use_z0=ck.get("use_z0", not v4),
-                use_grad=ck.get("use_grad", True),
-                head_scale=ck.get("head_scale", 1.0),
-            ).to(self.device)
-        self.actor.load_state_dict(ck["sd"])
+        horizon = int(checkpoint["horizon"])
+        self.actor = PlannerNet(
+            horizon=horizon,
+            action_dim=int(_checkpoint_value(checkpoint, "action_dim", "a_dim")),
+            hidden_dim=int(_checkpoint_value(checkpoint, "hidden_dim", "hidden")),
+            action_limit=float(_checkpoint_value(checkpoint, "action_limit", "amax")),
+            head_scale=float(checkpoint["head_scale"]),
+        ).to(self.device)
+        state_dict = _checkpoint_value(checkpoint, "state_dict", "sd")
+        if not isinstance(state_dict, dict):
+            raise TypeError("planner checkpoint state_dict must contain a mapping")
+        self.actor.load_state_dict(state_dict)
         self.actor.eval()
-        ground_payload = ck.get("grounding")
-        if ground_payload:
-            grounding = GroundingPenalty.from_export(ground_payload).to(self.device)
-            if self.ground_weight_override is not None:
-                grounding.weight = self.ground_weight_override
-            if grounding.weight == 0:
-                logger.info("LIP grounding: trained with the term, deployed without it (ground_weight=0)")
-            else:
-                if self.graphed:
-                    raise ValueError("graphed LIP inference does not support the grounding term")
-                self.grounding = grounding
-                logger.info(
-                    f"LIP grounding: {ground_payload['kind']} weight {grounding.weight:g} "
-                    f"margin {grounding.margin:.1f}px deadzone {grounding.deadzone:.1f}px tau {grounding.tau:g}"
-                )
-        elif self.ground_weight_override:
-            raise ValueError("core.solver.ground_weight set, but the actor checkpoint carries no grounding")
-        self._actor_horizon = ck["horizon"]  # plan length must match the trained net
-        self.lip_iters = ck["iters"]
+        self._actor_horizon = horizon
+        self.lip_iterations = int(_checkpoint_value(checkpoint, "iterations", "iters"))
         if self.iters_override is not None:
-            logger.info(f"LIP iterations overridden at deploy: {self.lip_iters} -> {self.iters_override}")
-            self.lip_iters = self.iters_override
-        self.temporal_objective = ck.get("temporal_objective", "terminal")
+            logger.info(f"LIP iterations overridden at deploy: {self.lip_iterations} -> {self.iters_override}")
+            self.lip_iterations = self.iters_override
+        self.temporal_objective = str(checkpoint["temporal_objective"])
         if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
             raise ValueError(f"unsupported temporal objective: {self.temporal_objective}")
-        value_reference = value_path or ck["value"]
+        value_reference = value_path or str(checkpoint["value"])
         if value_path is None and not Path(value_reference).exists():
             # The training run records an absolute value path; when evaluating
             # on another machine, fall back to the sibling the checkpoints were
@@ -370,25 +221,20 @@ class LIPSolver(CEMSolver):
         self.lip_value = cast(ValueFunction, value_module)
         # m-frame window values score a stack of the last `vframes` imagined
         # frames with the (static) goal frame duplicated to match. Trainers
-        # record `window_frames` in the planner checkpoint; older checkpoints
-        # referencing a windowed value fall back to the declared latent widths.
-        value_dim = int(getattr(value_module, "latent_dim", ck["z_dim"]))
-        declared_frames = ck.get("window_frames")
-        self.vframes = int(declared_frames) if declared_frames is not None else max(value_dim // int(ck["z_dim"]), 1)
+        # record `window_frames` in the planner checkpoint; checkpoints without
+        # it fall back to the declared latent widths.
+        value_dim = int(getattr(value_module, "latent_dim", 0))
+        declared_frames = checkpoint.get("window_frames")
+        if declared_frames is not None:
+            self.vframes = int(declared_frames)
+        elif "z_dim" in checkpoint and value_dim:
+            self.vframes = max(value_dim // int(checkpoint["z_dim"]), 1)
+        else:
+            self.vframes = 1
         if self.vframes > 1:
             logger.info(f"LIP window value: {self.vframes} frames")
-            if self.kind == "lip_dino":
-                raise ValueError("windowed values are not supported for lip_dino checkpoints")
             if self.graphed:
                 raise ValueError("graphed LIP inference does not support windowed values")
-            gm = getattr(self.actor, "goal_mode", None)
-            if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
-                raise ValueError("windowed values do not support per-step value conditioning (goal_mode=sep/vonly)")
-        if self.kind == "lip_dino":
-            if "amu5" not in ck or "ast5" not in ck:
-                raise ValueError("lip_dino checkpoint lacks action statistics")
-            self._amu = ck["amu5"].to(self.device).float()
-            self._ast = ck["ast5"].to(self.device).float()
 
     def _band_projection(self) -> torch.Tensor:
         """P = B B^T onto the first M temporal DCT-II modes, cached."""
@@ -411,8 +257,7 @@ class LIPSolver(CEMSolver):
 
     @property
     def horizon(self) -> int:
-        ah = getattr(self, "_actor_horizon", None)
-        return int(ah if ah else self._config.horizon)
+        return self._actor_horizon
 
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
@@ -430,20 +275,10 @@ class LIPSolver(CEMSolver):
         adds the physics penalty -- the energy the actor was trained on.
         """
         if self.vframes > 1:
-            energy = windowed_trajectory_value(
+            return windowed_trajectory_value(
                 self.lip_value, trajectory, goal, history, self.vframes, self.temporal_objective
             )
-        else:
-            energy = trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
-        if self.grounding is not None and plan is not None:
-            if self._ground_agent0 is None or self._ground_u_prev is None:
-                raise RuntimeError("grounding term scored before the agent position was read from the observation")
-            reps = trajectory.shape[0] // self._ground_agent0.shape[0]  # candidates per env (selection unroll)
-            agent0 = self._ground_agent0.repeat_interleave(reps, dim=0)
-            u_prev = self._ground_u_prev.repeat_interleave(reps, dim=0)
-            penalty = self.grounding(history[:, -1].float(), trajectory.float(), plan.float(), agent0, u_prev)
-            energy = energy + penalty.to(energy.dtype)
-        return energy
+        return trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
 
     def _value_init(
         self,
@@ -459,7 +294,7 @@ class LIPSolver(CEMSolver):
         refinement cannot reach when the value gradient is flat at A=0.
         """
         B, H, adim = z_hist.shape[0], self.horizon, self.action_dim
-        amax = float(self.actor.amax)
+        action_limit = self.actor.action_limit
         n_iid = self.init_samples // 2
         n_tile = self.init_samples - n_iid
         iid = self.init_scale * torch.randn(B, n_iid, H, adim, device=self.device, generator=self.torch_gen)
@@ -472,7 +307,7 @@ class LIPSolver(CEMSolver):
             ],
             dim=1,
         )
-        cand = cand.clamp(-amax, amax)
+        cand = cand.clamp(-action_limit, action_limit)
         C = cand.shape[1]
         with torch.no_grad():
             zg_c = zg.repeat_interleave(C, dim=0)
@@ -496,9 +331,9 @@ class LIPSolver(CEMSolver):
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
     def _cem_init(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
-        """A(0) = CEM mean on the solver's planning cost (the cem_latent arm's
-        rule: N(mean, var) samples, top-k elites, mean/std update), batched
-        exactly like :meth:`solve`'s MPPI loop. Returns (B, H, adim)."""
+        """A(0) = CEM mean on the solver's planning cost (N(mean, var) samples,
+        top-k elites, mean/std update), batched exactly like :meth:`solve`'s
+        MPPI loop. Returns (B, H, adim)."""
         H, adim = self.horizon, self.action_dim
         mean = torch.zeros(n_envs, H, adim, device=self.device, dtype=self.dtype)
         var = self.var_scale * torch.ones_like(mean)
@@ -541,8 +376,6 @@ class LIPSolver(CEMSolver):
         if self._graphed_refinement is None:
             from .graphed import GraphedRefinement
 
-            if self.reuse_trajectory:
-                logger.info("graphed LIP inference already reuses the gradient unroll; reuse_trajectory is redundant")
             self._graphed_refinement = GraphedRefinement(
                 wm,
                 self.lip_value,
@@ -596,8 +429,8 @@ class LIPSolver(CEMSolver):
             zg = wm.encode(genc_in)["emb"][:, -1].float()
 
         # everything above is observation/goal encoding; everything below is
-        # planning. The split matters: only the refinement is graph-captured,
-        # so a whole-decision number is not comparable to a refinement number.
+        # planning. Only the refinement is graph-captured, so the two are timed
+        # separately.
         self._last_encode_seconds = time.time() - encode_start
         B = n_envs
         zh_r, zg_r = z_hist, zg
@@ -632,14 +465,13 @@ class LIPSolver(CEMSolver):
         if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
         elif self.init_mode == "cem":
-            A = self._cem_init(info_dict, B).clamp(-float(self.actor.amax), float(self.actor.amax))
+            A = self._cem_init(info_dict, B).clamp(-self.actor.action_limit, self.actor.action_limit)
         A_init = A.detach().clone()
         e_iters: list[torch.Tensor] = []  # E(A_k) before the k-th update, k = 0..K-1
         lat_iters: list[torch.Tensor] = []  # imagined terminal latent distance of A_k
-        s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
         graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []
-        for k_it in range(self.lip_iters):
+        for iteration in range(self.lip_iterations):
             if graphed_ref is not None:
                 # one forward-graph + one backward-graph replay; the gradient
                 # unroll's trajectory doubles as the actor features (reuse)
@@ -651,7 +483,7 @@ class LIPSolver(CEMSolver):
                         score_ref = trajectory_value(self.lip_value, traj_ref, zg_r, z0_r, self.temporal_objective)
                         (gA_ref,) = torch.autograd.grad(score_ref.sum(), A_ref)
                     logger.info(
-                        f"Graphed verification iteration={k_it} "
+                        f"Graphed verification iteration={iteration} "
                         f"gradient={float((gA - gA_ref).abs().max()):.3e} "
                         f"score={float((E_graphed - score_ref.detach()).abs().max()):.3e} "
                         f"trajectory={float((traj_f - traj_ref.detach()).abs().max()):.3e}"
@@ -662,47 +494,16 @@ class LIPSolver(CEMSolver):
                     traj = rollout_traj(wm, zh_r, a_hist, A_in)
                     score = self._score(traj, zg_r, zh_r, A_in)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
+                traj_f = traj.detach()
             with torch.no_grad():
-                if graphed_ref is not None:
-                    E = E_graphed
-                else:
-                    reuse = self.reuse_trajectory
-                    if reuse == "verify":
-                        traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                        difference = (traj_f - traj.detach()).abs().max().item()
-                        logger.info(f"Reuse verification iteration={k_it} max_difference={difference:.3e}")
-                    elif reuse and reuse != "0":
-                        traj_f = traj.detach()
-                    else:
-                        traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                    E = self._score(traj_f, zg_r, zh_r, A)
+                E = E_graphed if graphed_ref is not None else score.detach()
                 if self.probe_directory is not None:
                     e_iters.append(E.detach().float().clone())
                     lat_iters.append((traj_f[:, -1].float() - zg_r).norm(dim=-1).detach())
-                vtraj = None
-                gm = getattr(self.actor, "goal_mode", None)
-                if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
-                    Bh, H = traj_f.shape[0], traj_f.shape[1]
-                    vtraj = self.lip_value(
-                        traj_f.reshape(Bh * H, -1),
-                        zg_r.repeat_interleave(H, dim=0),
-                    ).view(Bh, H)
-                A_prev = A
-                if self.update_rule == "gradient":
-                    amax = float(self.actor.amax)
-                    A = (A - self.gd_lr * gA).clamp(-amax, amax)
-                elif self.kind == "lip4r":
-                    if not isinstance(self.actor, PlannerNetRec) or s is None:
-                        raise RuntimeError("lip4r checkpoint did not create a recurrent actor state")
-                    A, s = self.actor(A, gA, E, z0_r, zg_r, s, traj_f, k=k_it, vtraj=vtraj)
-                else:
-                    if isinstance(self.actor, PlannerNetRec):
-                        raise RuntimeError("non-recurrent checkpoint created a recurrent actor")
-                    A = self.actor(A, gA, E, z0_r, zg_r, traj_f, k=k_it, vtraj=vtraj)
-                A = self._apply_update(A_prev, A)
+                A = self.actor(A, gA, E)
                 buf.append(A.clone())
         with torch.no_grad():
-            if not buf:  # iters_override=0: emit the initial plan untouched (control arm)
+            if not buf:  # iters_override=0: emit the initial plan untouched
                 buf = [A.detach().clone()]
             cands = torch.stack(buf if self.lip_select == "buffer" else buf[-1:], dim=1)
             C = cands.shape[1]
@@ -742,77 +543,24 @@ class LIPSolver(CEMSolver):
                     "best": best.detach().cpu(),
                     "lat_traj": lat_traj.detach().cpu(),
                     "cands": cands.view(B, C, self.horizon, self.action_dim).detach().cpu(),
-                    # diagnostics (2026-09-08): refinement trajectory per iteration
                     "A_init": A_init.cpu(),
                     "E_iters": torch.stack(e_iters).cpu() if e_iters else torch.zeros(0),
                     "lat_iters": torch.stack(lat_iters).cpu() if lat_iters else torch.zeros(0),
                     "init_mode": self.init_mode,
-                    "iters": int(self.lip_iters),
-                    # grounding inputs (E32): the real agent position and previous command
-                    # that anchored the term, so the decision can be rescored offline
-                    "ground_agent0": None if self._ground_agent0 is None else self._ground_agent0.detach().cpu(),
-                    "ground_u_prev": None if self._ground_u_prev is None else self._ground_u_prev.detach().cpu(),
+                    "iters": int(self.lip_iterations),
                 },
                 self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
             )
             _LIP_PROBE_N += 1
         return A.detach().to(self.dtype)
 
-    # ------------------------------------------------------------- lip_dino
-    def _proposal_lip_dino(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
-        del n_envs
-        wm = cast(TokenEncoderWorldModel, self._base())
-        px = info_dict["pixels"].to(self.device).float()[:, -3:]
-        B = px.shape[0]
-        pro = info_dict.get("proprio")
-        pro = (
-            pro.to(self.device).float()[:, -3:]
-            if pro is not None
-            else torch.zeros(B, px.shape[1], 41, device=self.device)
-        )
-        if px.shape[1] < 3:
-            k = 3 - px.shape[1]
-            px = torch.cat([px[:, :1].expand(-1, k, -1, -1, -1), px], dim=1)
-            pro = torch.cat([pro[:, :1].expand(-1, k, -1), pro], dim=1)
-        with torch.no_grad():
-            info = {
-                "pixels": px,
-                "proprio": pro,
-                "action": torch.zeros(B, 3, self.action_dim, device=self.device),
-            }
-            toks = wm.encode(info)["emb"].float()  # (B,3,P,D)
-            gx = info_dict["goal"].to(self.device).float()
-            genc = wm.encode({"pixels": gx}, emb_keys=[], target="gemb")
-            zg = genc["pixels_gemb"][:, -1].mean(dim=1).float()
-            z0 = toks[:, -1, :, :384].mean(dim=1)
-        A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
-        for _ in range(self.lip_iters):
-            with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
-                A_in = A.detach().requires_grad_(True)
-                zT = rollout_terminal_dino(wm, toks, A_in * self._ast + self._amu)
-                (gA,) = torch.autograd.grad(self.lip_value(zT, zg).sum(), A_in)
-            with torch.no_grad():
-                E = self.lip_value(
-                    rollout_terminal_dino(wm, toks, A * self._ast + self._amu),
-                    zg,
-                )
-                if isinstance(self.actor, PlannerNetRec):
-                    raise RuntimeError("DINO checkpoint cannot use a recurrent actor")
-                A = self.actor(A, gA, E, z0, zg)
-        return (A * self._ast + self._amu).to(self.dtype)  # raw action units
-
-    # ------------------------------------------------------------------ solve
     def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:
         del init_action
         start_time = time.time()
         outputs: dict[str, Any] = {"costs": [], "mean": [], "var": []}
         total_envs = len(next(iter(info_dict.values())))
 
-        if self.kind == "lip_dino":
-            proposal = self._proposal_lip_dino(info_dict, total_envs)
-        else:
-            proposal = self._proposal_lip(info_dict, total_envs)
-        mean = proposal
+        mean = self._proposal_lip(info_dict, total_envs)
         var = self.var_scale * torch.ones_like(mean)
 
         # optional MPPI refinement around the LIP plan (n_steps=0 -> pure LIP)

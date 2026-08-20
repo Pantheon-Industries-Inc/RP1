@@ -13,7 +13,7 @@ Example (OGBench Cube on the tracked LeWM checkpoint)::
 
     pixi run training model=rlp training.wm=assets/core/world_model/lewm_cube \
         training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
-        training.name=cube_lewm training.planner.amax=1.6
+        training.name=cube_lewm training.planner.action_limit=1.6
 
 Stages write reusable artifacts (caches, h5) into ``cache_directory`` and
 checkpoints into the run's ``checkpoints/`` directory. Re-runs can skip
@@ -164,24 +164,14 @@ def _run(cfg: DictConfig) -> None:
         )
     if "planner" not in skip:
         planner_overrides = _overrides(args.planner)
-        # `amax`, `iterations`, `layers` and `width` are planner-architecture
-        # knobs, not trainer flags; route them onto the composed planner group
-        # where lip_ac reads them.
-        amax = planner_overrides.pop("amax", None)
-        if amax is not None:
-            planner_overrides["core.planner.action_limit"] = amax
+        # `action_limit` and `iterations` are planner-architecture knobs, not
+        # trainer flags; route them onto the composed planner group where
+        # lip_ac reads them.
+        action_limit = planner_overrides.pop("action_limit")
+        planner_overrides["core.planner.action_limit"] = action_limit
         iterations = planner_overrides.pop("iterations", None)
         if iterations is not None:
             planner_overrides["core.planner.iterations"] = iterations
-        layers = planner_overrides.pop("layers", None)
-        if layers is not None:
-            planner_overrides["core.planner.transformer_layers"] = layers
-        width = planner_overrides.pop("width", None)
-        if width is not None:
-            planner_overrides["core.planner.transformer_width"] = width
-        if planner_overrides.get("grounding"):
-            # the grounding probe is fitted on the dataset's state column
-            planner_overrides.setdefault("state_h5", str(cfg.dataset))
         run_stage(
             "planner",
             "training/lip_ac",

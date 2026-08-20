@@ -39,24 +39,20 @@ Multi-seed means (8 seeds where marked; frozen LeWM ViT-tiny WMs):
   the value cannot rank candidates refined against it, Spearman(imagined, real)
   ~ 0.02-0.09, so search/selection on top of LIP does not help there).
 
-## LIPv4 (current default): minimal-input, gate-free
+## Planner architecture
 
-`core.planner.architecture=v4` (the default in `lip.py` and `lip_ac.py`; checkpoint kind
-`lip4`). The update rule sees **only** `[A, ∇_A V, E]` — no raw z0/z_g, no
+The update rule sees **only** `[A, ∇_A V, E]` — no raw z0/z_g, no
 gate: `A_{k+1} = clip(A_k + f_θ(A_k, ∇V, E), ±amax)`. The state and goal
 reach the planner exclusively through the value function — the purest
-learned-optimizer form. The full-input gated MLP uses
-`core.planner.architecture=mlp`; the transformer uses
-`core.planner.architecture=traj`. Ablations use `core.planner.drop_state`,
-`core.planner.drop_goal`, and `core.planner.use_gate`.
+learned-optimizer form.
 
-Why it is the default (evidence across two envs):
+Why this architecture was selected (evidence across two environments):
 - **OGBench cube** (input sweep + 3-draw confirm): dropping raw z0/z_g ties
   the full-input champion (87.8 vs 88.0) at lower seed variance; raw-latent
   inputs let the actor exploit value idiosyncrasies (worse-loss actors eval
   better once inputs are minimal).
-- **TwoRoom** (2026-07-15 campaign): min0/v4 arms *beat* the full-input
-  tandem control; the canonical LIPv4 recipe is **triple-perfect** — 3/3
+- **TwoRoom** (2026-07-15 campaign): the minimal-input arms *beat* the full-input
+  tandem control; the selected recipe is **triple-perfect** — 3/3
   training seeds at 100.0 on all 12 cells (3600/3600 episodes), plain
   deploy. Checkpoints + exact recipe: `checkpoints/tworoom_lip4/`. Full
   campaign: `tworoom_min0_20260714/` (writeup + per-cell scores).
@@ -72,23 +68,13 @@ Recipe notes that matter for the gate-free form:
 - **`max_delta=12`** (HER goals to 60 primitive steps) fixed the residual
   cross-wall wall-trap failures systematically on TwoRoom; with default
   max-delta 10 the per-seed perfect rate was a ~50% coin flip.
-- **head-scale small-init does NOT transfer to the MLP** (it was the v3
-  transformer's no-gate fix): `core.planner.head_scale=0.01` was the worst TwoRoom arm.
+- **head-scale small-init does not help this MLP**:
+  `core.planner.head_scale=0.01` was the worst TwoRoom arm.
   Keep the default 1.0.
 - Train with the tandem (`train_lip_ac.py`, warm-started from a sequential
   TD value) — one run replaces the TD sweep + CEM selection + LIP sweep
   pipeline, and the during-run τ anneal (0.1→0.03) does not reintroduce the
   frozen-sharp-teacher pathology.
-
-## LIP-v2: `core.planner.feed=end`
-
-`core.planner.feed=end` additionally feeds the refiner the imagined terminal
-latent (checkpoint kind `lip2`; the solver handles it transparently). Verdict
-from a 12-cell sweep + replica study: equal peak performance (8-seed paired
-diff +1.0 vs v1), but a tighter training-draw distribution — 5/5 paired draws
->= v1 across two tasks (e.g. K8/lr3e-4/4k: {80,82,84} vs v1 {76,78,78}).
-Use it when training reliability matters; v1 (`core.planner.feed=none`) stays
-the default. `core.planner.feed=traj` (full imagined path) tested worse.
 
 Noise discipline for any comparison on this benchmark: single-training-run,
 single-eval-seed cells carry ±6-8 (train) and ±6-7 (eval) points of noise —

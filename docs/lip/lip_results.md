@@ -3,7 +3,7 @@
 **Status:** COMPLETE — LeWM line 2026-07-14; PLDM line 2026-07-16 (4 sweep rounds,
 champion + co-champion 3-draw-confirmed at both horizons, failure mechanism located
 and offline fix attempts bounded, §6).
-**One-line:** the LIPv4 actor–critic planner transfers from the LeWM world model to the
+**One-line:** the RLP actor–critic planner transfers from the LeWM world model to the
 PLDM world model unchanged in architecture, beats base PLDM+CEM planning on every
 confirmed cell (+12.3 success at h25, +7.0 at h50) at ~1/500 the planning compute, and
 its *relative* advantage over CEM is largest exactly where the world model's native
@@ -13,16 +13,15 @@ cost is weakest.
 
 ## 1. What is being compared
 
-**LIPv4 ("min0") actor.** A 2×512 MLP applied K times as a learned refinement rule over
+**RLP actor.** A 2×512 MLP applied K times as a learned refinement rule over
 an action plan. Input per iteration: `[vec(A), vec(∇_A V), V]` — the current plan, the
 gradient of the learned terminal value through the frozen world model, and the value
 itself. No raw state, no raw goal, no gate: task information reaches the actor *only*
 through the learned value ("the value is the only teacher", and the only input).
 Deploy: `A(0)=0`, K weight-tied refinement iterations, execute, replan (receding
 horizon). Cost per replan ≈ K+few WM rollouts (~16 rollout-equivalents).
-Code: `rlp/core/solver/lip.py` (`kind='lip4'`), trainers
-`rlp/train/lip.py` (frozen teacher) and `rlp/train/lip_ac.py`
-(tandem actor–critic used everywhere below).
+Code: `src/rlp/core/solver/lip.py`; trainer:
+`src/rlp/training/lip_ac.py`.
 
 **Tandem critic (AC).** Goal-conditioned temporal-distance TD (HER hindsight goals,
 balanced full-horizon + 30% cross-episode, quasimetric head, n-step 50, low expectile —
@@ -76,7 +75,7 @@ the WM. "Over-floor" = per-draw (score − floor); it isolates what planning con
 | random floor | 46 / 56 / 50 | 50.7 | 46 / 56 / 50 | 50.7 |
 | native CEM | 80 / 84 / 62 | 75.3 | 64 / 78 / 50 | 64.0 |
 | TD+CEM | 82 / 90 / 66 | 79.3 | 78 / 64 / 64 | 68.7 |
-| **LIPv4-AC** | **88 / 96 / 80** | **88.0** | **70 / 83 / 76** | **76.3** |
+| **RLP-AC** | **88 / 96 / 80** | **88.0** | **70 / 83 / 76** | **76.3** |
 
 LeWM LIP row = tandem champion ("schedamax", K8); the input-minimal min0 ties it
 (87.8, 4 seeds) at lower variance. PLDM LIP row = confirmed champion "k12"
@@ -91,12 +90,12 @@ to 0.7).
 | random floor | 30 / 34 / 28 | 30.7 | 30 / 34 / 28 | 30.7 |
 | native CEM | 58 / 66 / 38 | 54.0 | 48 / 56 / 32 | 45.3 |
 | TD+CEM | 64 / 74 / 56 | 64.7 | 46 / 60 / 34 | 46.7 |
-| **LIPv4-AC** | **74 / 86 / 62** | **74.0** | **50 / 64 / 43** | **52.3** |
+| **RLP-AC** | **74 / 86 / 62** | **74.0** | **50 / 64 / 43** | **52.3** |
 
 (LeWM h50 = AC-warm confirm; the h50-swept sequential LIP reaches the same 74.0 mean.
 PLDM h50 = mean of the same two k12 seeds: 52/62/42 and 48/66/44.)
 
-**Headline (PLDM):** LIPv4-AC beats base PLDM+CEM by **+12.3 at h25 and +7.0 at h50**,
+**Headline (PLDM):** RLP-AC beats base PLDM+CEM by **+12.3 at h25 and +7.0 at h50**,
 with no confirmed cell below its baseline counterpart, largest gains on the hardest
 draw (s44 h25: +24/+28), at ~16 vs ~9,000 rollouts per replan.
 
@@ -109,9 +108,9 @@ vs native CEM:
 |---|---|---|---|---|
 | native CEM − floor | +24.7 | +13.3 | +23.3 | +14.7 |
 | TD+CEM − floor | +28.7 | +18.0 | +34.0 | +16.0 |
-| **LIPv4-AC − floor** | **+37.3** | **+25.7** | **+43.3** | **+21.7** |
+| **RLP-AC − floor** | **+37.3** | **+25.7** | **+43.3** | **+21.7** |
 | TD+CEM ratio vs CEM | 1.16× | 1.35× | 1.46× | 1.09× |
-| **LIPv4-AC ratio vs CEM** | **1.51×** | **1.93×** | **1.86×** | **1.48×** |
+| **RLP-AC ratio vs CEM** | **1.51×** | **1.93×** | **1.86×** | **1.48×** |
 | LIP failure-rate reduction vs CEM | 51% | 34% | 43% | 13% |
 
 Two floor-honest readings:
@@ -210,7 +209,7 @@ PLDM champion training call (k12):
       core.planner.horizon=5 core.planner.iterations=12 training.steps=8000 training.n_step=50 training.batch=128 \
       training.expectile=0.1 training.expectile_final=0.03 training.critic_lr=1e-3 training.critic_lr_final=1e-4 \
       training.actor_lr=3e-4 training.actor_lr_final=3e-5 core.planner.action_limit=3.5 \
-      core.planner.drop_state=true core.planner.drop_goal=true core.planner.use_gate=false runtime.seed=0
+      runtime.seed=0
 
     # eval (per draw / horizon):
     pixi run inference benchmark=lewm runtime.seed=42 runtime.bfloat16=true \
