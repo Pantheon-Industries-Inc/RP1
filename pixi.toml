@@ -7,7 +7,7 @@ version = "0.1.0"
 
 [tasks]
 training = "python -m rlp.training"
-inference = "python -m rlp.inference.benchmark"
+inference = "python -m rlp.inference.evaluate"
 prepare = "python -m rlp.training.data.preparation"
 
 [dependencies]

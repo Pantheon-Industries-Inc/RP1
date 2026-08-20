@@ -3,7 +3,7 @@ defaults:
   - /utils/logging: default
   - _self_
 entrypoint:
-  _target_: rlp.inference.benchmark.world_model._run
+  _target_: rlp.inference.evaluate._run
 runtime:
   seed: 42
   device: auto

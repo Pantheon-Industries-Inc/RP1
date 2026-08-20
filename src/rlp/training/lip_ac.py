@@ -37,7 +37,7 @@ signal H-fold per actor batch without any extra world-model queries. Same
 co-exploitation caveat as the endpoint term; requires ``expand_weight > 0``.
 
 Outputs are written to the run's ``checkpoints/`` directory. The planner
-checkpoint records the value-checkpoint path, so ``rlp.inference.benchmark.world_model`` with
+checkpoint records the value-checkpoint path, so ``rlp.inference.evaluate`` with
 ``solver=lip`` works unchanged and the same value can be CEM-evaluated for an
 apples-to-apples comparison.
 """

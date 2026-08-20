@@ -1,5 +1,3 @@
-"""Script to evaluate a World Model using MPC on a dataset of episodes."""
-
 import os
 import sys
 
@@ -314,8 +312,7 @@ def _run(cfg: DictConfig) -> None:
 
 
 def run() -> object:
-    """Launch world-model evaluation with the repository-level Hydra config."""
-    return run_hydra(dispatch, config_name="inference/benchmark/lewm")
+    return run_hydra(dispatch, config_name="inference/benchmark/lewm", selector=("benchmark", "inference/benchmark"))
 
 
 if __name__ == "__main__":

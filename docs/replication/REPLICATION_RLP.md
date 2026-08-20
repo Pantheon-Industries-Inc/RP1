@@ -51,7 +51,7 @@ Per-environment recipe deltas (everything else is shared, see
 
 ## 2. Evaluation — producing a table cell
 
-The eval driver is `rlp.inference.benchmark.world_model`; each invocation is one
+The evaluation driver is `rlp.inference.evaluate`; each invocation is one
 (environment × base × planner × objective × horizon) cell. Horizons:
 `benchmark.goal_offset_steps=25 planning.budget=50` (h25) or
 `goal_offset_steps=100 budget=200` (h100). Reporting protocol: seeds 42/43/44,

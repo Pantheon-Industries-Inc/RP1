@@ -136,7 +136,6 @@ def test_repository_trees_share_the_subsystem_skeleton() -> None:
         "data",
         "environment",
         "inference",
-        "inference/benchmark",
         "training",
         "training/data",
         "training/data/preparation",

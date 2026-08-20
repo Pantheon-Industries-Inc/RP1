@@ -581,7 +581,7 @@ that pattern, and kills your own session. Kill by PID.)*
 The production path runs **fp32 without even TF32**, uncompiled — while the machinery exists and is
 used elsewhere in the same repo:
 
-- `src/rlp/inference/benchmark/world_model.py` — bf16 cast, `torch.compile` on encoder +
+- `src/rlp/inference/evaluate.py` — bf16 cast, `torch.compile` on encoder +
   predictor, autocast. All gated behind flags `cube.yaml` never sets.
 - `rlp/core/world_model/dinowm/tokens.py:165,172` — `torch.compile` + bf16 autocast + grad
   checkpointing.
