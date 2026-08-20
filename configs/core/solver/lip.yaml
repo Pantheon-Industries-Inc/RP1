@@ -7,8 +7,10 @@ n_steps: 0
 topk: 30
 lam: 1.0
 actor_path: ???
+lip_select: last
 reuse_trajectory: true  # 9-unroll reuse, bit-exact (default since 2026-08-12)
 graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
+graph_warmup_iters: 5
 record_probes: false
 probe_directory: ${run.artifacts}/probes
 value_path: null  # override the value recorded in the actor checkpoint

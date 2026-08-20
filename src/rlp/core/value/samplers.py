@@ -60,12 +60,11 @@ class FutureBatch(TypedDict):
 
 
 class _BaseSampler:
-    def __init__(self, cache: LatentCache, seed: int = 0, min_len: int = 2):
+    def __init__(self, cache: LatentCache, seed: int, min_len: int):
         self.cache = cache
         self.z = cache.z
         self.rng = np.random.default_rng(seed)
         eps = cache.episodes()
-        # keep only episodes long enough to form a pair/transition
         self.episodes = {e: rows for e, rows in eps.items() if len(rows) >= min_len}
         self.ep_ids = np.array(sorted(self.episodes.keys()))
         self.ep_lens = np.array([len(self.episodes[e]) for e in self.ep_ids])
@@ -87,10 +86,10 @@ class BalancedHorizonPairSampler(_BaseSampler):
     def __init__(
         self,
         cache: LatentCache,
-        n_buckets: int = 10,
-        max_delta: int | None = None,
-        random_order: bool = True,
-        seed: int = 0,
+        n_buckets: int,
+        max_delta: int | None,
+        random_order: bool,
+        seed: int,
     ) -> None:
         super().__init__(cache, seed=seed, min_len=2)
         self.n_buckets = n_buckets
@@ -144,7 +143,7 @@ class TransitionSampler(_BaseSampler):
     from any episode (treated as not-done) for negative coverage.
     """
 
-    def __init__(self, cache: LatentCache, p_random_goal: float = 0.0, seed: int = 0):
+    def __init__(self, cache: LatentCache, p_random_goal: float, seed: int):
         super().__init__(cache, seed=seed, min_len=2)
         self.p_random_goal = p_random_goal
         self.n = len(cache.z)
@@ -191,14 +190,14 @@ class NStepGoalSampler(_BaseSampler):
     def __init__(
         self,
         cache: LatentCache,
-        n_step: int = 1,
-        p_cross: float = 0.2,
-        n_buckets: int = 10,
-        balanced: bool = True,
-        seed: int = 0,
-        max_delta: int | None = None,
-        near_frac: float = 0.0,
-        near_max: int = 3,
+        n_step: int,
+        p_cross: float,
+        n_buckets: int,
+        balanced: bool,
+        seed: int,
+        max_delta: int | None,
+        near_frac: float,
+        near_max: int,
     ) -> None:
         """
         ``near_frac`` draws that fraction of in-episode hindsight goals
@@ -275,7 +274,7 @@ class GeometricFutureSampler(_BaseSampler):
     in-batch by the contrastive loss (every other goal in the batch).
     """
 
-    def __init__(self, cache: LatentCache, gamma: float = 0.99, seed: int = 0):
+    def __init__(self, cache: LatentCache, gamma: float, seed: int):
         super().__init__(cache, seed=seed, min_len=2)
         self.gamma = gamma
 

@@ -6,6 +6,9 @@ property is what makes the learned rule safe to drop into an MPC loop, and it
 is the invariant these tests guard.
 """
 
+from pathlib import Path
+from typing import Any
+
 import pytest
 import torch
 
@@ -14,9 +17,9 @@ from rlp.core.planner.dmpo import DMPONet, gaussian_halton
 H, A_DIM, N, B = 3, 4, 16, 5
 
 
-def _net(**kwargs: object) -> DMPONet:
-    defaults: dict[str, object] = {"horizon": H, "a_dim": A_DIM, "num_samples": N, "hidden": 32, "amax": 1.0}
-    return DMPONet(**{**defaults, **kwargs})  # type: ignore[arg-type]
+def _net(**kwargs: Any) -> DMPONet:
+    defaults: dict[str, Any] = {"horizon": H, "a_dim": A_DIM, "num_samples": N, "hidden": 32, "amax": 1.0}
+    return DMPONet(**{**defaults, **kwargs})
 
 
 def test_halton_samples_are_deterministic_and_standardized() -> None:
@@ -113,10 +116,10 @@ def test_warm_start_shifts_forward_and_learns_a_residual() -> None:
     assert torch.count_nonzero(empty) == 0
 
 
-def test_solver_rejects_a_foreign_checkpoint(tmp_path: object) -> None:
+def test_solver_rejects_a_foreign_checkpoint(tmp_path: Path) -> None:
     from rlp.core.solver.dmpo import DMPOSolver
 
-    path = tmp_path / "planner.pt"  # type: ignore[operator]
+    path = tmp_path / "planner.pt"
     torch.save({"kind": "lip4", "sd": {}}, path)
     with pytest.raises(ValueError, match="unsupported checkpoint kind"):
         DMPOSolver(model=torch.nn.Linear(2, 2), actor_path=str(path))

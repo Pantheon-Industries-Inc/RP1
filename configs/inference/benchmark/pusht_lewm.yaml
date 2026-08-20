@@ -1,0 +1,14 @@
+# @package _global_
+# PushT on the official LeWM base (`quentinll/lewm-pusht`). The release
+# weights use transformers-4 HF ViT key naming; convert once with
+# `pixi run prepare job=convert_pldm` (the identical 1:1 rename) and pair with
+# the release config.json — see scripts/sky/counterstrike_pusht.yaml. Pass the
+# converted directory as core.world_model.checkpoint=<dir>.
+defaults:
+  - pusht
+  - /core/world_model: lewm
+  - override /core/policy: world_model
+  - _self_
+core:
+  world_model:
+    checkpoint: ???

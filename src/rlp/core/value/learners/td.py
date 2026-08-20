@@ -26,7 +26,7 @@ import numpy as np
 import torch
 
 from rlp.data import LatentCache
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..head import IQEHead, PairwiseMetricHead, QuasimetricHead
 from ..samplers import NStepGoalSampler
@@ -34,35 +34,35 @@ from ..samplers import NStepGoalSampler
 
 @dataclass
 class TDConfig:
-    head: str = "quasimetric"  # 'mlp' | 'quasimetric' | 'iqe'
-    symmetric: bool = False  # mlp head only: symmetrize d(x,y)
-    hidden_dim: int = 256
-    depth: int = 2
-    embed_dim: int = 128  # quasimetric embedding dim
-    n_step: int = 5  # n-step return (n→large ≈ Monte-Carlo)
-    gamma: float = 1.0  # 1.0 = undiscounted steps-to-go
-    lr: float = 1e-3
-    weight_decay: float = 1e-4
-    batch_size: int = 1024
-    steps: int = 6000
-    save_every: int = 0  # >0: hand a CPU copy of the head to fit(save_fn=...) every N steps (teacher early-stopping grid)
-    tau: float = 0.005
-    expectile: float = 0.7  # >0.5 optimistic (shortest-path)
-    p_cross: float = 0.3  # fraction of cross-episode (stitching) goals
-    balanced: bool = True  # balanced full-horizon hindsight goals
-    max_delta: int | None = None  # cap hindsight-goal offsets (horizon matching)
-    n_buckets: int = 10
-    seed: int = 0
-    huber_beta: float = 1.0
-    eikonal_weight: float = 0.0
-    num_components: int = 8
-    rank_weight: float = 0.0
-    rank_margin: float = 0.5
-    rank_max_delta: int = 200
-    # near-goal resolution: fraction of in-episode hindsight goals drawn
-    # 1..near_max steps ahead (see NStepGoalSampler)
-    near_frac: float = 0.0
-    near_max: int = 3
+    head: str
+    symmetric: bool
+    hidden_dim: int
+    depth: int
+    embed_dim: int
+    n_step: int
+    gamma: float
+    lr: float
+    weight_decay: float
+    batch_size: int
+    steps: int
+    tau: float
+    expectile: float
+    p_cross: float
+    balanced: bool
+    max_delta: int | None
+    n_buckets: int
+    seed: int
+    huber_beta: float
+    eikonal_weight: float
+    num_components: int
+    rank_weight: float
+    rank_margin: float
+    rank_max_delta: int
+    softplus: bool
+    sym_frac: float
+    alpha_init: float
+    near_frac: float
+    near_max: int
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
@@ -83,6 +83,7 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
             embed_dim=cfg.embed_dim,
             depth=cfg.depth,
             num_components=cfg.num_components,
+            alpha_init=cfg.alpha_init,
         )
     if cfg.head == "quasimetric":
         return QuasimetricHead(
@@ -90,23 +91,19 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
             hidden_dim=cfg.hidden_dim,
             embed_dim=cfg.embed_dim,
             depth=cfg.depth,
+            sym_frac=cfg.sym_frac,
         )
     return PairwiseMetricHead(
         latent_dim,
         hidden_dim=cfg.hidden_dim,
         depth=cfg.depth,
-        softplus=True,
+        softplus=cfg.softplus,
         symmetric=cfg.symmetric,
+        scale=1.0,
     )
 
 
-def fit(
-    cache: LatentCache,
-    cfg: TDConfig,
-    device: str = "cpu",
-    save_fn: "Callable[[torch.nn.Module, int], None] | None" = None,
-) -> MetricHead:
-    """Train and return a temporal-distance (quasi)metric head."""
+def fit(cache: LatentCache, cfg: TDConfig, device: str) -> MetricHead:
     torch.manual_seed(cfg.seed)
     value = _make_head(cfg, cache.latent_dim).to(device)
     target = copy.deepcopy(value).to(device)

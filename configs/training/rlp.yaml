@@ -1,0 +1,54 @@
+# @package _global_
+# Composed RLP replication pipeline: latent caches -> offline value -> planner.
+# Stage defaults are the paper's OGBench Cube recipe; override per environment
+# through the value.* / planner.* subtrees (see docs/replication/REPLICATION_RLP.md).
+defaults:
+  - /utils/logging: default
+  - _self_
+entrypoint: {_target_: rlp.training.rlp._run}
+runtime:
+  device: auto
+  seed: 0
+training:
+  wm: ???
+  dataset: ???
+  name: rlp
+  frameskip: 5
+  state_key: null
+  train_episodes: 8000
+  train_res: null
+  cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
+  skip: []
+
+# Stage 4 — offline quasimetric critic (train/metric, learner=td).
+# Keys are forwarded verbatim onto configs/training/metric.yaml.
+  value:
+    steps: 12000
+    batch_size: 1024
+    gamma: 0.98
+    expectile: 0.03
+    n_step: 50
+    p_cross: 0.3
+
+# Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
+# Keys are forwarded verbatim onto configs/training/lip_ac.yaml.
+  planner:
+    steps: 6000
+    batch: 256
+    actor_lr: 3e-4
+    actor_lr_final: 3e-5
+    mean_weight: 0.1
+    max_delta: 10
+    p_cross: 0.3
+    replay_prob: 0.5
+    gamma: 0.98
+    n_step: 50
+    expectile: 0.1
+    expectile_final: 0.03
+    critic_lr: 1e-3
+    critic_lr_final: 1e-4
+    td_batch: 1024
+    freeze_critic_frac: 0.5
+    expand_weight: 1.0
+    temporal_objective: terminal
+    amax: 1.6

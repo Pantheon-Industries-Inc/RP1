@@ -21,7 +21,7 @@ class _EncodableWorldModel(Protocol):
     def encode(self, info: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]: ...
 
 
-def pick_device(name: str = "auto") -> str:
+def pick_device(name: str) -> str:
     if name and name != "auto":
         return name
     if torch.cuda.is_available():
@@ -32,7 +32,10 @@ def pick_device(name: str = "auto") -> str:
 
 
 def build_featurizer(
-    wm: nn.Module, device: str = "cpu", img_size: int = 224, train_res: int | None = None
+    wm: nn.Module,
+    device: str,
+    img_size: int,
+    train_res: int | None,
 ) -> Callable[[RowBatch], torch.Tensor]:
     """Return ``featurizer(rows) -> (B, D)`` latents for caching.
 
@@ -48,7 +51,6 @@ def build_featurizer(
         raise TypeError(f"{type(wm).__name__} does not expose encode()")
     encoder = cast(_EncodableWorldModel, wm)
 
-    # pixel world model: decode images and ImageNet-normalise
     from io import BytesIO
 
     from PIL import Image

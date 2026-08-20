@@ -25,7 +25,10 @@ def load_pretrained(
     """
     path = Path(name).expanduser()
     resolved_name = str(path.resolve()) if path.exists() else str(name)
-    return cast(nn.Module, _load_pretrained(resolved_name, cache_dir=cache_dir, extra_args=extra_args))
+    kwargs: dict[str, Any] = {"extra_args": extra_args}
+    if cache_dir is not None:
+        kwargs["cache_dir"] = cache_dir
+    return cast(nn.Module, _load_pretrained(resolved_name, **kwargs))
 
 
 def save_pretrained(model: nn.Module, run_name: str, config: Any | None = None, **kwargs: Any) -> None:

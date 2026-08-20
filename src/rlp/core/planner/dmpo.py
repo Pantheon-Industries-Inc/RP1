@@ -30,7 +30,7 @@ Deltas from the reference implementation, all deliberate:
 - **No stochastic search distributions.** The paper trains ``m_phi`` with PPO
   on a real quadrotor, so the actor must emit distributions over
   ``(mu, sigma)`` to get a policy gradient. Here the world model is
-  differentiable, so :mod:`rlp.train.dmpo` trains the same networks by
+  differentiable, so :mod:`rlp.training.dmpo` trains the same networks by
   pathwise gradients (the convention this repository uses for its own learned
   planner), and the ``mean_search_std`` / ``std_search_std`` heads are
   dropped. Everything on the forward path — cost normalization, gating, the

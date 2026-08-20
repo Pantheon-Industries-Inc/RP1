@@ -12,7 +12,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 import numpy as np
 import torch
@@ -21,13 +21,7 @@ from stable_worldmodel import World as _World
 from stable_worldmodel.plot import save_panel_videos
 from stable_worldmodel.world.world import _apply_callables, _extract_init_goal
 
-from rlp.logging import logger
-
-
-class EvaluationResult(TypedDict):
-    success_rate: float
-    episode_successes: np.ndarray
-    seeds: object
+from rlp.utils.logging import logger
 
 
 def _resize_images_like_env(images: np.ndarray, env_pixels: np.ndarray) -> np.ndarray:
@@ -82,7 +76,7 @@ class World(_World):
         callables: dict[str, Callable[..., Any]] | None,
         video: str | Path | None,
         mode: str,
-    ) -> EvaluationResult:
+    ) -> dict[str, Any]:
         n = len(episodes_idx)
         if n != self.num_envs:
             raise ValueError(f"{n} dataset episodes for {self.num_envs} environments")
@@ -126,7 +120,7 @@ class World(_World):
             [defaultdict(list) for _ in range(n)] if record_path else None
         )
         record_done = np.zeros(n, dtype=bool)
-        results: EvaluationResult = {
+        results: dict[str, Any] = {
             "success_rate": 0.0,
             "episode_successes": np.zeros(n, dtype=bool),
             "seeds": init_state.get("seed"),

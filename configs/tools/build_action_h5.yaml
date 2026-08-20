@@ -1,7 +1,0 @@
-# @package _global_
-defaults:
-  - /logging: default
-  - _self_
-entrypoint: {_target_: rlp.tools.data.build_action_h5._run}
-dataset: ???
-output: ???

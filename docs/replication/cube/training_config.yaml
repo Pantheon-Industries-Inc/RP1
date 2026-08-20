@@ -72,12 +72,12 @@ optimization:
   precision: bf16 autocast (params fp32)
   hardware: 1x H100
 
-eval:                            # pixi run eval model=lewm
+eval:                            # pixi run inference benchmark=lewm
   command: >
-    pixi run eval model=lewm
+    pixi run inference benchmark=lewm
     core.world_model.checkpoint=lewm_lewm_scratch_cls_cube1/weights_epoch_22.pt
     data.path=/root/run/data_cube_dinowm/shard_0.lance
-    evaluation.image_size=224
+    benchmark.image_size=224
   eval.dataset_name: local lance copy of the SAME training dataset (quentinll/lewm-cube converted)
   num_eval: 50
   goal_offset_steps: 25          # goal image/state = dataset state 25 raw steps after start

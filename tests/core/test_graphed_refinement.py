@@ -25,10 +25,10 @@ class TinyWM(torch.nn.Module):
         self.action_encoder = torch.nn.Linear(A_DIM, D)
         self.mix = torch.nn.Linear(2 * D, D)
 
-    def predict(self, win_e: torch.Tensor, act_emb: torch.Tensor) -> torch.Tensor:
-        joint = torch.cat([win_e.mean(dim=1), act_emb.mean(dim=1)], dim=-1)
+    def predict(self, emb: torch.Tensor, act_emb: torch.Tensor) -> torch.Tensor:
+        joint = torch.cat([emb.mean(dim=1), act_emb.mean(dim=1)], dim=-1)
         mixed: torch.Tensor = self.mix(joint)
-        return mixed.unsqueeze(1).expand(-1, win_e.shape[1], -1)
+        return mixed.unsqueeze(1).expand(-1, emb.shape[1], -1)
 
 
 def test_rejects_cpu() -> None:
@@ -37,7 +37,7 @@ def test_rejects_cpu() -> None:
     if torch.cuda.is_available():
         pytest.skip("CPU-rejection check only meaningful without CUDA")
     with pytest.raises(ValueError, match="CUDA"):
-        GraphedRefinement(None, cast(Any, None), "terminal", H, A_DIM, D, "cpu")
+        GraphedRefinement(None, cast(Any, None), "terminal", H, A_DIM, D, "cpu", warmup_iters=5)
 
 
 @cuda

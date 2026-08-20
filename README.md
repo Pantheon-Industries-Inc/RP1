@@ -39,12 +39,12 @@ method.
 Both pretrained OGBench Cube world models are tracked in-tree via Git LFS —
 `assets/core/world_model/lewm_cube` (LeWM) and
 `assets/core/world_model/pldm_cube` (the authors' PLDM checkpoint, converted
-1:1 into the LeWM key layout; converter: `pixi run tool tool=convert_pldm`).
+1:1 into the LeWM key layout; converter: `pixi run prepare job=convert_pldm`).
 Replication is therefore self-contained: fetch the public dataset once, then
 train and evaluate per base.
 
 ```bash
-pixi run tool tool=fetch_dataset dataset=ogb_cube   # ~20 GiB, public
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube   # ~20 GiB, public
 ```
 
 **Train RLP** (`model=rlp` runs the paper's full stack — latent caching,
@@ -55,14 +55,14 @@ clip range `amax`:
 
 ```bash
 # LeWM base (amax 1.6)
-pixi run train model=rlp wm=assets/core/world_model/lewm_cube \
-    dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
-    name=cube_lewm planner.amax=1.6
+pixi run training model=rlp training.wm=assets/core/world_model/lewm_cube \
+    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+    training.name=cube_lewm training.planner.amax=1.6
 
 # PLDM base (amax 4.5)
-pixi run train model=rlp wm=assets/core/world_model/pldm_cube \
-    dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
-    name=cube_pldm planner.amax=4.5
+pixi run training model=rlp training.wm=assets/core/world_model/pldm_cube \
+    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+    training.name=cube_pldm training.planner.amax=4.5
 ```
 
 Each run writes `checkpoints/planner.pt` (the RLP refiner), `value_td`
@@ -73,16 +73,16 @@ on recipes without re-encoding).
 
 **Evaluate** the trained planner against the paper's baselines
 (`model=lewm` / `model=pldm` selects the base; horizons:
-`evaluation.goal_offset_steps=25 evaluation.budget=50` for h25, `=100`/`=200`
+`benchmark.goal_offset_steps=25 planning.budget=50` for h25, `=100`/`=200`
 for h100; report seeds 42/43/44):
 
 ```bash
-pixi run eval model=lewm core/solver=lip core.solver.actor_path=<planner.pt>  # RLP, 9 rollouts
-pixi run eval model=lewm core/solver=cem                                      # CEM,  9,000 rollouts
-pixi run eval model=lewm core/solver=mppi                                     # MPPI, 9,000 rollouts
-pixi run eval model=lewm core/solver=adam                                     # Adam, 3,000 rollouts
-pixi run eval model=lewm core/policy=no_move                                  # no-op floor (skill normalization)
-pixi run eval model=pldm core/solver=lip core.solver.actor_path=<planner.pt>  # same grid on the PLDM base
+pixi run inference benchmark=lewm core/solver=lip core.solver.actor_path=<planner.pt>  # RLP, 9 rollouts
+pixi run inference benchmark=lewm core/solver=cem                                      # CEM,  9,000 rollouts
+pixi run inference benchmark=lewm core/solver=mppi                                     # MPPI, 9,000 rollouts
+pixi run inference benchmark=lewm core/solver=adam                                     # Adam, 3,000 rollouts
+pixi run inference benchmark=lewm core/policy=no_move                                  # no-op floor (skill normalization)
+pixi run inference benchmark=pldm core/solver=lip core.solver.actor_path=<planner.pt>  # same grid on the PLDM base
 ```
 
 To run the baselines under the learned value objective instead of latent
@@ -90,19 +90,6 @@ distance, add `core/value=metric core.value.checkpoints=[<value_td>]`. The
 complete per-table command sheet (including TwoRoom and Reacher) is in
 [REPLICATION_RLP.md](docs/replication/REPLICATION_RLP.md).
 
-## Layout
-
-| path | what |
-|---|---|
-| `src/rlp/core/` | planning stack: solvers (`solver/` — LIP/RLP, CEM, MPPI, Adam, DMPO), planner network (`planner/`), value functions (`value/`), world-model backends (`world_model/`), shared differentiable unroll (`rollout.py`) |
-| `src/rlp/train/` | trainers: `rlp.py` (composed replication pipeline), `lip_ac.py` (RLP actor-critic), `metric.py` (offline value), `lewm.py` (world-model base), `dmpo.py` (DMPO learned-optimizer baseline) |
-| `src/rlp/eval/` | `world_model.py` — the table-producing evaluation driver |
-| `src/rlp/data/` | frozen-latent caching (`LatentCache`, `encode_dataset`) |
-| `src/rlp/environment/` | dataset-evaluation world behavior (reset/record hooks) |
-| `src/rlp/tools/` | Hydra-configured data preparation (dataset fetch, latent caches, action h5, TwoRoom collection) |
-| `configs/` | Hydra configuration tree mirroring the `src/rlp/` subsystems |
-| `docs/` | replication sheets, campaign records, method notes |
-| `assets/core/world_model/` | all eight pretrained world models (Git LFS, ~69 MiB each): cube `lewm_cube/`+`pldm_cube/` and their Dyna-finetuned variants `*_cube_dyna/`, TwoRoom `lejepa_tworoom/`+`pldm_tworoom/`, Reacher `lejepa_reacher/`+`pldm_reacher/` |
 | `logs/` | generated run directories, grouped by local date and start time |
 
 ## Fresh-machine setup
@@ -199,8 +186,8 @@ evaluation (or persist the export in that shell's startup file):
 export RLP_DATA_HOME=/absolute/path/to/rlp-data
 mkdir -p "$RLP_DATA_HOME"
 
-pixi run tool tool=fetch_dataset dataset=ogb_cube dry_run=true
-pixi run tool tool=fetch_dataset dataset=ogb_cube
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube preparation.dry_run=true
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
 ```
 
 The registered Cube dataset is public, so Hugging Face authentication is not
@@ -223,14 +210,14 @@ pixi run -e default -x python -m pip check
 pixi run -e dev -x python -m pip check
 pixi run -e dev check
 pixi run -e dev -x python -m pip wheel --no-deps --wheel-dir /tmp/rlp-wheel .
-pixi run tool tool=fetch_dataset dataset=ogb_cube dry_run=true
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube preparation.dry_run=true
 ```
 
 After fetching the dataset, exercise the real local checkpoint and evaluation
 path with one CPU episode:
 
 ```bash
-HF_HUB_OFFLINE=1 pixi run eval model=lewm evaluation.num_episodes=1 runtime.device=cpu
+HF_HUB_OFFLINE=1 pixi run inference benchmark=lewm benchmark.num_episodes=1 runtime.device=cpu
 ```
 
 ## Commands
@@ -242,15 +229,14 @@ and dedicated `checkpoints/`, `metrics/`, `videos/`, `artifacts/`,
 `tracking/`, and `stages/` directories.
 
 ```bash
-pixi run train model=rlp wm=<ckpt> dataset=<lance>   # full RLP pipeline (cache -> value -> planner)
-pixi run train model=lip_ac cache=<fs5> cache_td=<fs1> h5=<h5> wm=<ckpt>  # planner stage alone
-pixi run train model=metric cache=<fs1> learner=td   # offline value alone
-pixi run train model=dmpo wm=<ckpt> cache=<fs5> h5=<h5> init_value=<value_td>  # DMPO baseline
-pixi run train model=lewm                             # LeWM world model, OGBench Cube
-pixi run eval  model=lewm|pldm [core/solver=lip|cem|mppi|adam|dmpo] [core/policy=no_move]
-pixi run tool  tool=fetch_dataset dataset=ogb_cube    # fetch the public Cube dataset (~20 GiB)
-pixi run tool  tool=cache_latents wm=<ckpt> dataset=<lance> out=<cache.pt>
-pixi run tool  tool=convert_pldm src=<pldm.pt> dst=<out.pt>  # authors' PLDM -> LeWM key layout
+pixi run training model=rlp training.wm=<ckpt> training.dataset=<lance>   # full RLP pipeline (cache -> value -> planner)
+pixi run training model=lip_ac training.cache=<fs5> training.cache_td=<fs1> training.h5=<h5> training.wm=<ckpt>
+pixi run training model=metric training.cache=<fs1> training.learner=td
+pixi run training model=lewm                             # LeWM world model, OGBench Cube
+pixi run inference  benchmark=lewm|pldm [core/solver=lip|cem|mppi|adam] [core/policy=no_move]
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
+pixi run prepare job=cache_latents preparation.wm=<ckpt> preparation.dataset=<lance> preparation.out=<cache.pt>
+pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<out.pt>
 ```
 
 ## `stable-worldmodel` is an installed dependency

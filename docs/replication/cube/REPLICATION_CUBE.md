@@ -89,10 +89,10 @@ we used the stable-worldmodel `swm/OGBCube-v0` wrapper (mujoco 3.10, EGL).
 ## Exact eval command
 
 ```bash
-pixi run eval model=lewm \
+pixi run inference benchmark=lewm \
   core.world_model.checkpoint=lewm_lewm_scratch_cls_cube1/weights_epoch_22.pt \
   data.path=<path>/cube_dinowm/shard_0.lance \
-  runtime.bfloat16=true evaluation.image_size=224
+  runtime.bfloat16=true benchmark.image_size=224
 ```
 
 (Reference: DINO-WM 86, paper LeWM 72, GCBC 84 on this benchmark; our 84.0 with

@@ -13,10 +13,10 @@ gradient. See `rlp/core/solver/lip.py` for the method.
 
 ```bash
 # Steps 1-3 in one command: latent caches -> offline TD value -> planner
-pixi run train model=rlp wm=<wm_ckpt> dataset=<play.lance> name=<tag>
+pixi run training model=rlp training.wm=<wm_ckpt> training.dataset=<play.lance> training.name=<tag>
 
 # 4. Evaluate (pure learned planner, no sampling)
-pixi run eval model=lewm core/solver=lip \
+pixi run inference benchmark=lewm core/solver=lip \
   core.solver.actor_path=<run>/checkpoints/planner.pt runtime.seed=42
 ```
 

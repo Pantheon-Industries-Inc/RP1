@@ -25,7 +25,7 @@ nothing survives the shift-forward and the warm start is inert by
 construction; evaluate with ``planning.receding_horizon=1`` for the
 closed-loop regime DMPO was published in.
 
-Trainer: :mod:`rlp.train.dmpo`.
+Trainer: :mod:`rlp.training.dmpo`.
 """
 
 import time
@@ -37,7 +37,7 @@ import numpy as np
 import torch
 from stable_worldmodel.solver.cem import CEMSolver
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..planner.dmpo import DMPONet
 from ..rollout import rollout_traj

@@ -13,7 +13,6 @@ and the pixel LeWM checkpoint.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from .protocols import Dataset, RowBatch
 
@@ -68,29 +67,7 @@ class LatentCache:
             out[int(e)] = rows[np.argsort(st[rows])]
         return out
 
-    def first_episodes(self, count: int | None) -> LatentCache:
-        """Keep only rows from episodes with id < ``count`` (None = all).
-
-        Data-volume ablations vary how much of a cache the learners see WITHOUT
-        re-encoding it: one cache, exactly controlled subsets, and the held-out
-        eval range (PushT draws from episode 16000 up) stays untouched because
-        the cap is a lower id range.
-        """
-        if count is None:
-            return self
-        rows = torch.nonzero(self.episode_idx < int(count)).squeeze(1)
-        if rows.numel() == 0:
-            first = int(self.episode_idx.min())
-            raise ValueError(f"max_episodes={count} selects no rows (episode ids start at {first})")
-        return type(self)(
-            self.z[rows],
-            self.episode_idx[rows],
-            self.step_idx[rows],
-            None if self.state is None else self.state[rows],
-            dict(self.meta or {}, max_episodes=int(count)),
-        )
-
-    def windowed(self, frames: int, lag: int = 1) -> LatentCache:
+    def windowed(self, frames: int, lag: int) -> LatentCache:
         """Return a cache whose latent rows concatenate causal frame windows.
 
         Missing history at an episode start is left-padded with that episode's
@@ -127,14 +104,7 @@ class LatentCache:
         logger.success(f"Saved latent cache ({len(self.z)} rows, dim={self.latent_dim}) to {path}")
 
     @classmethod
-    def load(cls, path: str | Path, *, mmap: bool | None = None) -> LatentCache:
-        """Load a cache, optionally mapping tensor storage instead of copying it.
-
-        ``mmap=None`` follows ``RLP_CACHE_MMAP``. Callers can explicitly opt
-        out for small caches or filesystems where mapping is undesirable.
-        """
-        if mmap is None:
-            mmap = os.environ.get("RLP_CACHE_MMAP") == "1"
+    def load(cls, path: str | Path, *, mmap: bool) -> LatentCache:
         d = torch.load(path, map_location="cpu", weights_only=False, mmap=mmap)
         return cls(
             z=d["z"].float(),
@@ -160,9 +130,9 @@ def encode_dataset(
     dataset: Dataset,
     featurizer: Callable[[RowBatch], torch.Tensor],
     *,
-    batch_size: int = 256,
-    state_key: str | None = None,
-    meta: dict[str, object] | None = None,
+    batch_size: int,
+    state_key: str | None,
+    meta: dict[str, object] | None,
 ) -> LatentCache:
     """Encode every row of ``dataset`` into a :class:`LatentCache`.
 

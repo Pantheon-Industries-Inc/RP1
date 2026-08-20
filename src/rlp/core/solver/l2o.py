@@ -22,7 +22,7 @@ unexecuted tail is shift-forwarded the standard DMD-MPC way. Under this
 repository's open-loop protocol (``receding_horizon == horizon``) nothing
 survives the shift and the warm start is inert by construction.
 
-Trainer: :mod:`rlp.train.l2o`.
+Trainer: :mod:`rlp.training.l2o`.
 """
 
 import time
@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from stable_worldmodel.solver.cem import CEMSolver
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..planner.l2o import L2ONet
 from ..rollout import rollout_traj

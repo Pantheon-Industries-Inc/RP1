@@ -7,16 +7,18 @@ invariants that carry those claims into this port: the gating algebra, the
 expert update's correctness, the box clip, and the mixing schedule.
 """
 
+from typing import Any
+
 import torch
 
 from rlp.core.planner.l2o import L2ONet, mppi_update
-from rlp.train.l2o import dagger_beta
+from rlp.training.l2o import dagger_beta
 
 H, A_DIM, N, B = 3, 4, 16, 5
 
 
-def _net(**kwargs: object) -> L2ONet:
-    defaults: dict[str, object] = {
+def _net(**kwargs: Any) -> L2ONet:
+    defaults: dict[str, Any] = {
         "horizon": H,
         "a_dim": A_DIM,
         "num_samples": N,
@@ -24,7 +26,7 @@ def _net(**kwargs: object) -> L2ONet:
         "amax": 1.0,
         "dropout": 0.0,
     }
-    return L2ONet(**{**defaults, **kwargs})  # type: ignore[arg-type]
+    return L2ONet(**{**defaults, **kwargs})
 
 
 def test_first_sample_is_the_current_mean() -> None:

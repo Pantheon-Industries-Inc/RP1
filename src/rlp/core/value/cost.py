@@ -47,10 +47,10 @@ class MetricCost(nn.Module):
         self,
         base_wm: nn.Module,
         metric: nn.Module | None,
-        mode: str = "replacement",
-        lam: float = 1.0,
-        metrics: Sequence[nn.Module] | None = None,
-        deadline_mode: str = "terminal",
+        mode: str,
+        lam: float,
+        metrics: Sequence[nn.Module] | None,
+        deadline_mode: str,
     ) -> None:
         super().__init__()
         assert mode in {"latent", "replacement", "hybrid", "shuffled"}, mode
@@ -162,10 +162,8 @@ class MetricCost(nn.Module):
         m = self._metric_terminal_cost(info_dict, action_candidates)
         if self.mode in ("replacement", "shuffled"):
             return m
-        # hybrid
         return self._standardize(c_lat) + self.lam * self._standardize(m)
 
-    # criterion mirrors the Costable protocol (used by some solvers/diagnostics)
     def criterion(self, info_dict: TensorInfo) -> torch.Tensor:
         if self.mode == "latent":
             return self.base.criterion(info_dict)

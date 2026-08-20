@@ -7,8 +7,8 @@ same thing.
 
 | Paper concept | Code |
 |---|---|
-| RLP plan refiner `F_theta` (Eq. 10–13) | `src/rlp/core/planner/net.py`, trained by `src/rlp/train/lip_ac.py` |
-| Goal-conditioned quasimetric critic `V` (Eq. 4, App. B.1) | `src/rlp/core/value/head.py` (`QuasimetricHead`, an MRN), trained by `src/rlp/train/metric.py` (offline) and co-trained inside `lip_ac.py` |
+| RLP plan refiner `F_theta` (Eq. 10–13) | `src/rlp/core/planner/net.py`, trained by `src/rlp/training/lip_ac.py` |
+| Goal-conditioned quasimetric critic `V` (Eq. 4, App. B.1) | `src/rlp/core/value/head.py` (`QuasimetricHead`, an MRN), trained by `src/rlp/training/metric.py` (offline) and co-trained inside `lip_ac.py` |
 | Frozen world-model rollout `H_phi` (Eq. 1) | `src/rlp/core/rollout.py` |
 | RLP at plan time (9 forward + 8 backward unrolls) | `src/rlp/core/solver/lip.py` |
 | Baselines CEM / MPPI / Adam | `src/rlp/core/solver/{cem,mppi,gradient}.py`, configs `configs/core/solver/{cem,mppi,adam}.yaml` |
@@ -27,11 +27,11 @@ training. Stage defaults are the paper's OGBench Cube recipe
 (Tab. "Selected RLP configurations for OGBench Cube").
 
 ```bash
-pixi run tool tool=fetch_dataset dataset=ogb_cube
-pixi run train model=rlp \
-    wm=assets/core/world_model/lewm_cube \
-    dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
-    name=cube_lewm planner.amax=1.6
+pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
+pixi run training model=rlp \
+    training.wm=assets/core/world_model/lewm_cube \
+    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+    training.name=cube_lewm training.planner.amax=1.6
 ```
 
 Outputs land in the run directory (`logs/<date>/<time>/checkpoints/`):
@@ -40,7 +40,7 @@ Outputs land in the run directory (`logs/<date>/<time>/checkpoints/`):
 reused across recipes with e.g. `skip=[cache,subsample,actions]`.
 
 Per-environment recipe deltas (everything else is shared, see
-`configs/train/rlp.yaml`):
+`configs/training/rlp.yaml`):
 
 | cell | override |
 |---|---|
@@ -51,9 +51,9 @@ Per-environment recipe deltas (everything else is shared, see
 
 ## 2. Evaluation — producing a table cell
 
-The eval driver is `rlp.eval.world_model`; each invocation is one
+The eval driver is `rlp.inference.benchmark.world_model`; each invocation is one
 (environment × base × planner × objective × horizon) cell. Horizons:
-`evaluation.goal_offset_steps=25 evaluation.budget=50` (h25) or
+`benchmark.goal_offset_steps=25 planning.budget=50` (h25) or
 `goal_offset_steps=100 budget=200` (h100). Reporting protocol: seeds 42/43/44,
 50 episodes each, selection on 50/51 only (never report those).
 
@@ -65,19 +65,19 @@ appendix, not the protocol.
 
 ```bash
 # RLP (9 rollouts/decision)
-pixi run eval model=lewm core/solver=lip core.solver.actor_path=<planner.pt>
+pixi run inference benchmark=lewm core/solver=lip core.solver.actor_path=<planner.pt>
 
 # CEM / MPPI (9,000 rollouts) and Adam (3,000 fwd + 3,000 bwd), latent objective
-pixi run eval model=lewm core/solver=cem
-pixi run eval model=lewm core/solver=mppi
-pixi run eval model=lewm core/solver=adam
+pixi run inference benchmark=lewm core/solver=cem
+pixi run inference benchmark=lewm core/solver=mppi
+pixi run inference benchmark=lewm core/solver=adam
 
 # Same baselines under the learned value objective (App. C tables)
-pixi run eval model=lewm core/solver=cem \
+pixi run inference benchmark=lewm core/solver=cem \
     core/value=metric core.value.checkpoints=[<value_td>]
 
 # No-op floor for the Cube skill normalization
-pixi run eval model=lewm core/policy=no_move
+pixi run inference benchmark=lewm core/policy=no_move
 ```
 
 `model=lewm` / `model=pldm` select the Cube eval roots. For TwoRoom and
@@ -85,9 +85,9 @@ Reacher use the parametric roots and pass the environment's checkpoint
 explicitly:
 
 ```bash
-pixi run eval model=tworoom_lewm core.world_model.checkpoint=<tworoom_ckpt> \
+pixi run inference benchmark=tworoom_lewm core.world_model.checkpoint=<tworoom_ckpt> \
     core/solver=lip core.solver.actor_path=<planner.pt>
-pixi run eval model=reacher_lewm core.world_model.checkpoint=<reacher_ckpt> \
+pixi run inference benchmark=reacher_lewm core.world_model.checkpoint=<reacher_ckpt> \
     core/solver=cem
 ```
 
@@ -105,9 +105,9 @@ command. For TwoRoom/Reacher bases, train LeWM on the corresponding play
 dataset:
 
 ```bash
-pixi run tool tool=collect_tworoom_mixed expert=0 random=10000 out=tworoom_play.lance
-pixi run train model=lewm data=tworoom_lewm     # TwoRoom base
-pixi run train model=lewm data=reacher_lewm     # Reacher base
+pixi run prepare job=collect_tworoom_mixed preparation.expert=0 preparation.random=10000 preparation.out=tworoom_play.lance
+pixi run training model=lewm training/data=tworoom_lewm
+pixi run training model=lewm training/data=reacher_lewm
 ```
 
 **PLDM** cells use the authors' pretrained PLDM checkpoint converted 1:1 into
@@ -118,7 +118,7 @@ checkpoint is tracked in-tree at `assets/core/world_model/pldm_cube`, and the
 converter is a maintained tool for other PLDM exports:
 
 ```bash
-pixi run tool tool=convert_pldm src=<authors_pldm.pt> dst=<out.pt>
+pixi run prepare job=convert_pldm preparation.src=<authors_pldm.pt> preparation.dst=<out.pt>
 ```
 
 Pair the converted weights with a LeWM-target `config.json` (copy the one in
@@ -136,7 +136,7 @@ silently at 100% GPU producing NaNs. The in-tree trainers handle this
 **Evaluating row (d) is one command**: the Dyna-finetuned world models are
 tracked in-tree (`assets/core/world_model/{lewm,pldm}_cube_dyna`, the
 `dyna_wm_*` campaign artifacts' epoch-1 weights), so
-`pixi run eval model=lewm_dyna ...` / `model=pldm_dyna ...` reproduces the
+`pixi run inference benchmark=lewm_dyna ...` / `benchmark=pldm_dyna ...` reproduces the
 row-(d) cells with any planner. Retrain the row-(d) RLP actors against the
 finetuned base with `model=rlp wm=assets/core/world_model/lewm_cube_dyna`.
 
@@ -145,11 +145,11 @@ point:
 
 1. **Collect** on-policy episodes with the trained planner on h25 tasks from
    the training split (episodes 0–7999, no termination at goal), recording
-   observations and actions (`pixi run eval core/solver=lip ...` with
+   observations and actions (`pixi run inference core/solver=lip ...` with
    recording enabled).
 2. **Mix** the collected episodes 50:50 with the original offline data.
 3. **Finetune** the world model on the mixture for 2 epochs at LR 1e-5 and
-   keep epoch 1 (`pixi run train model=lewm core.world_model.checkpoint=<base>`
+   keep epoch 1 (`pixi run training model=lewm core.world_model.checkpoint=<base>`
    with the mixed dataset).
 4. **Rebuild** the latent caches and retrain value + planner with the
    unchanged recipe (`model=rlp wm=<finetuned>` — full rerun, no skips).
@@ -166,16 +166,16 @@ table's numbers were actually produced under:
 - **Cube** (all quoted RLP rows, from the 2026-08-05/06 open-loop sweep
   onward): value and planner train on episodes 0–7999 (`train_episodes=8000`,
   a 1,608,000-row cache), eval tasks draw from 8000–9999
-  (`evaluation.episode_range="8000:10000"`, pinned in the cube eval roots).
+  (`benchmark.episode_range="8000:10000"`, pinned in the cube eval roots).
   Only the July 2026 Dyna-era measurements predate the split; none of those
   are quoted in the paper's tables.
-- **Reacher**: same held-out split, pinned in `configs/eval/reacher.yaml`.
+- **Reacher**: same held-out split, pinned in `configs/inference/benchmark/reacher.yaml`.
 - **TwoRoom**: the shipped numbers follow the original LeWM/DINO-WM contract —
   training and evaluation share the full 10k-episode pool (no split). All
   planner arms draw tasks from the same pool, so the within-table comparison
   is unaffected, but RLP and value-objective rows are formally upper bounds.
   For the held-out variant, train with `train_episodes=8000` and evaluate with
-  `evaluation.episode_range="8000:10000"`.
+  `benchmark.episode_range="8000:10000"`.
 
 Hyperparameter selection uses eval seeds 50/51; report on 42/43/44 only.
 

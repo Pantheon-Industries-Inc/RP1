@@ -30,7 +30,7 @@ from typing import Any
 
 import torch
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..rollout import rollout_traj
 from ..temporal import ValueFunction, trajectory_value, windowed_terminal_value

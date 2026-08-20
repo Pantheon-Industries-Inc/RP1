@@ -8,4 +8,8 @@ num_components: 8
 rank_weight: 0.0
 rank_margin: 0.5
 symmetric: false
+softplus: true
+scale: 1.0
+sym_frac: 0.5
+alpha_init: 0.75
 representation_dim: 64

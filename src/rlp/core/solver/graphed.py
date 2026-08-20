@@ -38,7 +38,7 @@ from typing import Any
 
 import torch
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..rollout import rollout_traj
 from ..temporal import ValueFunction, trajectory_value
@@ -65,7 +65,7 @@ class GraphedRefinement:
         action_dim: int,
         latent_dim: int,
         device: torch.device | str,
-        warmup_iters: int = 5,
+        warmup_iters: int,
     ) -> None:
         if not torch.cuda.is_available() or torch.device(device).type != "cuda":
             raise ValueError("graphed LIP inference requires a CUDA device")

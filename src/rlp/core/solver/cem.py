@@ -6,7 +6,7 @@ from typing import Any
 
 from stable_worldmodel.solver.cem import CEMSolver as StableCEMSolver
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 
 class CEMSolver(StableCEMSolver):

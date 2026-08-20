@@ -19,10 +19,10 @@ class PlanConfig:
 
     horizon: int
     receding_horizon: int
-    history_len: int = 1
-    action_block: int = 1
-    warm_start: bool = True
-    deadline: int | None = None
+    history_len: int
+    action_block: int
+    warm_start: bool
+    deadline: int | None
 
     @property
     def plan_len(self) -> int:
@@ -134,9 +134,9 @@ class WorldModelPolicy(BasePolicy):
         if "pixels_hist" in sliced and not self._history_announced:
             self._history_announced = True
 
-    def get_action(self, info_dict: dict[str, Any], **kwargs: Any) -> np.ndarray:
+    def get_action(self, obs: Any, **kwargs: Any) -> np.ndarray:
         del kwargs
-        prepared = self._prepare_info(info_dict)
+        prepared = self._prepare_info(obs)
         n_envs = int(self.env.num_envs)
         self._flush(prepared.pop("_needs_flush", None), n_envs)
 

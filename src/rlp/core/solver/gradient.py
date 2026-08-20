@@ -8,7 +8,7 @@ from typing import Any
 import torch
 from stable_worldmodel.solver import GradientSolver as _GradientSolver
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 
 class GradientSolver(_GradientSolver):

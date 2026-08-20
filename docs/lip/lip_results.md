@@ -203,20 +203,19 @@ log), `lip_ac_20260712/` (LeWM AC campaign), `pod_migration_20260709/`
 
 PLDM champion training call (k12):
 
-    pixi run train model=lip_ac \
-      cache=cube_pldm_fs5.pt cache_td=cube_pldm_fs1.pt \
-      h5=cube_single_expert.h5 wm=checkpoints/PLDM_OgBench_lewm \
-      init_value=cf_pldm_t003n50.pt \
-      core.planner.horizon=5 core.planner.iterations=12 steps=8000 n_step=50 batch=128 \
-      expectile=0.1 expectile_final=0.03 critic_lr=1e-3 critic_lr_final=1e-4 \
-      actor_lr=3e-4 actor_lr_final=3e-5 core.planner.action_limit=3.5 \
-      core.planner.drop_state=true core.planner.drop_goal=true core.planner.use_gate=false seed=0 \
-      out=pldm_k12_s0.pt out_value=pldm_k12_s0_value.pt
+    pixi run training model=lip_ac \
+      training.cache=cube_pldm_fs5.pt training.cache_td=cube_pldm_fs1.pt \
+      training.h5=cube_single_expert.h5 training.wm=checkpoints/PLDM_OgBench_lewm \
+      training.init_value=cf_pldm_t003n50.pt \
+      core.planner.horizon=5 core.planner.iterations=12 training.steps=8000 training.n_step=50 training.batch=128 \
+      training.expectile=0.1 training.expectile_final=0.03 training.critic_lr=1e-3 training.critic_lr_final=1e-4 \
+      training.actor_lr=3e-4 training.actor_lr_final=3e-5 core.planner.action_limit=3.5 \
+      core.planner.drop_state=true core.planner.drop_goal=true core.planner.use_gate=false runtime.seed=0
 
     # eval (per draw / horizon):
-    pixi run eval model=lewm runtime.seed=42 runtime.bfloat16=true \
-      evaluation.image_size=224 data.path=<h5> evaluation.goal_offset_steps=25 \
-      evaluation.budget=50 core.world_model.checkpoint=checkpoints/PLDM_OgBench_lewm \
+    pixi run inference benchmark=lewm runtime.seed=42 runtime.bfloat16=true \
+      benchmark.image_size=224 data.path=<h5> benchmark.goal_offset_steps=25 \
+      planning.budget=50 core.world_model.checkpoint=checkpoints/PLDM_OgBench_lewm \
       core/solver=lip core.solver.actor_path=pldm_k12_s0.pt
 
 Artifacts (pod 213.181.105.210:14755): actors `/workspace/actors/pldm_*.pt`, values

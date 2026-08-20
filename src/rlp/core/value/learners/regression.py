@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from rlp.data import LatentCache
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..head import PairwiseMetricHead
 from ..samplers import BalancedHorizonPairSampler
@@ -26,29 +26,29 @@ from ..samplers import BalancedHorizonPairSampler
 
 @dataclass
 class RegressionConfig:
-    hidden_dim: int = 256
-    depth: int = 2
-    symmetric: bool = False
-    scale: float = 224.0
-    lr: float = 1e-3
-    weight_decay: float = 1e-4
-    batch_size: int = 1024
-    steps: int = 5000
-    n_buckets: int = 10
-    max_delta: int | None = None  # paper ablation: cap separation (e.g. 50)
-    shuffle_labels: bool = False  # negative control
-    seed: int = 0
-    huber_beta: float = 1.0
+    hidden_dim: int
+    depth: int
+    softplus: bool
+    symmetric: bool
+    scale: float
+    lr: float
+    weight_decay: float
+    batch_size: int
+    steps: int
+    n_buckets: int
+    max_delta: int | None
+    shuffle_labels: bool
+    seed: int
+    huber_beta: float
 
 
-def fit(cache: LatentCache, cfg: RegressionConfig, device: str = "cpu") -> PairwiseMetricHead:
-    """Train and return a :class:`PairwiseMetricHead`."""
+def fit(cache: LatentCache, cfg: RegressionConfig, device: str) -> PairwiseMetricHead:
     torch.manual_seed(cfg.seed)
     head = PairwiseMetricHead(
         cache.latent_dim,
         hidden_dim=cfg.hidden_dim,
         depth=cfg.depth,
-        softplus=True,
+        softplus=cfg.softplus,
         symmetric=cfg.symmetric,
         scale=cfg.scale,
     ).to(device)
@@ -57,6 +57,7 @@ def fit(cache: LatentCache, cfg: RegressionConfig, device: str = "cpu") -> Pairw
         cache,
         n_buckets=cfg.n_buckets,
         max_delta=cfg.max_delta,
+        random_order=True,
         seed=cfg.seed,
     )
     rng = torch.Generator().manual_seed(cfg.seed + 1)

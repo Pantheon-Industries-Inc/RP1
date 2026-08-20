@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from rlp.data import LatentCache
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..samplers import GeometricFutureSampler
 
@@ -45,9 +45,9 @@ class ContrastiveCritic(nn.Module):
     def __init__(
         self,
         latent_dim: int,
-        hidden_dim: int = 256,
-        rep_dim: int = 64,
-        depth: int = 2,
+        hidden_dim: int,
+        rep_dim: int,
+        depth: int,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -58,7 +58,6 @@ class ContrastiveCritic(nn.Module):
         self.psi = _mlp(latent_dim, hidden_dim, rep_dim, depth)  # goal encoder
 
     def pretrained_config(self) -> dict[str, object]:
-        """Return the complete Hydra constructor config for this metric."""
         return {
             "_target_": f"{type(self).__module__}.{type(self).__name__}",
             "latent_dim": self.latent_dim,
@@ -76,20 +75,19 @@ class ContrastiveCritic(nn.Module):
 
 @dataclass
 class ContrastiveConfig:
-    hidden_dim: int = 256
-    rep_dim: int = 64
-    depth: int = 2
-    gamma: float = 0.99
-    temperature: float = 1.0
-    lr: float = 1e-3
-    weight_decay: float = 1e-4
-    batch_size: int = 1024
-    steps: int = 5000
-    seed: int = 0
+    hidden_dim: int
+    rep_dim: int
+    depth: int
+    gamma: float
+    temperature: float
+    lr: float
+    weight_decay: float
+    batch_size: int
+    steps: int
+    seed: int
 
 
-def fit(cache: LatentCache, cfg: ContrastiveConfig, device: str = "cpu") -> ContrastiveCritic:
-    """Train and return a :class:`ContrastiveCritic`."""
+def fit(cache: LatentCache, cfg: ContrastiveConfig, device: str) -> ContrastiveCritic:
     torch.manual_seed(cfg.seed)
     critic = ContrastiveCritic(
         cache.latent_dim,

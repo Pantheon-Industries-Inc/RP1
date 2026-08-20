@@ -1,4 +1,4 @@
 # @package environment
 env_name: swm/TwoRoom-v1
 record_path: null
-num_envs: ${evaluation.num_episodes}
+num_envs: ${benchmark.num_episodes}

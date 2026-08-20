@@ -1,8 +1,9 @@
 # @package core.planner
-architecture: v4
+architecture: minimal
 horizon: 5
 iterations: 8
 action_limit: 2.5
+hidden_dim: 512
 feed: none
 recurrent_state_dim: 256
 recurrent_state_init: zero
@@ -15,6 +16,8 @@ feature_normalization: false
 iteration_mode: scalar
 head_mode: gate
 preconditioner_init: 0.05
+projection_dim: 64
+value_scale: 25.0
 head_scale: 1.0
 pre_layer_norm: false
 drop_goal: false

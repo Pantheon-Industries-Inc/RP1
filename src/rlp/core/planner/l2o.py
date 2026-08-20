@@ -21,7 +21,7 @@ a working optimizer. The paper's experiments fix a diagonal covariance
 formulation is available behind ``learn_std=True``.
 
 Training is DAgger imitation of an MPPI expert with a larger sample budget
-(:mod:`rlp.train.l2o`) — the paper's headline is matching a many-sample
+(:mod:`rlp.training.l2o`) — the paper's headline is matching a many-sample
 optimizer with far fewer samples. :func:`mppi_update` here is that expert's
 one-step update, shared by the trainer and the tests.
 

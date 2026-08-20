@@ -57,11 +57,11 @@ class PairwiseMetricHead(nn.Module):
     def __init__(
         self,
         latent_dim: int,
-        hidden_dim: int = 256,
-        depth: int = 2,
-        softplus: bool = True,
-        symmetric: bool = False,
-        scale: float = 1.0,
+        hidden_dim: int,
+        depth: int,
+        softplus: bool,
+        symmetric: bool,
+        scale: float,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -130,10 +130,10 @@ class QuasimetricHead(nn.Module):
     def __init__(
         self,
         latent_dim: int,
-        hidden_dim: int = 256,
-        embed_dim: int = 128,
-        depth: int = 2,
-        sym_frac: float = 0.5,
+        hidden_dim: int,
+        embed_dim: int,
+        depth: int,
+        sym_frac: float,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -213,11 +213,11 @@ class IQEHead(nn.Module):
     def __init__(
         self,
         latent_dim: int,
-        hidden_dim: int = 256,
-        embed_dim: int = 128,
-        depth: int = 2,
-        num_components: int = 8,
-        alpha_init: float = 0.75,
+        hidden_dim: int,
+        embed_dim: int,
+        depth: int,
+        num_components: int,
+        alpha_init: float,
     ) -> None:
         super().__init__()
         if embed_dim % num_components:

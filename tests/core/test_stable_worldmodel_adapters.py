@@ -142,10 +142,10 @@ def test_dataset_images_are_resized_to_environment_shape() -> None:
 def test_hydra_configs_compose() -> None:
     config_root = Path("configs").resolve()
     with initialize_config_dir(config_dir=str(config_root), version_base=None):
-        cfg = compose(config_name="eval/lewm", overrides=["core/solver=adam"])
+        cfg = compose(config_name="inference/benchmark/lewm", overrides=["core/solver=adam"])
     assert cfg.environment.env_name == "swm/OGBCube-v0"
     assert cfg.core.solver._target_ == "rlp.core.solver.GradientSolver"
 
     with initialize_config_dir(config_dir=str(config_root), version_base=None):
-        cfg = compose(config_name="train/lewm", overrides=["data=tworoom_lewm"])
+        cfg = compose(config_name="training/lewm", overrides=["training/data=tworoom_lewm"])
     assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

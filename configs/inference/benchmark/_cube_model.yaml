@@ -1,0 +1,24 @@
+# @package _global_
+defaults:
+  - _world_model
+  - /environment: cube
+  - /inference/benchmark/data: ogb_cube
+  - /core/solver: cem
+  - /core/value: latent
+  - _self_
+benchmark:
+  # Held-out protocol (matches the 2026-08-11 campaign): value/planner train
+  # on episodes 0-7999, eval tasks draw from 8000-9999.
+  episode_range: "8000:10000"
+  callables:
+    - method: set_state
+      args:
+        qpos: {value: qpos}
+        qvel: {value: qvel}
+    - method: set_target_pos
+      args:
+        cube_id: {value: 0, in_dataset: false}
+        target_pos: {value: goal_privileged_block_0_pos}
+        target_quat: {value: goal_privileged_block_0_quat}
+output:
+  filename: ogb_cube_results.txt

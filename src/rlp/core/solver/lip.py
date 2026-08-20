@@ -21,7 +21,7 @@ unrolls at K=8 versus 9000 forward for the repo's CEM defaults (300 samples x
 Measured wall-clock (H200, fp32): 30.7 ms/decision with graphed=true vs CEM's
 218.6 ms graphed / 241.9 ms eager (see docs/lip/README_lip.md).
 
-Trainer: ``rlp/train/lip_ac.py`` (see ``rlp/train/rlp.py`` for the composed
+Trainer: ``rlp/training/lip_ac.py`` (see ``rlp/training/rlp.py`` for the composed
 replication pipeline).
 """
 
@@ -33,7 +33,7 @@ import numpy as np
 import torch
 from stable_worldmodel.solver.cem import CEMSolver
 
-from rlp.logging import logger
+from rlp.utils.logging import logger
 
 from ..grounding import ACTION_SCALE, GroundingPenalty
 from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
@@ -77,13 +77,17 @@ class LIPCheckpoint(TypedDict):
     s0_mode: NotRequired[str]
     width: NotRequired[int]
     layers: NotRequired[int]
+    zproj: NotRequired[int]
     goal_mode: NotRequired[str]
+    zero_init: NotRequired[bool]
     gd_init: NotRequired[float]
     feat_norm: NotRequired[bool]
     grounding: NotRequired[dict[str, Any] | None]
     vscale: NotRequired[float]
     iter_mode: NotRequired[str]
     head_mode: NotRequired[str]
+    p0: NotRequired[float]
+    head_scale: NotRequired[float]
     cond_mode: NotRequired[str]
     pre_ln: NotRequired[bool]
     use_zg: NotRequired[bool]
@@ -110,7 +114,7 @@ __all__ = [
 ]
 
 
-def unwrap_encoder(model: torch.nn.Module) -> torch.nn.Module:
+def unwrap_encoder(model: Any) -> torch.nn.Module:
     """Peel planning-cost wrappers off ``model`` until an encoder WM appears.
 
     The eval driver hands the solver a cost stack — ``MetricCost`` holds its
@@ -148,24 +152,20 @@ class LIPSolver(CEMSolver):
     def __init__(
         self,
         *args: Any,
-        actor_path: str = "",
-        value_path: str | None = None,
-        lam: float = 1.0,
-        lip_select: str = "last",
-        init_mode: str = "zero",
-        init_samples: int = 64,
-        init_scale: float = 1.5,
-        cem_init_steps: int = 30,
-        iters_override: int | None = None,
-        reuse_trajectory: bool | str = True,
-        graphed: bool | str = False,
-        record_probes: bool = False,
-        probe_directory: str | None = None,
-        update_rule: str = "learned",
-        gd_lr: float = 0.03,
-        band_limit: int | None = None,
-        use_action_history: bool = False,
-        ground_weight: float | None = None,
+        actor_path: str,
+        value_path: str | None,
+        lam: float,
+        lip_select: str,
+        init_mode: str,
+        init_samples: int,
+        init_scale: float,
+        cem_init_steps: int,
+        iters_override: int | None,
+        reuse_trajectory: bool | str,
+        graphed: bool | str,
+        graph_warmup_iters: int,
+        record_probes: bool,
+        probe_directory: str | None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -239,6 +239,7 @@ class LIPSolver(CEMSolver):
         # each iteration with the max deviation logged. Lazily initialised on
         # first solve so construction stays checkpoint-only.
         self.graphed = graphed
+        self.graph_warmup_iters = graph_warmup_iters
         self._graphed_refinement: Any = None
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
@@ -281,6 +282,7 @@ class LIPSolver(CEMSolver):
                 use_zg=ck.get("use_zg", False),
                 use_grad=ck.get("use_grad", True),
                 s0_mode=ck.get("s0_mode", "zero"),
+                head_scale=ck.get("head_scale", 1.0),
             ).to(self.device)
         elif self.kind == "lip3":
             self.actor = PlannerNetV3(
@@ -291,12 +293,16 @@ class LIPSolver(CEMSolver):
                 layers=ck.get("layers", 2),
                 amax=ck.get("amax", 2.5),
                 n_iters=ck["iters"],
+                zproj=ck.get("zproj", 64),
                 goal_mode=ck.get("goal_mode", "diff"),
+                zero_init=ck.get("zero_init", False),
                 gd_init=ck.get("gd_init", 0.0),
                 feat_norm=ck.get("feat_norm", False),
                 vscale=ck.get("vscale", 25.0),
                 iter_mode=ck.get("iter_mode", "emb"),
                 head_mode=ck.get("head_mode", "gate"),
+                p0=ck.get("p0", 0.05),
+                head_scale=ck.get("head_scale", 1.0),
                 cond_mode=ck.get("cond_mode", "token"),
                 use_gate=ck.get("use_gate", True),
                 pre_ln=ck.get("pre_ln", False),
@@ -309,12 +315,14 @@ class LIPSolver(CEMSolver):
                 ck["z_dim"],
                 horizon=ck["horizon"],
                 a_dim=ck.get("a_dim", 25),
+                hidden=ck.get("hidden", 512),
                 amax=ck.get("amax", 2.5),
                 feed=self.feed,
                 use_zg=ck.get("use_zg", not v4),
                 use_gate=ck.get("use_gate", not v4),
                 use_z0=ck.get("use_z0", not v4),
                 use_grad=ck.get("use_grad", True),
+                head_scale=ck.get("head_scale", 1.0),
             ).to(self.device)
         self.actor.load_state_dict(ck["sd"])
         self.actor.eval()
@@ -543,6 +551,7 @@ class LIPSolver(CEMSolver):
                 self.action_dim,
                 z_hist.shape[-1],
                 self.device,
+                warmup_iters=self.graph_warmup_iters,
             )
         self._graphed_refinement.bind(z_hist, a_hist, z_goal)
         return self._graphed_refinement
