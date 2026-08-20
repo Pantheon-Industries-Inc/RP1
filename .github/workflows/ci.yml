@@ -21,4 +21,4 @@ jobs:
           pixi run -e dev python -m venv --system-site-packages /tmp/rlp-wheel-smoke
           /tmp/rlp-wheel-smoke/bin/pip install --no-deps dist/rlp-*.whl
           cd /tmp
-          /tmp/rlp-wheel-smoke/bin/python -c "from rlp.inference.benchmark.__main__ import run; from rlp.utils.config import get_config_root; assert get_config_root().is_dir()"
+          /tmp/rlp-wheel-smoke/bin/python -c "from rlp.inference.evaluate import run; from rlp.utils.config import get_config_root; assert get_config_root().is_dir()"
