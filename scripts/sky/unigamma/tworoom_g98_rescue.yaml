@@ -87,6 +87,13 @@ envs:
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
+  TD_STEPS: "6000"         # offline TD teacher steps (12000 = longer warm-start)
+  TDB: "1024"              # co-critic TD batch (2048/4096 = lower-variance targets)
+  EMA_TAU: "0.005"         # teacher EMA rate (0.002 = smoother targets)
+  DEPLOY_CRITIC: ""        # eval-only: "teacher" rewrites imported actors'
+                           # ck['value'] to the per-seed OFFLINE teacher --
+                           # decouples deployment from co-training drift
+                           # (requires REUSE_ONLY=1)
   CKPT_EVERY: "0"          # trainer snapshot interval (steps); 0 = final only
   CKPT_SELECT: "0"         # 1 = within-run early stopping: score every snapshot
                            # (+ final) on the SELECTION draws, deploy the argmax.
@@ -392,7 +399,7 @@ setup: |
 
   # ---- TD critic to warm-start the co-trained value from. Cube uses the
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
-  TDFLAGS="--expectile 0.1 --steps 6000 --gamma ${TR_GAMMA:-1.0}"
+  TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0}"
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps 12000"
   if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
     TDSEEDS="0"
@@ -483,12 +490,13 @@ run: |
   # deploy clamp reads ck['amax'] exclusively (no config path exists), while
   # train_args stays untouched so [args-ok] still verifies training
   # provenance. Eval-only deploy-clip sweep on frozen actors.
-  if [ -n "${DEPLOY_AMAX:-}${DEPLOY_ITERS:-}" ]; then
+  if [ -n "${DEPLOY_AMAX:-}${DEPLOY_ITERS:-}${DEPLOY_CRITIC:-}" ]; then
     [ "${REUSE_ONLY:-0}" = 1 ] || { echo "deploy rewrite requires REUSE_ONLY=1" >&2; exit 2; }
-    PERSIST="$PERSIST" DEPLOY_AMAX="${DEPLOY_AMAX:-}" DEPLOY_ITERS="${DEPLOY_ITERS:-}" python3 - <<'PYDA'
-  import glob, os, torch
+    PERSIST="$PERSIST" DEPLOY_AMAX="${DEPLOY_AMAX:-}" DEPLOY_ITERS="${DEPLOY_ITERS:-}" DEPLOY_CRITIC="${DEPLOY_CRITIC:-}" python3 - <<'PYDA'
+  import glob, os, re, torch
   va = os.environ.get("DEPLOY_AMAX") or None
   vi = os.environ.get("DEPLOY_ITERS") or None
+  vc = os.environ.get("DEPLOY_CRITIC") or None
   fs = sorted(glob.glob(os.path.join(os.environ["PERSIST"], "actors", "*.pt")))
   assert fs, "deploy rewrite: no imported actors"
   for f in fs:
@@ -498,6 +506,12 @@ run: |
           msg.append(f"amax {ck.get('amax')} -> {float(va)}"); ck["amax"] = float(va)
       if vi is not None:
           msg.append(f"iters {ck.get('iters')} -> {int(vi)}"); ck["iters"] = int(vi)
+      if vc == "teacher":
+          m = re.search(r"_s(\d+)(?:_step\d+)?\.pt$", os.path.basename(f))
+          assert m, f"cannot parse seed from {f}"
+          tpath = os.path.expanduser(f"~/gm/td_grid_s{m.group(1)}.pt")
+          assert os.path.exists(tpath), f"missing teacher {tpath}"
+          msg.append(f"value -> offline teacher s{m.group(1)}"); ck["value"] = tpath
       torch.save(ck, f)
       print(f"[deploy-rewrite] {os.path.basename(f)}: {'; '.join(msg)}", flush=True)
   PYDA
@@ -1261,7 +1275,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
