@@ -199,6 +199,10 @@ def main():
                         "e.g. 0.1 -> 0.03: smooth teacher early, sharp shortest-path late")
     p.add_argument("--n-step", type=int, default=None)
     p.add_argument("--gamma", type=float, default=None)
+    p.add_argument("--ckpt-every", type=int, default=0,
+                   help="save a DEPLOYABLE snapshot (actor + co-critic teacher) "
+                        "every N steps; 0 disables. Enables within-run early "
+                        "stopping: select the best snapshot on val draws.")
     p.add_argument("--squash", choices=["hard", "tanh"], default="hard",
                    help="plan box enforcement: hard clamp (zero grad when "
                         "saturated) or amax*tanh(u/amax) (gradient flows "
@@ -761,6 +765,45 @@ def main():
     expand = None
     _last_heartbeat = 0.0
     _last_step_end = time.monotonic()
+    def _snapshot(step):
+        # Deployable mid-training checkpoint: same dict as the final save, but
+        # CPU copies so training tensors stay on device. Teacher (EMA co-critic)
+        # first — the actor references it.
+        import copy as _copy
+        root, ext = os.path.splitext(a.out)
+        snap_out = f"{root}_step{step}{ext}"
+        vroot, vext = os.path.splitext(a.out_value)
+        snap_val = f"{vroot}_step{step}{vext}"
+        if a.actor_only:
+            snap_val = a.init_value
+        else:
+            save_metric(_copy.deepcopy(teacher).cpu(), "td", value_latent_dim, arch, snap_val)
+        _kind = {"traj": "lip3", "v4r": "lip4r", "v4": "lip4"}.get(
+            a.arch, "lip" if a.feed == "none" else "lip2")
+        sd_cpu = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+        torch.save({"kind": _kind, "feed": a.feed, "sd": sd_cpu,
+                    "z_dim": z.shape[-1], "horizon": a.horizon, "iters": a.iters,
+                    "a_dim": a_dim, "amax": a.amax, "width": a.width, "layers": a.layers,
+                    "s_dim": a.s_dim, "s0_mode": a.s0_mode, "hidden": a.rec_hidden,
+                    "goal_mode": a.goal_mode, "gd_init": a.gd_init,
+                    "feat_norm": a.feat_norm, "iter_mode": a.iter_mode,
+                    "head_mode": a.head_mode, "cond_mode": a.cond_mode,
+                    "use_gate": getattr(net, "use_gate", not a.no_gate),
+                    "use_zg": getattr(net, "use_zg", not a.drop_zg),
+                    "use_z0": getattr(net, "use_z0", not a.drop_z0),
+                    "use_grad": getattr(net, "use_grad", not a.drop_grad),
+                    "vnorm": getattr(net, "vnorm", "none"),
+                    "vnorm_k": getattr(net, "vnorm_k", 1.0),
+                    "squash": getattr(net, "squash", "hard"),
+                    "head_scale": a.head_scale, "pre_ln": a.pre_ln,
+                    "temporal_objective": a.temporal_objective,
+                    "value": snap_val,
+                    "wandb_id": (_wb.id if _wb is not None else None),
+                    "wandb_project": a.wandb_project or None,
+                    "wandb_entity": a.wandb_entity or None,
+                    "train_args": vars(a)}, snap_out)
+        print(f"[snapshot] step {step} -> {snap_out}", flush=True)
+
     for step in range(a.steps):
         critic_live = step < freeze_at
         if step == freeze_at:
@@ -811,6 +854,8 @@ def main():
             print(f"step {step}: E_final {e_final:.3f} E_first {e_first:.3f} "
                   f"td_loss {cl:.4f} tau {tau_s:.3f} clr {clr_s:.2e} alr {alr_s:.2e}",
                   flush=True)
+        if a.ckpt_every and step > 0 and step % a.ckpt_every == 0:
+            _snapshot(step)
 
     # ------------------------------------------------------------ save (teacher first;
     # the actor checkpoint references it, and it is what the actor optimized against)

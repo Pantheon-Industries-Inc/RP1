@@ -87,6 +87,11 @@ envs:
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
+  CKPT_EVERY: "0"          # trainer snapshot interval (steps); 0 = final only
+  CKPT_SELECT: "0"         # 1 = within-run early stopping: score every snapshot
+                           # (+ final) on the SELECTION draws, deploy the argmax.
+                           # Per-run checkpoint selection; report draws untouched.
+  CKPT_VAL_SEEDS: "50 51"  # selection draws for ckpt-select
   SQUASH: "hard"           # plan box enforcement: hard clamp | tanh
                            # (amax*tanh(u/amax): gradient flows through
                            # saturated coordinates)
@@ -1256,7 +1261,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
@@ -1278,6 +1283,35 @@ run: |
           "$OUT" "$K" "$AM" "$MW" "$LR" "$MD" "$VN" \
           || { touch "$FAILDIR/args_${NM}_s${SEED}"; echo "[args-mismatch] $NM s$SEED" >&2; }
         echo "GRID $ENVNAME $BASE $NM s$SEED: OK" >> "$DRV"
+        # within-run early stopping: score each snapshot (and the final) on the
+        # SELECTION draws, deploy the argmax. Standard per-run checkpoint
+        # selection; report draws stay untouched. Snapshots share the final's
+        # train_args, so the [args-ok] verdict above covers them.
+        if [ "${CKPT_SELECT:-0}" = 1 ] && ls "${OUT%.pt}"_step*.pt >/dev/null 2>&1; then
+          AFVEVAL=""; [ "$AFV" = on ] && AFVEVAL="--align-from-value"
+          WARMEVAL=""; [ "$WF" != "-" ] && WARMEVAL="--warm-start"
+          EXTRAEVAL=""; [ "$ENVNAME" = cube ] && EXTRAEVAL="--override ++bf16=true +eval.ep_range=8000:10000"
+          [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && EXTRAEVAL="--override +eval.ep_range=8000:10000"
+          K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
+          CKVLOG=$PERSIST/logs/g_${NM}_s${SEED}_ckptval.log
+          BEST=""; BESTV="-1"
+          for CKP in "${OUT%.pt}"_step*.pt "$OUT"; do
+            cube_eval_lock
+            CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S             python3 scripts/plan/eval_log.py --actor "$CKP"               --env-config "$ENVNAME" --h5 "$H5" --policy "$CK"               --rh ${RH} --seeds ${CKPT_VAL_SEEDS:-50 51} --offsets ${EOFF}               $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir ~/gl --tag ckv${RH}               2>&1 | tee -a "$CKVLOG" | tail -3
+            cube_work_unlock
+            V=$(grep -oE '"mean_rh[0-9]+_all": [0-9.]+' "$CKVLOG" | tail -1 | grep -oE '[0-9.]+$' || true)
+            echo "[ckpt-select] ${NM} s${SEED} $(basename "$CKP") val=${V:-none}" | tee -a "$DRV"
+            if [ -n "$V" ] && python3 -c "import sys; sys.exit(0 if float('$V') > float('$BESTV') else 1)"; then
+              BESTV=$V; BEST=$CKP
+            fi
+          done
+          if [ -n "$BEST" ] && [ "$BEST" != "$OUT" ]; then
+            echo "[ckpt-select] ${NM} s${SEED} winner $(basename "$BEST") (val $BESTV) -> deployed" | tee -a "$DRV"
+            cp "$BEST" "$OUT"
+          else
+            echo "[ckpt-select] ${NM} s${SEED} final wins (val $BESTV)" | tee -a "$DRV"
+          fi
+        fi
         # evaluate in the SAME slot: the actor lives on node-local disk and this
         # cluster is torn down at job end, so eval cannot be a later job.
         AFVEVAL=""; [ "$AFV" = on ] && AFVEVAL="--align-from-value"
