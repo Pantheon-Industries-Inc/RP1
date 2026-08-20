@@ -56,6 +56,15 @@ envs:
                         # THREE actor seeds (0,1,2) — launch one job per seed
                         # with CACHE_TAG pointing at the shared caches.
   CACHE_TAG: ""         # reuse another experiment's caches (default: own tag)
+  PLANNER_GAMMA: ""     # co-critic discount override (unified-gamma arms; empty
+                        # = TD_MODE default). NOTE $TD_EXTRA comes after
+                        # $ITER_EXTRA on the command line -- use TD_MODE=cube
+                        # (empty TD_EXTRA) with this override.
+  PLANNER_NSTEP: ""     # co-critic n-step override
+  MAX_DELTA: ""         # planner.max_delta override (unified band: 20)
+  DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
+                        # rewritten-checkpoint eval (top-level ck['amax'];
+                        # train_args untouched) alongside the native rlp eval
   EVAL_CONDS: "rlp cem_latent noop"
   PANTHEON_USER: armin@pantheon.inc
   EXPERIMENT_TAG: counterstrike
@@ -151,6 +160,9 @@ run: |
   [ -n "$BC" ] && ITER_EXTRA="$ITER_EXTRA planner.bc_weight=$BC"
   [ -n "$REPLAY" ] && ITER_EXTRA="$ITER_EXTRA planner.replay_prob=$REPLAY"
   [ -n "$STEPS" ] && ITER_EXTRA="$ITER_EXTRA planner.steps=$STEPS"
+  [ -n "$PLANNER_GAMMA" ] && ITER_EXTRA="$ITER_EXTRA planner.gamma=$PLANNER_GAMMA"
+  [ -n "$PLANNER_NSTEP" ] && ITER_EXTRA="$ITER_EXTRA planner.n_step=$PLANNER_NSTEP"
+  [ -n "$MAX_DELTA" ] && ITER_EXTRA="$ITER_EXTRA planner.max_delta=$MAX_DELTA"
   TD_EXTRA=""
   if [ "$TD_MODE" = pusht ]; then
     TD_EXTRA="planner.gamma=1.0 planner.n_step=1 planner.expectile=0.03 planner.expectile_final=0.01"
@@ -191,8 +203,15 @@ run: |
   for ES in $EVAL_SEEDS; do
     for COND in $EVAL_CONDS; do
       case $COND in
-        rlp) run_eval rlp $ES core/solver=lip \
-               core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        rlp)
+          run_eval rlp $ES core/solver=lip \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt"
+          for DA in ${DEPLOY_AMAX:-}; do
+            DTAG=da${DA/./p}
+            pixi run python -c "import torch; f='$D/train_checkpoints/planner.pt'; ck=torch.load(f, map_location='cpu', weights_only=False); ck['amax']=float('$DA'); torch.save(ck, f.replace('planner.pt', 'planner_${DTAG}.pt')); print('[deploy-rewrite] amax ->', '$DA')"
+            run_eval "rlp_${DTAG}" $ES core/solver=lip \
+              core.solver.actor_path="$D/train_checkpoints/planner_${DTAG}.pt"
+          done;;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
         noop) run_eval noop $ES core/policy=no_move;;
       esac
