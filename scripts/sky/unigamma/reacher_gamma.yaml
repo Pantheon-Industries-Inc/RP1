@@ -178,7 +178,7 @@ setup: |
   # deps: main-tree extras for the common stack, then the reacher campaign's
   # load-bearing pin (transformers 4.49 => NO encoder key renames at convert)
   pip install -q -e "$HOME/repo/stable-worldmodel[train,format]" \
-    opencv-python-headless hdf5plugin hf_transfer wandb dm_control mujoco 2>&1 | tail -2
+    opencv-python-headless hdf5plugin hf_transfer wandb dm_control "mujoco<3.12" 2>&1 | tail -2
   pip install -q "transformers==4.49.0" 2>&1 | tail -1
   cp /tmp/codex-overlays/train_lip_ac.py "$HOME/repo/reacher/pod_src_20260804/scripts/plan/train_lip_ac.py"
   cp /tmp/codex-overlays/latent_cache.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/trm/latent_cache.py"

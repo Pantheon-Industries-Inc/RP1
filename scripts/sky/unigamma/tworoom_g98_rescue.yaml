@@ -223,7 +223,7 @@ setup: |
   # stable_worldmodel.envs.utils (pygame, pymunk, shapely). This is the FULL
   # transitive set: envs/__init__.py registers entry points lazily, so no other
   # env family's imports fire. Missing any of these = every cell scores None.
-  EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="gymnasium-robotics mujoco dm_control ogbench pygame pymunk shapely"
+  EXTRA=""; [ "$ENVNAME" = cube ] && EXTRA="gymnasium-robotics mujoco<3.12 dm_control ogbench pygame pymunk shapely"
   pip install -q -e "$HOME/repo/stable-worldmodel[train,format]" \
     opencv-python-headless hdf5plugin hf_transfer wandb $EXTRA 2>&1 | tail -2
 
