@@ -85,6 +85,10 @@ envs:
   CROSS_MW: ""             # optional cross-grid mean-weight override
   CROSS_LR: ""             # optional cross-grid actor-lr override
   RS_SQUASH: "hard"        # plan box: hard clamp | tanh (grad-preserving)
+  RS_CKPT_SELECT: "0"      # 1 = within-run early stopping: score every snapshot
+                           # (+ final) with the held-at-end eval on the selection
+                           # draws, deploy the argmax. Report draws untouched.
+  RS_CKPT_VAL_SEEDS: "50 51"
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
@@ -960,6 +964,34 @@ run: |
             echo "[cell] ${nm} latched10=${v10} latched05=${v05}" >&2
           fi
         }
+        # within-run early stopping: held-at-end val score per candidate
+        # (1 sim pass per draw; latched stays the report metric). The snapshot
+        # dict references the FINAL teacher critic — by eval time it exists,
+        # and deploying the final critic with an earlier actor is the intended
+        # semantics (the critic converges monotonically; the actor is what
+        # early stopping selects).
+        if [ "${RS_CKPT_SELECT:-0}" = 1 ] && ls "$OUT".step*.pt >/dev/null 2>&1; then
+          CSBEST=""; CSBESTV="-1"; CSI=0
+          for CKP in "$OUT".step*.pt "$OUT"; do
+            CSI=$((CSI+1))
+            CSSUM=0; CSN=0
+            for VS in ${RS_CKPT_VAL_SEEDS:-50 51}; do
+              CV=$(evone "$CKP" "ckv${CSI}" "$VS" || true)
+              [ -n "$CV" ] && { CSSUM=$(python3 -c "print($CSSUM + $CV)"); CSN=$((CSN+1)); }
+            done
+            CSAVG=""; [ "$CSN" -gt 0 ] && CSAVG=$(python3 -c "print($CSSUM / $CSN)")
+            echo "[ckpt-select] ${NM} s${SEED} $(basename "$CKP") val=${CSAVG:-none}" | tee -a "$DRV"
+            if [ -n "$CSAVG" ] && python3 -c "import sys; sys.exit(0 if float('$CSAVG') > float('$CSBESTV') else 1)"; then
+              CSBESTV=$CSAVG; CSBEST=$CKP
+            fi
+          done
+          if [ -n "$CSBEST" ] && [ "$CSBEST" != "$OUT" ]; then
+            echo "[ckpt-select] ${NM} s${SEED} winner $(basename "$CSBEST") (val $CSBESTV) -> deployed" | tee -a "$DRV"
+            cp "$CSBEST" "$OUT"
+          else
+            echo "[ckpt-select] ${NM} s${SEED} final wins (val $CSBESTV)" | tee -a "$DRV"
+          fi
+        fi
         if [ "${GRID}" = latched_terminal_search ] || [ "${GRID}" = w1_diagnosis ] || [ "${GRID}" = w1_grid ] || [ "${RS_LATCHED:-0}" = 1 ]; then
           # The 6k training budget fixes the checkpoint. Tau only changes the
           # first-hit evaluator, never the learned actor. HELD_AT_END=1 scores
