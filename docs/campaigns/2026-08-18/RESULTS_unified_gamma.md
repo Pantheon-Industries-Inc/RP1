@@ -399,6 +399,47 @@ The deployment rule that unifies all of this: **train at the loose clip
 now with its mechanism (zero clamp-gradient when saturated) and its
 payoff measured.
 
+## FINAL protocol table (2026-08-21) — uniform ES, n=6 seeds, one config
+
+Config: **γ=0.98, n=50, vnorm=none, boundary=legacy, amax=2.5 (train;
+deploy-clip free), md=20, per-run early stopping (val 50/51), ema_tau
+0.005.** Reporting: median primary (declared for the observed bimodal
+weak-run mode, ~1/3 of runs), mean±sd and IQM always shown, per-seed
+appendix. No cross-seed selection anywhere.
+
+| cell | mean ± sd | IQM | median | paper (3 seeds, select-on-42 era) |
+|---|---|---|---|---|
+| TwoRoom LeWM h100 | 90.6 ± 9.2 | 92.6 | **94.0** | 94.2 |
+| TwoRoom PLDM h100 | 88.6 ± 6.8 | 88.7 | 89.4 | 96.0 |
+| Cube LeWM h25 / h100 | 87.5 / 80.9 | 87.6 / 81.1 | 87.3 / 81.0 | 89.1 / 82.4 |
+| Cube PLDM h25 / h100 | 82.3 / **81.4** | 82.4 / 81.8 | 82.0 / **81.7** | 82.9 / 77.1 |
+| Reacher LeWM τ.05 / τ.1 | **92.7 / 99.8** | 92.4 / 99.9 | **92.3 / 100.0** | 88.7 / 98.7 |
+| Reacher PLDM τ.05 / τ.1 | **84.3 / 98.0** | 84.3 / 97.9 | **84.3 / 97.7** | 82.0 / 97.8 |
+
+(h25 TwoRoom both bases ≥97 everywhere.) Reacher beats the paper on all
+four columns as a plain mean; Cube-PLDM h100 beats by +4.3; TwoRoom-LeWM
+is par on median; the honest deficits are Cube-LeWM (~−1.5) and TwoRoom-
+PLDM (−6.6 median — the one cell where the bespoke K=... era recipe holds
+a real edge under this protocol).
+
+### The seed-variance investigation (chronology of eliminations)
+
+1. Weak runs have healthy training curves → not optimization failure.
+2. Offline-teacher deploy swap does not rescue them (and the co-trained
+   critic is better for most seeds) → not critic geometry per se; the
+   variance lives in the actor's out-of-band refinement rule.
+3. Critic stabilizers at seeds {0, 2weak, 3weak}: teacher-12k, td_batch
+   4096, og-schedule all merely re-roll which seed is weak. **ema_tau
+   0.002** looked like a true fix (95.3/95.3/94.7) —
+4. — and at full n=6 × 6 cells it is a real but non-uniform improvement:
+   TwoRoom LeWM mean 90.6→93.4 (median 95.3), TwoRoom PLDM 88.6→90.7
+   (median 93.0), Reacher LeWM τ05 92.7→94.3, Reacher PLDM / Cube PLDM
+   flat — but **Cube LeWM regresses 80.9→75.0 with a fresh 58.0 crater.**
+   No single ema value dominates; the lottery is structural. ema stays
+   0.005 in the unified config; the 0.002 study ships as analysis and as
+   the recommended value for TwoRoom/Reacher-style long-horizon cells if
+   per-family tuning is ever back on the table.
+
 Mechanism summary: (1) γ is a **horizon budget** in both directions —
 TwoRoom/Cube are γ-indifferent once the clip stops interacting (the 08-17
 falsification was γ×clip), while Reacher genuinely wants γ=0.98 because its
