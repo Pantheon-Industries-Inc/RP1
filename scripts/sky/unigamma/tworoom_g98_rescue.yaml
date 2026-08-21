@@ -88,6 +88,7 @@ envs:
   UNIG_LR: ""              # unification sweep: override the per-cell lr anchor
   UNIG_PC: "0.3"           # cross-episode goal fraction (teacher + co-critic)
   UNIG_WIDTH: "512"        # v4 refiner MLP width
+  UNIG_LAYERS: "2"         # v4 refiner hidden layers
   UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og);
                            # og = the cube/reacher package (freeze 0.5,
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
@@ -1296,7 +1297,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \

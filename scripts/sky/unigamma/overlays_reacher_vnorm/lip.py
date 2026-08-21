@@ -91,7 +91,7 @@ class PlannerNet(nn.Module):
 
     def __init__(self, z_dim, horizon=5, a_dim=25, hidden=512, amax=2.5,
                  feed="none", use_zg=True, use_gate=True, use_z0=True,
-                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0, squash="hard"):
+                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0, squash="hard", n_layers=2):
         super().__init__()
         self.h, self.a, self.amax, self.feed = horizon, a_dim, amax, feed
         self.use_zg, self.use_gate, self.use_z0 = use_zg, use_gate, use_z0
@@ -125,11 +125,13 @@ class PlannerNet(nn.Module):
         # (only informative on a full-input actor that still has z0/zg).
         in_dim = (horizon * a_dim + int(use_grad) * horizon * a_dim + 1
                   + (int(use_z0) + int(use_zg)) * z_dim + extra)
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, hidden), nn.ReLU(),
-            nn.Linear(hidden, horizon * a_dim + (1 if use_gate else 0)),
-        )
+        # n_layers = number of hidden layers; 2 reproduces the shipped
+        # Linear-ReLU-Linear-ReLU-head exactly.
+        _body = [nn.Linear(in_dim, hidden), nn.ReLU()]
+        for _ in range(int(n_layers) - 1):
+            _body += [nn.Linear(hidden, hidden), nn.ReLU()]
+        _body += [nn.Linear(hidden, horizon * a_dim + (1 if use_gate else 0))]
+        self.net = nn.Sequential(*_body)
         if head_scale != 1.0:
             # small-init for the no-gate form: refinement starts near-identity
             # with live gradients (covers the gate's damping role at init;
@@ -648,7 +650,8 @@ class LIPSolver(CEMSolver):
                                     vnorm=ck.get("vnorm", "none"),
                                     vnorm_k=ck.get("vnorm_k", 1.0),
                                     squash=ck.get("squash", "hard"),
-                                    hidden=ck.get("v4_hidden", 512)).to(self.device)
+                                    hidden=ck.get("v4_hidden", 512),
+                                    n_layers=ck.get("v4_layers", 2)).to(self.device)
         # A vnorm actor deployed with raw E is a guaranteed silent null, so say
         # out loud which conditioning this cell actually loaded.
         if getattr(self.actor, "vnorm", "none") != "none":

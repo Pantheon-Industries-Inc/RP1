@@ -216,6 +216,8 @@ def main():
     p.add_argument("--td-p-cross", type=float, default=0.3)
     p.add_argument("--v4-hidden", type=int, default=512,
                    help="v4 refiner MLP width (round-tripped via the checkpoint)")
+    p.add_argument("--v4-layers", type=int, default=2,
+                   help="v4 refiner hidden layers (2 = shipped net)")
     p.add_argument("--td-max-delta", type=int, default=None)
     p.add_argument("--critic-lr", type=float, default=None)
     p.add_argument("--critic-lr-final", type=float, default=None,
@@ -584,6 +586,7 @@ def main():
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
                          amax=a.amax, use_zg=False, use_gate=False, use_z0=False,
                          use_grad=not a.drop_grad, hidden=a.v4_hidden,
+                         n_layers=a.v4_layers,
                          head_scale=a.head_scale, vnorm=a.vnorm,
                          vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01,
                          squash=a.squash).to(dev)
@@ -798,6 +801,7 @@ def main():
                     "vnorm_k": getattr(net, "vnorm_k", 1.0),
                     "squash": getattr(net, "squash", "hard"),
                 "v4_hidden": a.v4_hidden,
+                "v4_layers": a.v4_layers,
                     "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                     "temporal_objective": a.temporal_objective,
                     "value": snap_val,
@@ -896,6 +900,7 @@ def main():
                 "vnorm_k": getattr(net, "vnorm_k", 1.0),
                 "squash": getattr(net, "squash", "hard"),
                 "v4_hidden": a.v4_hidden,
+                "v4_layers": a.v4_layers,
                 "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                 "temporal_objective": a.temporal_objective,
                 "value": a.out_value,
