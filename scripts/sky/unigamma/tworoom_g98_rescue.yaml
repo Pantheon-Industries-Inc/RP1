@@ -113,6 +113,10 @@ envs:
                            # boot = n_eff + g^n_eff*d_next (continuous seam,
                            # per-window discounting, ceiling n/(1-g^n)); disc
                            # discounts the exact branch too. No effect at g=1.
+  CU_EXPAND: "1.0"         # cube value-expansion weight (0 = the unified
+                           # no-MVE setting; tworoom/reacher already train at 0
+                           # and expansion injects WM bias exactly where cube
+                           # hallucinates)
   CU_DYNA: "0"             # 1 = use the Dyna-finetuned cube WM (staged dirs
                            # lewm_cube_dyna / pldm_cube_dyna)
   CU_GAMMA: "0.98"         # Cube discount, for BOTH the offline TD teacher and the
@@ -948,7 +952,7 @@ run: |
   # tworoom passes nothing here.
   RECIPE=""
   [ "$ENVNAME" = tworoom ] && RECIPE="--gamma ${TR_GAMMA:-1.0} --replay-prob ${TW_REPLAY:-0}"
-  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob 0.5 --expand-weight 1.0 --freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
+  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob 0.5 --expand-weight ${CU_EXPAND:-1.0} --freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
   FROZEN_ARGS=""
   if [ "${ACTOR_ONLY:-0}" = 1 ]; then
     # Keep each environment's established actor-only recipe. TwoRoom's
