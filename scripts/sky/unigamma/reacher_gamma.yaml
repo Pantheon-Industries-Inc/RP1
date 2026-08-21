@@ -92,6 +92,8 @@ envs:
   RS_EMA_TAU: "0.005"      # co-critic teacher EMA rate (0.002 = the unified
                            # stabilizer from the 2026-08-20 critic wave)
   RS_K: "8"                # refinement depth K
+  RS_WIDTH: "512"          # v4 refiner MLP width
+  RS_LAYERS: "2"           # v4 refiner hidden layers
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
@@ -896,6 +898,7 @@ run: |
           --init-value "$W3" \
           --recipe-profile "$PROFILE" \
           --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step 50 \
+          --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} \
           --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
           --replay-prob $RP --expand-weight $XW --freeze-critic-frac 0.5 ${FROZEN_ARGS} \
