@@ -6,7 +6,7 @@
 #
 #   sky jobs launch scripts/sky/unigamma/collect_unig.yaml -n unig-collect -y --async \
 #       --env TAG_GLOB="rlp-tw-unig-*-20260818"
-name: unig-collect
+name: unig-collect-legacy
 
 envs:
   PANTHEON_USER: armin@pantheon.inc
@@ -17,11 +17,7 @@ resources:
   memory: 8
 
 volumes:
-  # 2026-08-21: migrated off the shared 10Ti 'checkpoints' PVC (volume-level
-  # quota exhausted by other tenants -- writes failed silently and jobs
-  # reported SUCCEEDED with empty outputs). Banked pre-migration data stays
-  # on the old volume; read it with collect_unig_legacy.yaml.
-  /checkpoints: armin-rlp-checkpoints
+  /checkpoints: checkpoints
 
 run: |
   set -uo pipefail

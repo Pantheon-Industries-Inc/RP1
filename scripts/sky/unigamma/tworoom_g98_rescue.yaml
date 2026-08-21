@@ -170,7 +170,11 @@ resources:
     telemetry-contract: training-v1
 
 volumes:
-  /checkpoints: checkpoints
+  # 2026-08-21: migrated off the shared 10Ti 'checkpoints' PVC (volume-level
+  # quota exhausted by other tenants -- writes failed silently and jobs
+  # reported SUCCEEDED with empty outputs). Banked pre-migration data stays
+  # on the old volume; read it with collect_unig_legacy.yaml.
+  /checkpoints: armin-rlp-checkpoints
 
 config:
   kubernetes:
