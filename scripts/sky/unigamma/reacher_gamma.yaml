@@ -98,7 +98,9 @@ envs:
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
   VALUE_EXPECTILE: "0.03"   # paper init value artifact used 0.05 (window3_*_e005)
-  VALUE_FRAMES: "3"           # frames in the window value/critic; 1 = single-frame ablation
+  VALUE_FRAMES: "1"           # HARDCODED w=1 (2026-08-22 user decision: reacher
+                              # runs the single-frame value/critic under the
+                              # unified config; w=3 was the pre-unification default)
   PRE_MEASUREMENT_SMOKE: "0" # tiny exact-protocol gate before the reporting cells
   CELL_TIMEOUT: "21600"
   COST: "value"             # value = the window quasimetric | latent = l2window3
@@ -301,10 +303,10 @@ setup: |
   fi
 
   # window value, STANDARDIZED numbers on the clean split
-  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
   WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
   [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
-    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-3} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} \
+    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} \
     --boundary ${RS_BOUNDARY:-legacy} \
     --n-step 50 --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
   [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
@@ -334,7 +336,7 @@ run: |
   export EXPAND
   C1=/workspace/caches/tr_${BASE}_fs1.pt
   C5=/workspace/caches/tr_${BASE}_fs5.pt
-  W3=/workspace/metrics/window${VALUE_FRAMES:-3}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_std.pt
   PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
   export PERSIST
   ACTORS=$PERSIST/actors; METRICS=$PERSIST/metrics; RESULTS=$PERSIST/results
@@ -539,8 +541,8 @@ run: |
       for SMCOST in ${MEASUREMENT_COSTS:-latent value}; do
         SMCRIT="$W3"
         if [ "$SMCOST" = latent ]; then
-          SMCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-3}.pt
-          [ -f "$SMCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-3} 2>&1 | tail -2
+          SMCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+          [ -f "$SMCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
         fi
         [ -f "$SMCRIT" ] || { echo "[smoke-fail] missing critic $SMCRIT"; exit 1; }
         SMLOG="$LOGDIR/smoke_${BASE}_${SMCOST}_${SMP}_tau${SMTAU}.log"
@@ -568,9 +570,9 @@ run: |
     for COST in ${MEASUREMENT_COSTS:-latent value}; do
       VCRIT="$W3"
       if [ "$COST" = latent ]; then
-        VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-3}.pt
-        [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-3} 2>&1 | tail -2
-        [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-3} build failed"; exit 1; }
+        VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+        [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
+        [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-1} build failed"; exit 1; }
       fi
       for TAU in ${SUCCESS_THRESHOLDS}; do
         TAUTAG=${TAU/./p}
@@ -790,9 +792,9 @@ run: |
     # window.
     VCRIT="$W3"
     if [ "${COST}" = latent ]; then
-      VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-3}.pt
-      [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-3} 2>&1 | tail -2
-      [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-3} build failed"; exit 1; }
+      VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+      [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
+      [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-1} build failed"; exit 1; }
     fi
     export VBASE_PY="${BASE}_${COST}" VCRIT_PY="$VCRIT"
     export COST
