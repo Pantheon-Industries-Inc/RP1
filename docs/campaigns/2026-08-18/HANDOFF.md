@@ -51,7 +51,23 @@ User decisions that define the protocol:
    n200 bit-identical: episode length caps the window), 0.996/n50 87.1±1.0
    (vlog 91.3), vs γ=1+vlog record 97.3.
 
-## State: CAMPAIGN COMPLETE (2026-08-19; all 39+ jobs terminal)
+## State: CAMPAIGN COMPLETE v2 (2026-08-21) — final protocol & table
+
+Final protocol (user-approved): **uniform per-run early stopping** (snapshots
+every 2k steps, val-argmax on draws 50/51), **n=6 seeds**, one config
+(γ=0.98/n50/none/legacy/a2.5-train/md20/ema0.005), reporting **median
+primary** + mean±sd + IQM + per-seed appendix; no cross-seed selection
+(restarts-as-recipe explicitly rejected by user). Final table in
+RESULTS_unified_gamma.md "FINAL protocol table". Highlights: Reacher beats
+the paper on all four columns as a plain mean; Cube-PLDM h100 +4.3;
+TwoRoom-LeWM par on median (94.0 vs 94.2); deficits Cube-LeWM ~−1.5 and
+TwoRoom-PLDM −6.6. Seed-variance mechanism pinned by elimination: the
+actor's out-of-band refinement rule is a per-run lottery — healthy training
+curves, teacher-swap null, critic stabilizers re-roll it; ema_tau 0.002
+helps 5/6 cells but Cube-LeWM vetoes (80.9→75.0), so it ships as analysis,
+not config. mujoco<3.12 pinned (3.12.0 is sdist-only on PyPI).
+
+## Earlier close-out (2026-08-19; superseded above)
 
 Both closing waves landed — see RESULTS_unified_gamma.md "md20 wave",
 "Deploy-amax pass" and "Conclusion". Outcomes: md20 push-up hypothesis
