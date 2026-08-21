@@ -113,6 +113,8 @@ envs:
                            # boot = n_eff + g^n_eff*d_next (continuous seam,
                            # per-window discounting, ceiling n/(1-g^n)); disc
                            # discounts the exact branch too. No effect at g=1.
+  CU_DYNA: "0"             # 1 = use the Dyna-finetuned cube WM (staged dirs
+                           # lewm_cube_dyna / pldm_cube_dyna)
   CU_GAMMA: "0.98"         # Cube discount, for BOTH the offline TD teacher and the
                            # actor/co-trained critic (the unified-gamma arms; the
                            # banked cube recipe is 0.98)
@@ -214,7 +216,8 @@ setup: |
     CUBE_STAGE=/checkpoints/${PANTHEON_USER}/lfs_stage/swm_checkpoints
     if [ -f "$CUBE_STAGE/.staged" ]; then
       mkdir -p stable-worldmodel/checkpoints
-      for D in ogbench_cube_single_v2WM PLDM_OgBench; do
+      for D in ogbench_cube_single_v2WM PLDM_OgBench lewm_cube_dyna pldm_cube_dyna; do
+        [ -d "$CUBE_STAGE/$D" ] || continue
         rm -rf "stable-worldmodel/checkpoints/$D"
         cp -rL "$CUBE_STAGE/$D" stable-worldmodel/checkpoints/
       done
@@ -318,8 +321,14 @@ setup: |
     # cube: LeWM = v2WM, PLDM = PLDM_OgBench, both LFS-tracked in the repo.
     # One .pt per dir -- the loader refuses an ambiguous checkpoint directory.
     C=~/repo/stable-worldmodel/checkpoints
-    if [ "$BASE" = lewm ]; then SRC=$C/ogbench_cube_single_v2WM; DST=lewm_cube
-    else                        SRC=$C/PLDM_OgBench;             DST=pldm_cube; fi
+    if [ "${CU_DYNA:-0}" = 1 ]; then
+      # Dyna-finetuned WMs (one Dyna iteration on the planner's own failure
+      # rollouts, h25 collection; the paper's RP1_Dyna row). WM-side only --
+      # the unified planner config is unchanged.
+      if [ "$BASE" = lewm ]; then SRC=$C/lewm_cube_dyna; DST=lewm_cube
+      else                        SRC=$C/pldm_cube_dyna; DST=pldm_cube; fi
+    elif [ "$BASE" = lewm ]; then SRC=$C/ogbench_cube_single_v2WM; DST=lewm_cube
+    else                          SRC=$C/PLDM_OgBench;             DST=pldm_cube; fi
     mkdir -p ~/gh/checkpoints/$DST
     cp "$SRC"/*.pt ~/gh/checkpoints/$DST/ 2>/dev/null || true
     cp "$SRC"/config.json ~/gh/checkpoints/$DST/ 2>/dev/null || true

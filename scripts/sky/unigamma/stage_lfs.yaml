@@ -13,6 +13,8 @@ file_mounts:
   /stage/pldm_tworoom: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/tworoom_matrix_20260727/checkpoints/pldm_tworoom
   /stage/ogbench_cube_single_v2WM: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/stable-worldmodel/checkpoints/ogbench_cube_single_v2WM
   /stage/PLDM_OgBench: /Users/arminsommer/SynologyDrive/1privat/Value_Metric_LeWM/stable-worldmodel/checkpoints/PLDM_OgBench
+  /stage/lewm_cube_dyna: /Users/arminsommer/SynologyDrive/1privat/RLP_original/assets/core/world_model/lewm_cube_dyna
+  /stage/pldm_cube_dyna: /Users/arminsommer/SynologyDrive/1privat/RLP_original/assets/core/world_model/pldm_cube_dyna
 run: |
   set -euo pipefail
   check_dir() {  # check_dir <dir>: real dir, one real .pt > 50 MB
@@ -38,7 +40,9 @@ run: |
   mkdir -p "$C"
   cp -rL /stage/ogbench_cube_single_v2WM "$C/"
   cp -rL /stage/PLDM_OgBench "$C/"
-  for B in ogbench_cube_single_v2WM PLDM_OgBench; do check_dir "$C/$B"; done
+  cp -rL /stage/lewm_cube_dyna "$C/"
+  cp -rL /stage/pldm_cube_dyna "$C/"
+  for B in ogbench_cube_single_v2WM PLDM_OgBench lewm_cube_dyna pldm_cube_dyna; do check_dir "$C/$B"; done
   du -sh "$C"/*
   touch "$C/.staged"
   echo LFS_STAGE_DONE
