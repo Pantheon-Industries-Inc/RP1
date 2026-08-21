@@ -42,6 +42,7 @@ p.add_argument("--cache", required=True)
 p.add_argument("--out", required=True)
 p.add_argument("--lag", type=int, default=5, help="frame spacing in primitive steps (= action_block)")
 p.add_argument("--frames", type=int, default=3)
+p.add_argument("--depth", type=int, default=2, help="quasimetric head depth (critic capacity)")
 p.add_argument("--expectile", type=float, default=0.1)
 p.add_argument("--n-step", type=int, default=50)
 p.add_argument("--steps", type=int, default=6000)
@@ -73,7 +74,7 @@ stacked = LatentCache(z=Zs, episode_idx=c.episode_idx, step_idx=c.step_idx,
                                            "window_frames": F, "window_lag": a.lag})
 logging.info(f"stacked cache {tuple(Zs.shape)}")
 
-cfg = TDConfig(head="quasimetric", hidden_dim=256, depth=2, embed_dim=128,
+cfg = TDConfig(head="quasimetric", hidden_dim=256, depth=a.depth, embed_dim=128,
                n_step=a.n_step, gamma=a.gamma, expectile=a.expectile,
                boundary=a.boundary,
                p_cross=0.3, balanced=True, batch_size=1024, steps=a.steps, seed=a.seed)
@@ -99,7 +100,7 @@ if d_win_to_tiled > 0.25 * d_rand:
     logging.warning("tiled-goal queries are far from the data manifold -- deploy convention suspect")
 
 save_metric(module.cpu(), "td", F * D,
-            {"head": "quasimetric", "hidden_dim": 256, "depth": 2, "embed_dim": 128,
+            {"head": "quasimetric", "hidden_dim": 256, "depth": a.depth, "embed_dim": 128,
              "softplus": True, "symmetric": False,
              "window_frames": F, "window_lag": a.lag}, a.out)
 logging.success(f"saved -> {a.out} (declared latent_dim={F * D} => hook _m={F})")
