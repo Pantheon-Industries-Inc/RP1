@@ -607,7 +607,8 @@ class LIPSolver(CEMSolver):
                                     use_grad=ck.get("use_grad", True),
                                     vnorm=ck.get("vnorm", "none"),
                                     vnorm_k=ck.get("vnorm_k", 1.0),
-                                    squash=ck.get("squash", "hard")).to(self.device)
+                                    squash=ck.get("squash", "hard"),
+                                    hidden=ck.get("v4_hidden", 512)).to(self.device)
         # A vnorm actor deployed with raw E is a guaranteed silent null, so say
         # out loud which conditioning this cell actually loaded.
         if getattr(self.actor, "vnorm", "none") != "none":

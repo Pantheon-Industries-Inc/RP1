@@ -84,6 +84,10 @@ envs:
                            # steps; 20 covers the h100 deployment horizon)
   UNIG_K: "8"              # GRID=unig refinement depth K (rollouts/decision =
                            # K+1; PushT wanted 24 -- contact tasks may want >8)
+  UNIG_MW: ""              # unification sweep: override the per-cell mw anchor
+  UNIG_LR: ""              # unification sweep: override the per-cell lr anchor
+  UNIG_PC: "0.3"           # cross-episode goal fraction (teacher + co-critic)
+  UNIG_WIDTH: "512"        # v4 refiner MLP width
   UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og);
                            # og = the cube/reacher package (freeze 0.5,
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
@@ -414,8 +418,8 @@ setup: |
 
   # ---- TD critic to warm-start the co-trained value from. Cube uses the
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
-  TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0}"
-  [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps 12000"
+  TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3}"
+  [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps 12000 --p-cross ${UNIG_PC:-0.3}"
   if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
     TDSEEDS="0"
     [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
@@ -863,6 +867,7 @@ run: |
     MWX=0.1; LRX=1e-4
     [ "$ENVNAME" = cube ] && { MWX=0.1; LRX=3e-4; }
     [ "$ENVNAME" = tworoom ] && [ "$BASE" = pldm ] && { MWX=0.0; LRX=1e-3; }
+    MWX=${UNIG_MW:-$MWX}; LRX=${UNIG_LR:-$LRX}   # unification-sweep overrides
     CFG=()
     UMD=${UNIG_MD:-12}
     USC=${UNIG_SCHED:-tw}
@@ -1291,7 +1296,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
