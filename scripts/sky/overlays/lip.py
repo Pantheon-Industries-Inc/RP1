@@ -840,11 +840,17 @@ class LIPSolver(CEMSolver):
                 z_traj = roll(z_roll, a_hist[:B], A)                # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
                 e_imag = self.lip_value(z_imag, zg)
+            # disambiguate parallel eval_wm subprocesses sharing one probe
+            # dir: tag files with the hydra seed/offset (from argv) + pid
+            import sys as _sys
+            _tag = "_".join(
+                a.replace("eval.goal_offset_steps=", "h").replace("seed=", "e")
+                for a in _sys.argv if a.startswith(("seed=", "eval.goal_offset_steps=")))
             torch.save(
                 {"z0": z_hist[:, -1].detach().cpu(), "z_traj": z_traj.detach().cpu(),
                  "z_imag": z_imag.detach().cpu(), "A": A.detach().cpu(),
                  "E": e_imag.detach().cpu(), "zg": zg.detach().cpu()},
-                f"{os.environ['LIP_PROBE_DIR']}/probe_{_LIP_PROBE_N:04d}.pt")
+                f"{os.environ['LIP_PROBE_DIR']}/probe_{_tag}_p{os.getpid()}_{_LIP_PROBE_N:04d}.pt")
             _LIP_PROBE_N += 1
         return A.detach().to(self.dtype)
 

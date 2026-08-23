@@ -1404,6 +1404,10 @@ run: |
         K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
         RAWD=~/gl
         [ "${EVAL_RAWDIR:-}" = volume ] && { RAWD=$PERSIST/rawlogs; mkdir -p "$RAWD"; }
+        if [ "${PROBE_IMAG:-0}" = 1 ]; then
+          export LIP_PROBE_DIR=$PERSIST/rawprobe_s${SEED}
+          mkdir -p "$LIP_PROBE_DIR"
+        fi
         cube_eval_lock
         CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
         python3 scripts/plan/eval_log.py --actor "$OUT" \
