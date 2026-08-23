@@ -974,6 +974,10 @@ run: |
               [ "$tau" = "0.1" ] && v10=${score:-FAIL}
               [ "$tau" = "0.05" ] && v05=${score:-FAIL}
             done
+            for tau in ${SUCCESS_THRESHOLDS}; do
+              grep -a '\[per-episode\]' /workspace/logs/ev_${nm}_tau${tau/./p}.log 2>/dev/null \
+                | sed "s/^/${nm},tau=${tau} /" >> "$RESULTS/per_episode.jsonl" || true
+            done
             echo "${nm},latched10=${v10},latched05=${v05}" >> "$SUM"
             echo "[cell] ${nm} latched10=${v10} latched05=${v05}" >&2
           fi
