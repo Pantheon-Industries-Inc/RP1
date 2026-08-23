@@ -120,6 +120,9 @@ envs:
                            # boot = n_eff + g^n_eff*d_next (continuous seam,
                            # per-window discounting, ceiling n/(1-g^n)); disc
                            # discounts the exact branch too. No effect at g=1.
+  UNIG_OFF: "25,100"       # actor-eval offsets (comma list) -- the grid row
+                           # field the per-actor eval reads; OFFSETS only
+                           # steers the planner loops
   ACR_LAM: "0"             # anti-constancy regularizer weight (mechanism fix
                            # for the TwoRoom-PLDM WM-hallucination basin)
   EVAL_SOLVER_EXTRA: ""    # extra hydra overrides for eval solvers, e.g.
@@ -923,9 +926,9 @@ run: |
     UMD=${UNIG_MD:-12}
     USC=${UNIG_SCHED:-tw}
     UK=${UNIG_K:-8}
-    CFG+=("unig_ctrl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} 25,100 ${UK} none ${USC}")
-    CFG+=("unig_vlog_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} 25,100 ${UK} log ${USC}")
-    CFG+=("unig_vscl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} 25,100 ${UK} scale ${USC}")
+    CFG+=("unig_ctrl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} none ${USC}")
+    CFG+=("unig_vlog_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} log ${USC}")
+    CFG+=("unig_vscl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} scale ${USC}")
   fi
   # GRID=g98matrix (2026-08-18, expansion). Full TwoRoom matrix for the
   # gamma-unification sweep: h25 and h100 actors trained INDIVIDUALLY per
