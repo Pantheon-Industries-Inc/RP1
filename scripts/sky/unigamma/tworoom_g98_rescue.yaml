@@ -177,8 +177,10 @@ volumes:
   # 2026-08-21: migrated off the shared 10Ti 'checkpoints' PVC (volume-level
   # quota exhausted by other tenants -- writes failed silently and jobs
   # reported SUCCEEDED with empty outputs). Banked pre-migration data stays
-  # on the old volume; read it with collect_unig_legacy.yaml.
+  # on the old volume, mounted read-side at /old_checkpoints (write to it and
+  # you get silent quota failures -- never point EXPERIMENT_TAG there).
   /checkpoints: armin-rlp-checkpoints
+  /old_checkpoints: checkpoints
 
 config:
   kubernetes:
@@ -506,7 +508,7 @@ run: |
       case "$_t" in
         *[!A-Za-z0-9._-]*) echo "unsafe ACTOR_IMPORT_TAG: $_t" >&2; exit 2;;
       esac
-      IMPORT_ROOT=/checkpoints/${PANTHEON_USER}/${_t}
+      IMPORT_ROOT=${IMPORT_ROOT_BASE:-/checkpoints}/${PANTHEON_USER}/${_t}
       [ -d "$IMPORT_ROOT/actors" ] \
         || { echo "missing actor import directory: $IMPORT_ROOT/actors" >&2; exit 2; }
       cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
@@ -1364,12 +1366,14 @@ run: |
         EXTRAEVAL=""; [ "$ENVNAME" = cube ] && EXTRAEVAL="--override ++bf16=true +eval.ep_range=8000:10000"
         [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && EXTRAEVAL="--override +eval.ep_range=8000:10000"
         K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
+        RAWD=~/gl
+        [ "${EVAL_RAWDIR:-}" = volume ] && { RAWD=$PERSIST/rawlogs; mkdir -p "$RAWD"; }
         cube_eval_lock
         CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
         python3 scripts/plan/eval_log.py --actor "$OUT" \
           --env-config "$ENVNAME" --h5 "$H5" --policy "$CK" \
           --rh ${RH} --seeds ${EVAL_SEEDS} --offsets ${EOFF} \
-          $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir ~/gl --tag rh${RH} \
+          $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir "$RAWD" --tag rh${RH} \
           2>&1 | tee -a $PERSIST/logs/g_${NM}_s${SEED}_eval.log | tail -200
         cube_work_unlock
         # tail -200, not -25: a failed cell dumps its log tail + full hydra
