@@ -214,6 +214,11 @@ def main():
                         "discounting); disc = discount the exact branch too")
     p.add_argument("--td-batch", type=int, default=1024)
     p.add_argument("--td-p-cross", type=float, default=0.3)
+    p.add_argument("--ac-weight", type=float, default=0.0,
+                   help="anti-constancy regularizer: penalize the batch-level "
+                        "constancy of net plan displacement (the TwoRoom "
+                        "WM-hallucination basin emits ~80%%-constant plans; "
+                        "an honest planner must vary its plan with the task)")
     p.add_argument("--v4-hidden", type=int, default=512,
                    help="v4 refiner MLP width (round-tripped via the checkpoint)")
     p.add_argument("--v4-layers", type=int, default=2,
@@ -749,6 +754,13 @@ def main():
                 _align = _ps.gather(1, _h[:, None]).squeeze(1).mean()
             _align = a.align_weight * _align
         loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean() + _align
+        if a.ac_weight > 0:
+            # constancy of net displacement across the batch: ||E_b[sum_t A]||^2
+            # / E_b||sum_t A||^2 in [0,1]; ~0.8 for the hallucination basin,
+            # 0.26-0.39 for honest seeds. Scale-free, rollout-free.
+            _disp = A.sum(1)
+            _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
+            loss = loss + a.ac_weight * _const
         if a.bc_weight > 0:                       # trust-region toward data actions
             loss = loss + a.bc_weight * ((A - aref) ** 2).mean()
         a_opt.zero_grad(set_to_none=True)
