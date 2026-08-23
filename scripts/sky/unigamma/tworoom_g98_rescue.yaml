@@ -120,6 +120,10 @@ envs:
                            # boot = n_eff + g^n_eff*d_next (continuous seam,
                            # per-window discounting, ceiling n/(1-g^n)); disc
                            # discounts the exact branch too. No effect at g=1.
+  ACR_LAM: "0"             # anti-constancy regularizer weight (mechanism fix
+                           # for the TwoRoom-PLDM WM-hallucination basin)
+  EVAL_SOLVER_EXTRA: ""    # extra hydra overrides for eval solvers, e.g.
+                           # "++solver.init_mode=value ++solver.init_samples=32"
   CRIT_DEPTH: "2"          # critic (MRN quasimetric head) depth for BOTH the
                            # offline teacher and the co-trained critic -- scale
                            # with UNIG_LAYERS for a real capacity test. Needs a
@@ -1343,7 +1347,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
@@ -1404,6 +1408,12 @@ run: |
         K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
         RAWD=~/gl
         [ "${EVAL_RAWDIR:-}" = volume ] && { RAWD=$PERSIST/rawlogs; mkdir -p "$RAWD"; }
+        if [ -n "${EVAL_SOLVER_EXTRA:-}" ]; then
+          case "$EXTRAEVAL" in
+            *--override*) EXTRAEVAL="$EXTRAEVAL ${EVAL_SOLVER_EXTRA}";;
+            *) EXTRAEVAL="$EXTRAEVAL --override ${EVAL_SOLVER_EXTRA}";;
+          esac
+        fi
         if [ "${PROBE_IMAG:-0}" = 1 ]; then
           export LIP_PROBE_DIR=$PERSIST/rawprobe_s${SEED}
           mkdir -p "$LIP_PROBE_DIR"

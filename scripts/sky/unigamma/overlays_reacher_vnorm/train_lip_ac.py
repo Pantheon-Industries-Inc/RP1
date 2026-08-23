@@ -239,6 +239,8 @@ def main():
                         "discounting); disc = discount the exact branch too")
     p.add_argument("--td-batch", type=int, default=1024)
     p.add_argument("--td-p-cross", type=float, default=0.3)
+    p.add_argument("--ac-weight", type=float, default=0.0,
+                   help="anti-constancy regularizer on batch plan displacement")
     p.add_argument("--v4-hidden", type=int, default=512,
                    help="v4 refiner MLP width (round-tripped via the checkpoint)")
     p.add_argument("--v4-layers", type=int, default=2,
@@ -801,6 +803,10 @@ def main():
             _wt = torch.tensor([wi / _n for wi in _w], device=_stack.device,
                                dtype=_stack.dtype)
             loss = e_path[-1] + a.mean_weight * (_wt * _stack).sum() + _align
+        if a.ac_weight > 0:
+            _disp = A.sum(1)
+            _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
+            loss = loss + a.ac_weight * _const
         if a.bc_weight > 0:                       # trust-region toward data actions
             loss = loss + a.bc_weight * ((A - aref) ** 2).mean()
         a_opt.zero_grad(set_to_none=True)
