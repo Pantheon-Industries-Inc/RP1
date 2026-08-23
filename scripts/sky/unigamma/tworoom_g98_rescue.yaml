@@ -448,7 +448,10 @@ setup: |
               glob.glob(os.path.expanduser("~/gc/fs5.pt")),
               glob.glob(os.path.expanduser("~/gm/td_*.pt"))]
   assert all(x and os.path.getsize(x[0]) > 1024 for x in required), required
-  if os.environ["ENVNAME"] == "tworoom":
+  if (os.environ["ENVNAME"] == "tworoom"
+          and os.environ.get("REUSE_ONLY", "0") != "1"):
+      # training runs need a TD teacher per seed; eval-only imports do not,
+      # and a READY packed cache from a different seed-set must not be fatal
       critics = [os.path.expanduser(f"~/gm/td_grid_s{s}.pt")
                  for s in os.environ.get("TRAIN_SEEDS", "0 1 2").split()]
       assert all(os.path.getsize(p) > 1024 for p in critics), critics
