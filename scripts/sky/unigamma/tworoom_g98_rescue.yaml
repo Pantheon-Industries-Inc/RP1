@@ -524,15 +524,24 @@ run: |
     rm -f "$PERSIST"/actors/*_step*.pt
     PERSIST="$PERSIST" python3 - <<'PYVF'
   import glob, os, torch
+  from stable_worldmodel.trm import load_metric
   actors = sorted(glob.glob(os.path.join(os.environ["PERSIST"], "actors", "*.pt")))
   fixed = kept = 0
   for f in actors:
       ck = torch.load(f, map_location="cpu", weights_only=False)
       v = ck.get("value")
-      if isinstance(v, str) and os.path.isfile(v):
+      ok = False
+      if isinstance(v, str):
+          ok = os.path.isfile(v)
+      else:
+          # a snapshot-embedded value is consumable as-is; a value-file dict
+          # embedded by the retired v2 fixup is not -- probe with load_metric
+          try:
+              load_metric(v, device="cpu"); ok = True
+          except Exception:
+              ok = False
+      if ok:
           kept += 1; continue
-      # broken path (training-node ~/gm) OR a dict embedded by the retired
-      # v2 fixup that load_metric cannot consume: repath to the volume copy
       stem = os.path.splitext(os.path.basename(f))[0]
       cand = os.path.join(os.environ["PERSIST"], "values", stem + "_value.pt")
       assert os.path.isfile(cand), f"no portable value for {f}: {cand}"
