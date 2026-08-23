@@ -515,7 +515,29 @@ run: |
       [ -d "$IMPORT_ROOT/actors" ] \
         || { echo "missing actor import directory: $IMPORT_ROOT/actors" >&2; exit 2; }
       cp -an "$IMPORT_ROOT/actors/." "$PERSIST/actors/"
+      [ -d "$IMPORT_ROOT/values" ] && cp -an "$IMPORT_ROOT/values/." "$PERSIST/values/" || true
     done
+    # Portability fixup: a final-won checkpoint stores ck["value"] as the
+    # TRAINING NODE's --out-value path (~/gm/...), which does not exist here.
+    # Embed the persisted values/<actor-stem>_value.pt content instead.
+    PERSIST="$PERSIST" python3 - <<'PYVF'
+  import glob, os, torch
+  actors = sorted(glob.glob(os.path.join(os.environ["PERSIST"], "actors", "*.pt")))
+  fixed = kept = 0
+  for f in actors:
+      ck = torch.load(f, map_location="cpu", weights_only=False)
+      v = ck.get("value")
+      if not isinstance(v, str):
+          kept += 1; continue
+      if os.path.isfile(v):
+          kept += 1; continue
+      stem = os.path.splitext(os.path.basename(f))[0]
+      cand = os.path.join(os.environ["PERSIST"], "values", stem + "_value.pt")
+      assert os.path.isfile(cand), f"no portable value for {f}: {cand}"
+      ck["value"] = torch.load(cand, map_location="cpu", weights_only=False)
+      torch.save(ck, f); fixed += 1
+  print(f"[value-fixup] embedded {fixed}, untouched {kept} of {len(actors)}")
+  PYVF
     printf 'source_tag=%s\nmode=final-actor-copy\n' "$ACTOR_IMPORT_TAG" \
       > "$PERSIST/actor_import.txt"
   fi
