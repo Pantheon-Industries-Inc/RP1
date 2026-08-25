@@ -472,6 +472,27 @@ setup: |
   flock -u 9
   echo "[cache] ready: $CACHE_ROOT"
   echo "[critic] $(ls ~/gm/td_*.pt | head -1)"
+  # Backfill: a READY cache built by an eval-only job (REUSE_ONLY=1 skips the
+  # per-seed validation) may lack td_grid_s{seed} for THIS job's train seeds.
+  # Training runs rebuild any missing grid; ~/gm symlinks into CACHE_ROOT, so
+  # the node cache heals forward.
+  if [ "${REUSE_ONLY:-0}" != 1 ]; then
+    BF_TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+    [ "$ENVNAME" = cube ] && BF_TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+    BF_SEEDS="0"
+    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"
+    for TDS in $BF_SEEDS; do
+      if [ ! -f ~/gm/td_grid_s${TDS}.pt ]; then
+        echo "[cache-backfill] td_grid_s${TDS} missing from READY cache; training it"
+        CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
+          --head quasimetric --cache ~/gc/fs1.pt $BF_TDFLAGS --n-step ${TR_NSTEP:-50} \
+          --boundary ${BOUNDARY:-legacy} \
+          --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
+          > ~/gl/td_backfill_s${TDS}.log 2>&1 \
+          || { echo "[cache-backfill] FAILED for s${TDS}"; tail -20 ~/gl/td_backfill_s${TDS}.log; exit 1; }
+      fi
+    done
+  fi
   echo "[setup] $ENVNAME/$BASE ready"
 
 run: |
