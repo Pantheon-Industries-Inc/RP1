@@ -451,16 +451,16 @@ def main():
     _base_dim = int(c.latent_dim if a.actor_only else c_td.latent_dim)
     if blob is not None:
         _ld, _cd = int(blob["latent_dim"]), _base_dim
-        assert _cd and _ld % _cd == 0 and _ld // _cd in (1, 3), (
-            f"init-value width {_ld} is neither 1x nor 3x the cache dim {_cd}")
+        assert _cd and _ld % _cd == 0 and _ld // _cd >= 1, (
+            f"init-value width {_ld} is not an integer multiple of cache dim {_cd}")
         vframes = _ld // _cd
-        if vframes == 3:
+        if vframes >= 2:
             _wl = int(blob["arch"].get("window_lag", 5))
             assert _wl == fs, (
                 f"window lag {_wl} != action_block {fs}: consecutive imagined "
                 "latents are action_block apart, so the deployed window would "
                 "not match the trained one")
-            print(f"[vframes] 3-frame window value, lag {_wl}", flush=True)
+            print(f"[vframes] {vframes}-frame window value, lag {_wl}", flush=True)
         arch = blob["arch"]
         value_latent_dim = _ld
         if a.actor_only:
