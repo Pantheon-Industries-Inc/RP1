@@ -438,17 +438,20 @@ setup: |
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
   TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
-  if ! ls ~/gm/td_*.pt >/dev/null 2>&1; then
-    TDSEEDS="0"
-    [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
-    for TDS in $TDSEEDS; do
+  # per-seed guard, not any-file: a cap-cancelled builder can leave a partial
+  # ~/gm (e.g. s0/s1 without s2) that an any-file guard would accept and the
+  # validation below would then fatally reject
+  TDSEEDS="0"
+  [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
+  for TDS in $TDSEEDS; do
+    if [ ! -f ~/gm/td_grid_s${TDS}.pt ]; then
       CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
         --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step ${TR_NSTEP:-50} \
         --boundary ${BOUNDARY:-legacy} \
         --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
         > ~/gl/td_critic_s${TDS}.log 2>&1
-    done
-  fi
+    fi
+  done
   python3 - <<'PY'
   import glob, os, torch
   required = [glob.glob(os.path.expanduser("~/gc/fs1.pt")),
