@@ -313,7 +313,7 @@ setup: |
   r = wandb.init(project=os.environ['WANDB_PROJECT'], entity=os.environ['WANDB_ENTITY'],
                  name='grid-probe-' + os.environ['ENVNAME'] + '-' + os.environ['BASE'],
                  job_type='probe', reinit=True)
-  r.log({'probe': 1}); u = r.get_url(); r.finish(); print('[wandb] verified ->', u)
+  r.log({'probe': 1}); u = getattr(r, 'url', None) or (r.get_url() if hasattr(r, 'get_url') else ''); r.finish(); print('[wandb] verified ->', u)
   "
 
   SCRATCH=/mnt/raid0/rlp-runs/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}

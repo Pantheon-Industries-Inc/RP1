@@ -866,7 +866,7 @@ def main():
                 "pantheon_telemetry/active_step": step + 1,
                 "pantheon_telemetry/step_time_s": _step_time,
                 "pantheon_telemetry/effective_mfu": 0.0,
-                "pantheon_telemetry/wandb_url": _wb.get_url(),
+                "pantheon_telemetry/wandb_url": (getattr(_wb, "url", None) or (_wb.get_url() if hasattr(_wb, "get_url") else "")),
             })
             _last_heartbeat = _step_end
         if step % 500 == 0:
