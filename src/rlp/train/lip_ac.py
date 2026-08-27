@@ -449,6 +449,15 @@ def _run(cfg: DictConfig) -> None:
             replay_buf["zh"] = tr[:, -3:].detach()
             replay_buf["zg"] = zg.detach()
         loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
+        if a.get("ac_weight", 0.0) > 0:
+            # anti-constancy: penalize batch-level constancy of net plan
+            # displacement, ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0,1].
+            # An honest planner must vary its plan with the (z0, zg) task; a
+            # world-model-exploit basin emits a near-constant plan (~0.8 vs
+            # ~0.3 honest). Scale-free, rollout-free.
+            _disp = A.sum(1)
+            _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
+            loss = loss + a.ac_weight * _const
         if a.bc_weight > 0:  # trust-region toward data actions
             loss = loss + a.bc_weight * ((A - aref) ** 2).mean()
         a_opt.zero_grad(set_to_none=True)
