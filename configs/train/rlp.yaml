@@ -27,6 +27,7 @@ value:
   expectile: 0.03
   n_step: 50
   p_cross: 0.3
+  depth: null           # MRN value-head depth (null = core default 2)
 
 # Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.
@@ -44,6 +45,8 @@ planner:
   expectile: 0.1
   expectile_final: 0.03
   ac_weight: 0.0        # anti-constancy regularizer (forwarded to lip_ac)
+  layers: null          # refiner transformer_layers (null = core default 2)
+  width: null           # refiner transformer_width (null = core default 256)
   critic_lr: 1e-3
   critic_lr_final: 1e-4
   td_batch: 1024

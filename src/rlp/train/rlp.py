@@ -105,6 +105,12 @@ def _run(cfg: DictConfig) -> None:
             output=actions_h5,
         )
     if "value" not in skip:
+        value_overrides = _overrides(cfg.value)
+        # `depth` is a value-architecture knob (MRN head), not a trainer flag;
+        # route it onto the composed value group where train/metric reads it.
+        value_depth = value_overrides.pop("depth", None)
+        if value_depth is not None:
+            value_overrides["core.value.depth"] = value_depth
         run_stage(
             "value",
             "train/metric",
@@ -113,7 +119,7 @@ def _run(cfg: DictConfig) -> None:
             device=cfg.device,
             seed=cfg.seed,
             **{"output.checkpoint": "value_td"},
-            **_overrides(cfg.value),
+            **value_overrides,
         )
     if "planner" not in skip:
         planner_overrides = _overrides(cfg.planner)
@@ -126,6 +132,12 @@ def _run(cfg: DictConfig) -> None:
         iterations = planner_overrides.pop("iterations", None)
         if iterations is not None:
             planner_overrides["core.planner.iterations"] = iterations
+        layers = planner_overrides.pop("layers", None)
+        if layers is not None:
+            planner_overrides["core.planner.transformer_layers"] = layers
+        width = planner_overrides.pop("width", None)
+        if width is not None:
+            planner_overrides["core.planner.transformer_width"] = width
         run_stage(
             "planner",
             "train/lip_ac",
