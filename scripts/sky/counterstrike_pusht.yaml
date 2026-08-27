@@ -62,6 +62,8 @@ envs:
                         # (empty TD_EXTRA) with this override.
   PLANNER_NSTEP: ""     # co-critic n-step override
   MAX_DELTA: ""         # planner.max_delta override (unified band: 20)
+  CKPT_SELECT: "0"      # 1 = within-run early stopping over planner snapshots
+  CKPT_VAL_SEEDS: "50 51"  # selection draws (report draws 42-44 untouched)
   TRAIN_OVERRIDES: ""   # extra hydra overrides for the model=rlp train call,
                         # e.g. "planner.ac_weight=0.2 core.planner.transformer_layers=3
                         # core.value.depth=3" (deepcap + anti-constancy)
@@ -185,6 +187,33 @@ run: |
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
     cp -r "$RUN/checkpoints" "$D/train_checkpoints"
+  fi
+
+  # ---- within-run early stopping: score each planner snapshot on the
+  # SELECTION draws (50/51), deploy the argmax as planner.pt. Snapshots come
+  # from planner.ckpt_every (core lip_ac); report draws stay untouched.
+  if [ "${CKPT_SELECT:-0}" = 1 ] && ls "$D"/train_checkpoints/planner_step*.pt >/dev/null 2>&1; then
+    BEST=""; BESTV="-1"
+    for CKP in "$D"/train_checkpoints/planner_step*.pt "$D/train_checkpoints/planner.pt"; do
+      TOT=0; CNT=0
+      for VS in ${CKPT_VAL_SEEDS:-50 51}; do
+        pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+          runtime.seed=$VS evaluation.num_episodes=$EVAL_N \
+          core/solver=lip core.solver.actor_path="$CKP" > /tmp/ckv.log 2>&1 || true
+        V=$(grep -oE "'success_rate': [0-9.]+" /tmp/ckv.log | tail -1 | grep -oE "[0-9.]+")
+        [ -n "$V" ] && { TOT=$(awk -v a=$TOT -v b=$V 'BEGIN{print a+b}'); CNT=$((CNT+1)); }
+      done
+      [ "$CNT" -gt 0 ] || { echo "[ckpt-select] $(basename $CKP) val=none"; continue; }
+      MEAN=$(awk -v t=$TOT -v c=$CNT 'BEGIN{printf "%.2f", t/c}')
+      echo "[ckpt-select] $(basename $CKP) val=$MEAN"
+      if awk -v m=$MEAN -v b=$BESTV 'BEGIN{exit !(m>b)}'; then BESTV=$MEAN; BEST=$CKP; fi
+    done
+    if [ -n "$BEST" ] && [ "$BEST" != "$D/train_checkpoints/planner.pt" ]; then
+      echo "[ckpt-select] winner $(basename $BEST) (val $BESTV) -> deployed"
+      cp "$BEST" "$D/train_checkpoints/planner.pt"
+    else
+      echo "[ckpt-select] final wins (val $BESTV)"
+    fi
   fi
 
   run_eval () {  # run_eval <label> <seed> <overrides...>
