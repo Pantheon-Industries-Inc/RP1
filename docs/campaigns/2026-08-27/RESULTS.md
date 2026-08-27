@@ -17,19 +17,21 @@ diagnosed mechanistically this campaign, were then *fixed*; the third
 (Cube's task-intrinsic hard core) was shown to be a property of the
 benchmark, not the method.
 
-## FINAL table (median)
+## FINAL table (median, uniform n=6)
 
-| cell | h25 / τ.1 | h100 / τ.05 | paper | Δ h100/τ.05 | n |
-|---|---|---|---|---|---|
-| TwoRoom LeWM | 100.0 | 97.6 | 94.2 | **+3.4** | 3–4* |
-| TwoRoom PLDM | 96.1 | 93.1 | 96.0 | −2.9 | 3–4* |
-| Cube LeWM | 89.1 | 83.6 | 89.1 / 82.4 | **+1.2** | 4* |
-| Cube PLDM | 82.1 | 81.4 | 82.9 / 77.1 | **+4.3** | 4* |
-| Reacher LeWM (w=2) | 99.7 | 93.7 | 98.7 / 88.7 | **+5.0** | 6 |
-| Reacher PLDM (w=2) | 99.7 | 91.0 | 97.8 / 82.0 | **+9.0** | 6 |
+| cell | h25 / τ.1 | h100 / τ.05 | paper | Δ h100/τ.05 |
+|---|---|---|---|---|
+| TwoRoom LeWM | 100.0 | 96.8 | 94.2 | **+2.6** |
+| TwoRoom PLDM | 95.9 | 94.0 | 96.0 | −2.0 |
+| Cube LeWM | 89.3 | 83.3 | 89.1 / 82.4 | **+0.9** |
+| Cube PLDM | 84.0 | 81.2 | 82.9 / 77.1 | **+4.1** |
+| Reacher LeWM (w=2) | 99.7 | 93.7 | 98.7 / 88.7 | **+5.0** |
+| Reacher PLDM (w=2) | 99.7 | 91.0 | 97.8 / 82.0 | **+9.0** |
 
-`*` TwoRoom/Cube λ0.2 cells are n=3–4 (fine-ES ladder); the seeds-3–5
-completion to a uniform n=6 is in flight (wandb-compat fix, below).
+At-or-above the paper on 10 of 12 numbers, −0.1 on one (TwoRoom-PLDM h25)
+and −2.0 on exactly one (TwoRoom-PLDM h100, itself up from 89.4 at campaign
+start with the catastrophic-seed mode eliminated: n=6 seeds 89–97).
+
 Alternate λ0.3 lifts TwoRoom-PLDM h100 to 94.3 at a ~4-pt cost to Cube-LeWM
 h100; λ0.2 is the balanced pick (best aggregate across cells).
 
