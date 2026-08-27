@@ -43,6 +43,7 @@ planner:
   n_step: 50
   expectile: 0.1
   expectile_final: 0.03
+  ac_weight: 0.0        # anti-constancy regularizer (forwarded to lip_ac)
   critic_lr: 1e-3
   critic_lr_final: 1e-4
   td_batch: 1024
