@@ -28,6 +28,10 @@ value:
   n_step: 50
   p_cross: 0.3
   depth: null           # MRN value-head depth (null = core default 2)
+  window_frames: null   # m-frame window teacher (null = single frame); the
+                        # planner stage inherits the window automatically
+  window_lag: null      # window frame spacing in primitive steps; required
+                        # (= frameskip) whenever window_frames >= 2
 
 # Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.
@@ -60,3 +64,6 @@ planner:
   bc_weight: null   # behavior-cloning anchor toward dataset actions
                     # (null = trainer default 0). On expert datasets this
                     # biases the refiner toward demonstrated contact modes.
+  ckpt_every: null  # save a deployable planner snapshot every N steps so a
+                    # selection pass can early-stop on held-out success
+                    # (null/0 = off; forwarded to train/lip_ac)

@@ -37,7 +37,7 @@ from rlp.logging import logger
 
 from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
-from ..temporal import trajectory_value
+from ..temporal import trajectory_value, window_pair, windowed_trajectory_value
 from ..world_model.protocols import LatentWorldModel, TokenWorldModel
 
 
@@ -91,6 +91,9 @@ class LIPCheckpoint(TypedDict):
     amu5: NotRequired[torch.Tensor]
     ast5: NotRequired[torch.Tensor]
     temporal_objective: NotRequired[str]
+    vnorm: NotRequired[str]
+    window_frames: NotRequired[int]
+    window_lag: NotRequired[int | None]
 
 
 # Mech-interp hook: ``probe_directory`` dumps per-replan
@@ -293,6 +296,22 @@ class LIPSolver(CEMSolver):
         value_module = load_metric(value_reference, device=self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
+        # m-frame window values score a stack of the last `vframes` imagined
+        # frames with the (static) goal frame duplicated to match. Trainers
+        # record `window_frames` in the planner checkpoint; older checkpoints
+        # referencing a windowed value fall back to the declared latent widths.
+        value_dim = int(getattr(value_module, "latent_dim", ck["z_dim"]))
+        declared_frames = ck.get("window_frames")
+        self.vframes = int(declared_frames) if declared_frames is not None else max(value_dim // int(ck["z_dim"]), 1)
+        if self.vframes > 1:
+            logger.info(f"LIP window value: {self.vframes} frames")
+            if self.kind == "lip_dino":
+                raise ValueError("windowed values are not supported for lip_dino checkpoints")
+            if self.graphed:
+                raise ValueError("graphed LIP inference does not support windowed values")
+            gm = getattr(self.actor, "goal_mode", None)
+            if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
+                raise ValueError("windowed values do not support per-step value conditioning (goal_mode=sep/vonly)")
         if self.kind == "lip_dino":
             if "amu5" not in ck or "ast5" not in ck:
                 raise ValueError("lip_dino checkpoint lacks action statistics")
@@ -306,6 +325,15 @@ class LIPSolver(CEMSolver):
 
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
+
+    def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+        """Trajectory score; stacks the last ``vframes`` imagined frames and
+        duplicates the observed goal frame when the value is windowed."""
+        if self.vframes > 1:
+            return windowed_trajectory_value(
+                self.lip_value, trajectory, goal, history, self.vframes, self.temporal_objective
+            )
+        return trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
 
     def _value_init(
         self,
@@ -337,13 +365,24 @@ class LIPSolver(CEMSolver):
         cand = cand.clamp(-amax, amax)
         C = cand.shape[1]
         with torch.no_grad():
-            term = rollout_terminal(
-                wm,
-                z_hist.repeat_interleave(C, dim=0),
-                a_hist.repeat_interleave(C, dim=0),
-                cand.reshape(B * C, H, adim),
-            )
-            E = self.lip_value(term.float(), zg.repeat_interleave(C, dim=0)).view(B, C)
+            zg_c = zg.repeat_interleave(C, dim=0)
+            if self.vframes > 1:
+                # window values need the full trajectory to stack terminal frames
+                trajectory = rollout_traj(
+                    wm,
+                    z_hist.repeat_interleave(C, dim=0),
+                    a_hist.repeat_interleave(C, dim=0),
+                    cand.reshape(B * C, H, adim),
+                )
+                E = self.lip_value(*window_pair(trajectory.float(), zg_c, self.vframes)).view(B, C)
+            else:
+                term = rollout_terminal(
+                    wm,
+                    z_hist.repeat_interleave(C, dim=0),
+                    a_hist.repeat_interleave(C, dim=0),
+                    cand.reshape(B * C, H, adim),
+                )
+                E = self.lip_value(term.float(), zg_c).view(B, C)
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
     # ------------------------------------------------------------------ lip
@@ -444,7 +483,7 @@ class LIPSolver(CEMSolver):
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
                     A_in = A.detach().requires_grad_(True)
                     traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                    score = trajectory_value(self.lip_value, traj, zg_r, z0_r, self.temporal_objective)
+                    score = self._score(traj, zg_r, zh_r)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
                 if graphed_ref is not None:
@@ -459,7 +498,7 @@ class LIPSolver(CEMSolver):
                         traj_f = traj.detach()
                     else:
                         traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                    E = trajectory_value(self.lip_value, traj_f, zg_r, z0_r, self.temporal_objective)
+                    E = self._score(traj_f, zg_r, zh_r)
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
@@ -490,18 +529,14 @@ class LIPSolver(CEMSolver):
                 for _ in range(self.robust_m):
                     pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
                     perturbed = rollout_traj(wm, zh_c, ah_c, pert)
-                    scores = scores + trajectory_value(
-                        self.lip_value, perturbed, zg_c, zh_c[:, -1], self.temporal_objective
-                    )
+                    scores = scores + self._score(perturbed, zg_c, zh_c)
                 Ef = (scores / self.robust_m).view(B, R * C)
             elif graphed_ref is not None and C == 1:
                 # selection unroll through the same captured graph (shape matches)
                 Ef = graphed_ref.score(cf).view(B, R * C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
-                Ef = trajectory_value(
-                    self.lip_value, final_trajectory, zg_c, zh_c[:, -1], self.temporal_objective
-                ).view(B, R * C)
+                Ef = self._score(final_trajectory, zg_c, zh_c).view(B, R * C)
             best = Ef.argmin(dim=1)
             A = cands.view(B, R * C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
         if self.probe_directory is not None:
@@ -509,7 +544,7 @@ class LIPSolver(CEMSolver):
             with torch.no_grad():
                 z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
-                e_imag = trajectory_value(self.lip_value, z_traj, zg, z_hist[:, -1], self.temporal_objective)
+                e_imag = self._score(z_traj, zg, z_hist)
             torch.save(
                 {
                     "z0": z_hist[:, -1].detach().cpu(),

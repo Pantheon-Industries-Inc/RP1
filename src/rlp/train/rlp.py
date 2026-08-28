@@ -104,6 +104,17 @@ def _run(cfg: DictConfig) -> None:
             dataset=str(cfg.dataset),
             output=actions_h5,
         )
+    window_frames = cfg.value.get("window_frames")
+    window_lag = cfg.value.get("window_lag")
+    windowed = window_frames is not None and int(window_frames) > 1
+    if windowed and (window_lag is None or int(window_lag) != int(cfg.frameskip)):
+        # imagined latents are one action block apart at plan time, so a
+        # window teacher trained at any other spacing would never be queried
+        # with the windows it was trained on
+        raise ValueError(
+            f"value.window_frames={window_frames} requires value.window_lag == "
+            f"frameskip ({cfg.frameskip}), got {window_lag}"
+        )
     if "value" not in skip:
         value_overrides = _overrides(cfg.value)
         # `depth` is a value-architecture knob (MRN head), not a trainer flag;
@@ -146,6 +157,9 @@ def _run(cfg: DictConfig) -> None:
             h5=actions_h5,
             wm=str(cfg.wm),
             init_value=value_checkpoint,
+            # a windowed value stage hands the planner a windowed init_value;
+            # forward the lag so lip_ac can validate it against the action block
+            window_lag=window_lag,
             seed=cfg.seed,
             **{"output.planner_checkpoint": "planner.pt", "output.value_checkpoint": "value_ac"},
             **planner_overrides,

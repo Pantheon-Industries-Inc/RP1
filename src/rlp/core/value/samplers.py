@@ -47,6 +47,11 @@ class NStepBatch(TypedDict):
     n_eff: torch.Tensor
     reached: torch.Tensor
     dist: torch.Tensor
+    # cache row indices of z_t / z_tn / z_g — window critics rebuild their
+    # m-frame inputs from the dense cache at these rows (see lip_ac).
+    t_idx: torch.Tensor
+    tn_idx: torch.Tensor
+    g_idx: torch.Tensor
 
 
 class FutureBatch(TypedDict):
@@ -245,6 +250,9 @@ class NStepGoalSampler(_BaseSampler):
             "n_eff": torch.from_numpy(n_eff),
             "reached": torch.from_numpy(reached),
             "dist": torch.from_numpy(dist),
+            "t_idx": torch.from_numpy(t_idx),
+            "tn_idx": torch.from_numpy(tn_idx),
+            "g_idx": torch.from_numpy(g_idx),
         }
 
 
