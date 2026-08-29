@@ -8,8 +8,8 @@ RLP paper's reported numbers (3 seeds, select-on-42 era).
 ## Headline
 
 A single planner+training configuration — **deep-capacity refiner+critic,
-anti-constancy regularizer, K=8** — reaches or beats the paper on 10 of 12
-cells. The only per-environment settings are the two that are genuinely
+anti-constancy regularizer, K=8** — reaches or beats the paper on 9 of the
+10 numbers it reports for these cells. The only per-environment settings are the two that are genuinely
 environment properties, not tuning: the **observation window** (1 frame for
 position-goal TwoRoom/Cube, 2 for velocity-dependent Reacher) and the
 **per-env step budget**. Two of the three environments' residual failures,
@@ -28,9 +28,12 @@ benchmark, not the method.
 | Reacher LeWM (w=2) | 99.7 | 93.7 | 98.7 / 88.7 | **+5.0** |
 | Reacher PLDM (w=2) | 99.7 | 91.0 | 97.8 / 82.0 | **+9.0** |
 
-At-or-above the paper on 10 of 12 numbers, −0.1 on one (TwoRoom-PLDM h25)
-and −2.0 on exactly one (TwoRoom-PLDM h100, itself up from 89.4 at campaign
-start with the catastrophic-seed mode eliminated: n=6 seeds 89–97).
+The paper reports 10 numbers for these cells (TwoRoom rows: h100 only;
+Cube and Reacher: both horizons). We are **at-or-above on 9 of those 10**;
+the single deficit is TwoRoom-PLDM h100 (94.0 vs 96.0, −2.0) — itself up
+from 89.4 at campaign start with the catastrophic-seed mode eliminated
+(n=6 seeds 89–97). Our TwoRoom h25 cells (100.0 / 95.9) have no paper
+counterpart and are not counted either way.
 
 Alternate λ0.3 lifts TwoRoom-PLDM h100 to 94.3 at a ~4-pt cost to Cube-LeWM
 h100; λ0.2 is the balanced pick (best aggregate across cells).
@@ -58,7 +61,10 @@ step budget (declared, not tuned).
    constancy of the emitted plan displacement,
    `‖E_b[ΣA]‖² / E_b‖ΣA‖²`. Targets the diagnosed TwoRoom failure directly
    (below); scale-free, rollout-free, unified. λ=0.2 chosen from a
-   5-point ladder under strengthened ES; dose-response is cell-dependent
+   5-point ladder under strengthened ES (**caveat: the ladder's Reacher
+   column was measured at w=1, before the window finding; the Reacher
+   dose-response at the adopted w=2 is unmeasured — the window grid held
+   λ=0.2 fixed**); dose-response is cell-dependent
    (TwoRoom wants heavier, Cube-PLDM lighter, Reacher flat) but the
    aggregate is nearly λ-independent over 0.1–0.5.
    - **Deep capacity and anti-constancy are complements, not alternatives:**
@@ -113,7 +119,11 @@ it. Medians, ACR λ0.2:
 ### Honest comparison (w=2, latched, same shared critic)
 
 The value function is the shared optimization objective, so the reacher
-comparison runs every planner against the identical w=2 critic:
+comparison runs every planner against the same w=2 critic *specification*
+(same window, lag, γ, expectile, depth, trained by the same recipe). Precise
+caveat: the sampling baselines score with the offline teacher, while RLP
+deploys the critic co-trained from that teacher — the standard convention in
+this stack, but the two are not the same file at deploy time.
 
 | planner (τ.05 median) | LeWM | PLDM |
 |---|---|---|
