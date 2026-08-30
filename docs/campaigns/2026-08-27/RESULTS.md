@@ -35,8 +35,9 @@ from 89.4 at campaign start with the catastrophic-seed mode eliminated
 (n=6 seeds 89–97). Our TwoRoom h25 cells (100.0 / 95.9) have no paper
 counterpart and are not counted either way.
 
-Alternate λ0.3 lifts TwoRoom-PLDM h100 to 94.3 at a ~4-pt cost to Cube-LeWM
-h100; λ0.2 is the balanced pick (best aggregate across cells).
+The λ ladder was completed post-lock at uniform n=6 (see below): λ0.2 has
+the best aggregate (724.6 over the 8 TwoRoom/Cube cells vs 720.7 / 719.4 /
+716.6 for λ0.1 / 0.3 / 0.5), so the FINAL table stands as selected.
 
 Campaign start (depth-2, no regularizer) had Cube-LeWM at −1.8/−1.4,
 TwoRoom-PLDM h100 at 89.4, and Reacher (w=1) at 82.7/72.7 τ.05. Every one
@@ -60,13 +61,17 @@ step budget (declared, not tuned).
 2. **Anti-constancy regularizer** (`--ac-weight`). Penalizes the batch-level
    constancy of the emitted plan displacement,
    `‖E_b[ΣA]‖² / E_b‖ΣA‖²`. Targets the diagnosed TwoRoom failure directly
-   (below); scale-free, rollout-free, unified. λ=0.2 chosen from a
-   5-point ladder under strengthened ES (**caveat: the ladder's Reacher
-   column was measured at w=1, before the window finding; the Reacher
-   dose-response at the adopted w=2 is unmeasured — the window grid held
-   λ=0.2 fixed**); dose-response is cell-dependent
-   (TwoRoom wants heavier, Cube-PLDM lighter, Reacher flat) but the
-   aggregate is nearly λ-independent over 0.1–0.5.
+   (below); scale-free, rollout-free, unified. λ=0.2 selected from a
+   5-point ladder and then confirmed post-lock at **uniform n=6** on all 8
+   TwoRoom/Cube cells (sums: λ0.1 720.7, **λ0.2 724.6**, λ0.3 719.4,
+   λ0.5 716.6; λ0.4 only n=4, not eligible) and re-run on Reacher at the
+   adopted w=2 (n=3 per λ, both bases): flat at τ.1 (98.7–100), mild
+   low-λ tilt at τ.05 (LeWM best at λ0.1 97.3 vs λ0.2 93.7; PLDM best at
+   λ0.3 94.7 vs λ0.2 91.0) — λ0.2 within seed noise of best everywhere,
+   closing the earlier w=1-selection caveat. Dose-response is
+   cell-dependent (TwoRoom wants heavier — λ0.5 reaches 100.0/100.0 on
+   TwoRoom-LeWM; Cube wants lighter) but the aggregate is nearly
+   λ-independent over 0.1–0.5.
    - **Deep capacity and anti-constancy are complements, not alternatives:**
      capacity gives the refiner room to be both task-faithful and
      input-sensitive; the regularizer stops it from spending that capacity
@@ -159,15 +164,40 @@ hard core stalls. Two candidate causes tested:
 - Per-seed TD-grid guard + cross-node cache backfill; portable actor import
   (repath `ck['value']` after a `load_metric` probe). All committed.
 
+## PushT: the unified config's validity boundary
+
+PushT (main `model=rlp` pipeline, LeWM base, w=2 lag-5, one-shot planning)
+is the one environment where the unified recipe **fails**, and the failure
+is attributable. All numbers are medians over seeds 0–2 (each seed = mean
+over eval draws 42–44), all trained and evaluated this campaign — the
+prior counterstrike-era "66.4" is NOT comparable (different recipe, K=24,
+different teacher corner) and every forward-looking Δ initially anchored
+to it was wrong; the honest baseline is our own re-run.
+
+| arm | median | note |
+|---|---|---|
+| latent+CEM (fixed eval) | 78 | sampling baseline |
+| base config, K=8 (shallow, no acr) | 57.3 | our re-anchored baseline |
+| base + acr λ0.2 | 62.0 | null at n=3 (means 58.7 vs 59.3, sd 4–6) |
+| unified (deepcap+acr+ES), K=8 | 31.3 | **deepcap −39 is the driver** |
+| unified, K=16 | 34.7 | |
+| unified, K=24 | 42.7 | |
+| unified, K=32 | 44.7 | flattening; still −13 vs shallow base |
+
+Attribution at the base config: acr, w=2, K (8↔24), and ES are all within
+seed noise; **deep capacity is the single solid effect and it is
+catastrophic (−39)** — the capacity-arms-model-exploitation mechanism from
+TwoRoom, on latents whose single-frame aliasing PushT's own docs flag.
+The K ablation (unified config, only `planner.iterations` varied) shows
+refinement depth *partially* compensates: monotone 31.3 → 44.7 from K=8 to
+K=32, recovering roughly a third of the deepcap damage before flattening,
+but never reaching the shallow config, let alone CEM. Conclusion: on
+contact-rich tasks with weak latent geometry the unified config's capacity
+prescription inverts — PushT marks its validity boundary, and "refine
+more" is not the rescue.
+
 ## Open / in flight
 
-- TwoRoom/Cube λ0.2 → uniform n=6 (running, wandb-fixed).
-- **PushT extension**: main-pipeline port. Actor depth
-  (`planner.transformer_layers`) and critic depth (`value.depth`) are native
-  Hydra overrides; the value window (`window_frames`) exists in the offline
-  metric trainer; **anti-constancy must be ported into `rlp.train.lip_ac`**
-  (only in the overlay trainers today). PushT's own note flags that
-  single-frame latents alias velocity, so w=2 is well-motivated there.
-  Prior PushT baseline (counterstrike campaign): RLP 66.4 vs latent+CEM 79.3
-  — the one environment where RLP trailed sampling; the deepcap+acr+w2
-  recipe is the natural retest.
+- PushT deepcap+acr-at-higher-λ (does heavier regularization disarm the
+  deep actor as it did on TwoRoom?) — untested; subgoal chaining proposal
+  unimplemented.
