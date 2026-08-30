@@ -71,6 +71,8 @@ envs:
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
   EVAL_CONDS: "rlp cem_latent noop"
+  EVAL_EXTRA: ""         # extra hydra overrides for every eval call
+                         # (__SEED__/__LABEL__ substituted per call)
   PANTHEON_USER: armin@pantheon.inc
   EXPERIMENT_TAG: counterstrike
 
@@ -219,12 +221,16 @@ run: |
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
     echo "===== EVAL $label seed=$seed ====="
+    # EVAL_EXTRA: extra hydra overrides appended to every eval call;
+    # __SEED__/__LABEL__ are substituted per call (probe dirs etc.).
+    local extra="${EVAL_EXTRA:-}"
+    extra="${extra//__SEED__/$seed}"; extra="${extra//__LABEL__/$label}"
     # episode_range 16000:18685 and h25 (goal_offset 25 / budget 50) are the
     # shipped config defaults; the run exercises them rather than overriding.
     pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
       runtime.seed=$seed \
       evaluation.num_episodes=$EVAL_N \
-      "$@"
+      "$@" $extra
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;

@@ -177,7 +177,7 @@ to it was wrong; the honest baseline is our own re-run.
 | arm | median | note |
 |---|---|---|
 | latent+CEM (fixed eval) | 78 | sampling baseline |
-| base config, K=8 (shallow, no acr) | 57.3 | our re-anchored baseline |
+| base recipe, K=24 (shallow, no acr, w1) | 57.3 | our re-anchored baseline; K=8 arm ±0 at seed 0 |
 | base + acr λ0.2 | 62.0 | null at n=3 (means 58.7 vs 59.3, sd 4–6) |
 | unified (deepcap+acr+ES), K=8 | 31.3 | **deepcap −39 is the driver** |
 | unified, K=16 | 34.7 | |
