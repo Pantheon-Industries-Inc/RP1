@@ -545,6 +545,11 @@ class LIPSolver(CEMSolver):
                 z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
                 e_imag = self._score(z_traj, zg, z_hist)
+                # candidate population under both objectives (probe-only rollout;
+                # Ef is the critic energy the deployed argmin actually used)
+                traj_c = rollout_traj(wm, zh_c, ah_c, cf)
+                lat_pop = (traj_c[:, -1] - zg_c).norm(dim=-1).view(B, R * C)
+                lat_traj = (z_traj - zg.unsqueeze(1)).norm(dim=-1)  # (B,H)
             torch.save(
                 {
                     "z0": z_hist[:, -1].detach().cpu(),
@@ -553,6 +558,11 @@ class LIPSolver(CEMSolver):
                     "A": A.detach().cpu(),
                     "E": e_imag.detach().cpu(),
                     "zg": zg.detach().cpu(),
+                    "Ef_pop": Ef.detach().cpu(),
+                    "lat_pop": lat_pop.detach().cpu(),
+                    "best": best.detach().cpu(),
+                    "lat_traj": lat_traj.detach().cpu(),
+                    "cands": cands.view(B, R * C, self.horizon, self.action_dim).detach().cpu(),
                 },
                 self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
             )
