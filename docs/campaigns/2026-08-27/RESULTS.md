@@ -220,6 +220,22 @@ compute parity with CEM by R≈32 (no more one-shot cheapness argument).
 Restarts close half the gap; the remaining ~7 pts sit in the
 CEM-only-win episodes.
 
+**Failure-mode split (450-episode deep analysis, figures in scratchpad):**
+the 65 RLP-fail/CEM-succeed episodes divide into **44 mode-A**
+(under-optimization, flagged by the planner's own scores at t=0 — what
+restarts fixed) and **15 mode-B** (WM holes: imagined closest approach
+~2.3 vs reality landing 10–21 away, drift ≈ total divergence, replan
+can't recover). Mode-B episodes repeat across independently trained
+seeds (7 episodes fail in all 3 seeds) — episode-intrinsic model error
+at specific contact configurations, the PushT analogue of the cube hard
+core. Gradient refinement *finds* these holes; CEM's coarse sampling is
+implicitly regularized against them. Signal AUCs for predicting RLP
+failure: latmin0/clip-saturation 0.67, E0 0.66, lat0 0.65, drift 0.62,
+initial difficulty 0.54 (failures are contact geometry, not distance).
+**Robust scoring null:** R=32 + robust_m 4/8 → 72.7/72.0 (≈ R=32 alone) —
+the holes are regional in state space, not action-noise-fragile minima.
+Deploy-time ceiling: ~72–73. Union RLP∪CEM = 86.2%.
+
 ## Open / in flight
 
 - **Portfolio planner** (run CEM + RLP, roll out both final plans in the
