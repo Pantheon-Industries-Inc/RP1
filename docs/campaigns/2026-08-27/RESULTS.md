@@ -184,20 +184,48 @@ to it was wrong; the honest baseline is our own re-run.
 | unified, K=24 | 42.7 | |
 | unified, K=32 | 44.7 | flattening; still −13 vs shallow base |
 
-Attribution at the base config: acr, w=2, K (8↔24), and ES are all within
-seed noise; **deep capacity is the single solid effect and it is
-catastrophic (−39)** — the capacity-arms-model-exploitation mechanism from
-TwoRoom, on latents whose single-frame aliasing PushT's own docs flag.
-The K ablation (unified config, only `planner.iterations` varied) shows
-refinement depth *partially* compensates: monotone 31.3 → 44.7 from K=8 to
-K=32, recovering roughly a third of the deepcap damage before flattening,
-but never reaching the shallow config, let alone CEM. Conclusion: on
-contact-rich tasks with weak latent geometry the unified config's capacity
-prescription inverts — PushT marks its validity boundary, and "refine
-more" is not the rescue.
+**Attribution, corrected by the E7 decomposition (2026-08-31).** The
+"deepcap −39 is the driver" reading above was confounded: within the
+unified family, shallowing the actor (a2c3 31.3), the critic (a3c2 33.3),
+or BOTH nets (a2c2 34.7) recovers nothing — the unified family's
+*non-depth* knobs (teacher TD corner γ0.98/n50/e0.03 vs PushT's
+γ1/n1/e0.01 being the prime suspect, plus md20/amax2.5/K8) carry a ~23-pt
+penalty of their own. Deep capacity at the *base* config is independently
+harmful (fs-dc 18, seed 0). Two poisons, each sufficient. Also falsified
+on PushT: the TwoRoom constancy basin (probe constancy ≤0.13 vs 0.77+ on
+TwoRoom, all checkpoints), heavier acr under deepcap (λ0.3/0.5/1.0 →
+32.7/32.7/34.0, flat), and deploy-amax rewrites (1.6/2.0 null on both
+families).
+
+**What actually helps (all at the shallow base recipe):** window w=4
+(66.0, +8.7, tight seeds; w=3 par — the declared per-env observability
+knob, like Reacher's w=2), K=32 (64.0, +6.7), but they do NOT stack
+(w4+K32 = 65.3 — same ~66 ceiling). Unified family + w4 = 46.0 (the
+unified-knob penalty persists at every window).
+
+**Why CEM wins — per-episode failure analysis (238 aligned episodes,
+base-w4 vs CEM on identical draws).** Not model exploitation: on the 52
+episodes CEM solves and RLP doesn't, RLP's own imagined final goal
+distance at t=0 is 2× worse (median 8.15 vs 4.05 on RLP-successes) and
+its critic energy agrees (12.5 vs 6.3) — both scores already know the
+plan is bad, but the shipped recipe runs restarts=1, select=last: a
+single gradient-refined trajectory with no fallback, trapped by contact
+discontinuities that CEM's population search crosses. RLP also holds its
+own win cell (12 episodes CEM fails), so the planners are complementary:
+the union solves 83.2% — above CEM's 79.3.
+
+**Deploy-time restarts (mechanism-targeted, zero retraining):** R=1 66.0
+→ R=8 68.7 → R=32 72.0 (CEM matched-draws 79.3). Saturating ~+3 per 4×;
+compute parity with CEM by R≈32 (no more one-shot cheapness argument).
+Restarts close half the gap; the remaining ~7 pts sit in the
+CEM-only-win episodes.
 
 ## Open / in flight
 
-- PushT deepcap+acr-at-higher-λ (does heavier regularization disarm the
-  deep actor as it did on TwoRoom?) — untested; subgoal chaining proposal
-  unimplemented.
+- **Portfolio planner** (run CEM + RLP, roll out both final plans in the
+  WM, deploy the better imagined latent distance): oracle ceiling 83.2,
+  selection signal validated (t=0 imagined distance discriminates) —
+  the concrete candidate to beat CEM; needs a small eval-path addition.
+- CEM-seeded refinement (reduced-budget CEM elites as RLP init) — the
+  elegant hybrid, more code.
+- Subgoal chaining proposal unimplemented.
