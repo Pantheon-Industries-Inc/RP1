@@ -73,6 +73,7 @@ envs:
   PLANNER_DEADLINE: ""        # graded environment step; e.g. 50
   SUCCESS_THRESHOLDS: "0.1 0.05" # separate first-hit simulator passes
   RS_GAMMA: "0.98"         # discount for BOTH the window teacher and the
+  RS_NSTEP: "50"           # n-step span for window teacher and co-critic
                            # actor/co-trained critic (unified-gamma arms;
                            # the banked reacher recipe is 0.98)
   RS_VNORM: "none"         # actor E-channel conditioning: none | log | loggn
@@ -306,12 +307,12 @@ setup: |
   fi
 
   # window value, STANDARDIZED numbers on the clean split
-  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
   WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
   [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
     --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
     --boundary ${RS_BOUNDARY:-legacy} \
-    --n-step 50 --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
+    --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
   [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
   echo "[setup] reacher/${BASE} ready"
 
@@ -339,7 +340,7 @@ run: |
   export EXPAND
   C1=/workspace/caches/tr_${BASE}_fs1.pt
   C5=/workspace/caches/tr_${BASE}_fs5.pt
-  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_std.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
   PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
   export PERSIST
   ACTORS=$PERSIST/actors; METRICS=$PERSIST/metrics; RESULTS=$PERSIST/results
@@ -902,7 +903,7 @@ run: |
           --cache "$C5" --cache-td "$C1" --h5 "$SLIM" --wm "$WM" --pad-context ${DGFLAG} \
           --init-value "$W3" \
           --recipe-profile "$PROFILE" \
-          --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step 50 \
+          --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step ${RS_NSTEP:-50} \
           --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} \
           --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
