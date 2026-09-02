@@ -298,6 +298,22 @@ setup: |
 
   python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
 
+  # raid0 janitor: node-local caches accumulate across campaigns and a full
+  # raid0 both ENOSPC-kills new jobs and leaves truncated files that poison
+  # later jobs on the node. Prune stale (>3 days), unlocked, non-current
+  # dirs — caches are rebuildable by design.
+  FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
+  if [ "${FREE_GB:-999}" -lt 300 ]; then
+    echo "[janitor] raid0 ${FREE_GB}GB free < 300GB; pruning stale dirs"
+    for d in /mnt/raid0/rlp-cache/* /mnt/raid0/rlp-runs/* /mnt/raid0/rlp-wandb/*; do
+      [ -d "$d" ] || continue
+      case "$d" in *"${CACHE_VERSION}-${ENVNAME}-${BASE}"*) continue;; esac
+      [ -n "$(find "$d" -maxdepth 2 -mtime -3 -print -quit 2>/dev/null)" ] && continue
+      if [ -f "$d/build.lock" ]; then flock -n "$d/build.lock" true 2>/dev/null || continue; fi
+      echo "[janitor] rm $d"; rm -rf "$d" 2>/dev/null || true
+    done
+    df -h /mnt/raid0 | tail -1
+  fi
   WANDB_ROOT=/mnt/raid0/rlp-wandb/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}
   mkdir -p "$WANDB_ROOT"/{runs,artifacts,cache}
   export WANDB_DIR="$WANDB_ROOT/runs"
@@ -318,6 +334,14 @@ setup: |
 
   SCRATCH=/mnt/raid0/rlp-runs/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}
   CACHE_ROOT=/mnt/raid0/rlp-cache/${CACHE_VERSION}-${ENVNAME}-${BASE}
+  # a non-READY cache older than 3h is a crashed/truncated build (e.g. a
+  # prior ENOSPC): wipe it rather than trust partial files
+  if [ -d "$CACHE_ROOT" ] && [ ! -f "$CACHE_ROOT/READY" ] \
+      && [ -z "$(find "$CACHE_ROOT" -maxdepth 1 -mmin -180 -print -quit 2>/dev/null)" ] \
+      && [ -n "$(ls -A "$CACHE_ROOT" 2>/dev/null)" ]; then
+    echo "[janitor] wiping stale partial cache $CACHE_ROOT"
+    rm -rf "$CACHE_ROOT"
+  fi
   mkdir -p "$SCRATCH" "$CACHE_ROOT" "$CACHE_ROOT/hf"
   chmod 777 "$SCRATCH" "$CACHE_ROOT"
   for d in gh gm gc gd; do
