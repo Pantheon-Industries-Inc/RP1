@@ -71,6 +71,8 @@ envs:
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
   EVAL_CONDS: "rlp cem_latent noop"
+  SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
+  POST_SCRIPT_B64: ""     # optional python (base64) run in the pixi env after evals
   EVAL_EXTRA: ""         # extra hydra overrides for every eval call
                          # (__SEED__/__LABEL__ substituted per call)
   PANTHEON_USER: armin@pantheon.inc
@@ -234,6 +236,10 @@ run: |
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
+    if [ "${SAVE_VIDEOS:-0}" = 1 ]; then
+      VD=$(find "$run" -type d -name 'videos' | head -1)
+      [ -n "$VD" ] && cp -r "$VD" "$D/videos_${label}_s${seed}"
+    fi
     echo "----- RESULT $label seed=$seed -----"
     cat "$out"
   }
@@ -256,3 +262,8 @@ run: |
     done
   done
   echo "COUNTERSTRIKE_DONE tag=$EXPERIMENT_TAG"
+  if [ -n "${POST_SCRIPT_B64:-}" ]; then
+    echo "$POST_SCRIPT_B64" | base64 -d > /tmp/post.py
+    echo "[post] running post script"
+    D="$D" CD="$CD" H5="$H5" pixi run python /tmp/post.py || echo "[post] FAILED"
+  fi
