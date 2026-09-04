@@ -16,12 +16,10 @@ Pipeline per base (`run_dyna2.sh <base> [iters]`):
 2. `tworoom_g98_rescue.yaml` with `CU_DYNA_WM=<that dir>` -- fresh caches,
    TD teacher, three config-B actors with fine ES, held-out eval 8000:10000 at
    h25+h100 with per-task arrays (`EVAL_RAWDIR=volume`).
-3. After the last iteration: eval-only re-run of the final actors with
-   `++solver.restarts=8` (deploy-time restarts; PushT lever for the seed lottery).
-
-Cross-seed selection (the other lottery lever) is post hoc: pick the seed with
-the best `[ckpt-select]` val score (draws 48-51) and report its 42-44 cells.
+Directive 2026-09-04: NO deploy-time restarts -- the planner runs its K=8
+refinement once, always. `select_seed.yaml` is diagnostic only (measures the
+seed-lottery cost); reported numbers stay median-of-seeds.
 
 Tags: `rlp-cu-dyna2-<base>-it<k>-<date>` (collect+ft), `rlp-cu-dyna2t-...`
-(train+eval), `rlp-cu-dyna2r8-...` (restarts eval). Smoke: `SMOKE=1` on the
+(train+eval). Smoke: `SMOKE=1` on the
 collect job (1 actor, 1 call, 400-episode lance, 1 epoch).

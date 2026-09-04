@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Dyna v2 driver: per base, ITERS x (collect+anchored-finetune -> config-B
-# train+eval with per-task arrays), then a deploy-time-restarts eval of the last
-# actors. Polls the managed-job queue every 10 min (never faster: sshd lockout
+# train+eval with per-task arrays), (no restarts, no cross-seed selection by directive). Polls the managed-job queue every 10 min (never faster: sshd lockout
 # history). Usage: run_dyna2.sh <lewm|pldm> [ITERS=2] [DATE]
 set -uo pipefail
 export PATH="$HOME/.sky/bin:$PATH"
@@ -80,8 +79,6 @@ for IT in $(seq 1 $ITERS); do
   fi
   ACTOR_TAG=$TT; WM_SRC=$WMDIR
 done
-# deploy-time restarts on the final actors (seed-lottery lever), eval-only
-RT=rlp-cu-dyna2r8-${BASE}-it${ITERS}-${DATE}
-launch_train "$RT" "$WM_SRC" "cu-dyna2-${BASE}-it${ITERS}-n1s2-v1" "++solver.restarts=8" "$ACTOR_TAG"
-wait_job "$RT" || log "restarts eval failed (non-fatal)"
+# no deploy-time restarts by directive (2026-09-04): the planner runs its K=8
+# refinement once, always; the seed lottery is reported, not selected away.
 log "DYNA2 DONE base=$BASE final actors $ACTOR_TAG wm $WM_SRC"

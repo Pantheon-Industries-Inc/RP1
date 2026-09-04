@@ -207,5 +207,5 @@ Val scores sit within ~3 points of each other (200 val tasks, one h25/h100
 blend), so selection is at the noise floor: it gains +2.7 on Dyna-LeWM h25 and
 loses 1.3 on Dyna-PLDM h25. Cross-seed selection with four val draws is
 **not** a reliable lever; it would need a much larger val set (and per-horizon
-selection) before it can be reported. Deploy-time restarts (R=8) are being
-measured per task on the same Dyna-B actors (`rlp-cu-pertask-dyna[-p]-r8-20260903`).
+selection) before it can be reported. Deploy-time restarts were ruled out by directive (2026-09-04): the planner
+runs its K=8 refinement once, always; the R=8 evals were cancelled unrun.
