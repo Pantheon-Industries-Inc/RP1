@@ -190,7 +190,10 @@ run: |
   export HDF5_PLUGIN_PATH=$(python3 -c 'import hdf5plugin; print(hdf5plugin.PLUGIN_PATH)')
   H5=$(ls ~/gd/*.h5 | head -1); EXPERT=~/gd/expert.lance
   WMD=~/gh/checkpoints/${BASE}_cube
-  PERSIST=/checkpoints/${PANTHEON_USER}/${OUT_TAG}; mkdir -p $PERSIST/{logs,wm}
+  PERSIST=/checkpoints/${PANTHEON_USER}/${OUT_TAG}; mkdir -p $PERSIST/{logs,wm,onpolicy,collogs}
+  # resume across preemptions: collected lances and per-call logs are on the
+  # volume, not on node-local raid0 (5 recoveries x 15 h with nothing kept, 2026-09-04)
+  rm -rf ~/dyna/onp_*.lance 2>/dev/null; ln -sfn $PERSIST/onpolicy ~/dyna/onpolicy
   DRV=$PERSIST/logs/driver.log
   log(){ echo "[$(date -u +%m%d-%H:%M:%S)] $*" | tee -a "$DRV"; }
   ACTORS=$(ls ~/ga/*.pt); CALLS=${NCALL}; OFFS="${OFFSETS}"
@@ -205,10 +208,10 @@ run: |
     for OFF in $OFFS; do
       (
         S=$(acquire)
-        REC=~/dyna/onp_a${a}_h${OFF}.lance
+        REC=$PERSIST/onpolicy/onp_a${a}_h${OFF}.lance
         for i in $(seq 0 $((CALLS-1))); do
-          lg=~/gl/col_a${a}_h${OFF}_c${i}.log
-          grep -q "kept=" "$lg" 2>/dev/null && continue
+          lg=$PERSIST/collogs/col_a${a}_h${OFF}_c${i}.log
+          grep -q "kept=50 dropped=0" "$lg" 2>/dev/null && { grep -q "COLLECT a$a h$OFF c$i: OK" "$DRV" || log "COLLECT a$a h$OFF c$i: OK (resumed)"; continue; }
           SEED=$((SEEDBAND + ITER*100000 + OFF*100 + a*1000 + i))
           SWM_RECORD_PATH=$REC SWM_RECORD_OUTCOME=1 CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S timeout 14400 \
           python3 scripts/plan/eval_wm.py --config-name cube seed=$SEED \
@@ -230,17 +233,17 @@ run: |
     a=$((a+1))
   done
   wait
-  NOK=$(grep -c "COLLECT.*OK" "$DRV"); NF=$(grep -c "COLLECT.*FAIL" "$DRV")
+  NOK=$(grep "COLLECT.*OK" "$DRV" | sort -u | wc -l); NF=$(grep "COLLECT.*FAIL" "$DRV" | grep -v OK | wc -l)
   log "P1 collection: $NOK ok / $NF fail"
   [ "$NF" -le 2 ] || { log "collection FAILED"; exit 1; }
-  ls -d ~/dyna/onp_*.lance | tee -a "$DRV"
+  ls -d $PERSIST/onpolicy/onp_*.lance | tee -a "$DRV"
 
   # ---------------- P2: 50/50 outcome-labelled mix vs the expert 0:EPHI slice
   MIX=~/dyna/mix_5050.lance
   EXHI=${EPHI}; [ "${SMOKE:-0}" = 1 ] && EXHI=400
   if [ ! -f "$MIX/.done" ]; then
     python3 ~/repo/Dyna/dyna_harness/build_dyna_mix.py --expert "$EXPERT" \
-      --onpolicy $(ls -d ~/dyna/onp_*.lance) --out "$MIX" --onpolicy-frac 0.5 --expert-ep-hi "$EXHI" \
+      --onpolicy $(ls -d $PERSIST/onpolicy/onp_*.lance) --out "$MIX" --onpolicy-frac 0.5 --expert-ep-hi "$EXHI" \
       2>&1 | tee ~/gl/mix.log | tail -8
     grep -q BUILD_MIX_DONE ~/gl/mix.log || { log "mix FAILED"; tail -30 ~/gl/mix.log; exit 1; }
     grep -q "\[split\] expert restricted" ~/gl/mix.log || { log "expert slice NOT restricted"; exit 1; }

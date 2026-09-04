@@ -34,7 +34,7 @@ wait_job(){ # <name> -> 0 on SUCCEEDED, 1 otherwise
 launch_collect(){ # <iter> <actor_tag> <wm_src> <out_tag>
   local IT=$1 AT=$2 WS=$3 OT=$4
   log "launch collect+ft $OT (actors $AT, wm ${WS:-base})"
-  sky jobs launch scripts/sky/dyna2/dyna2_collect_ft.yaml -n "$OT" --priority p2 -y --async \
+  sky jobs launch scripts/sky/dyna2/dyna2_collect_ft.yaml -n "$OT" --priority p1 -y --async \
     --env BASE=$BASE --env ITER=$IT --env ACTOR_TAG="$AT" --env ACTOR_GLOB="$ACTOR_GLOB" \
     --env WM_SRC="$WS" --env OUT_TAG="$OT" --env ANCHOR_WEIGHT=$ANCHOR --env FREEZE_ENCODER=$FREEZE \
     --env EPOCHS=1 --env NCALL=12 --env OFFSETS="25 100" --env MAXPAR=4 --env SMOKE=0 \
@@ -44,7 +44,7 @@ launch_train(){ # <tag> <wm_dir> <cache_version> [solver_extra]
   local TAG=$1 WMD=$2 CV=$3 SX=${4:-} RO=0 IMP=""
   [ -n "$SX" ] && { RO=1; IMP=$5; }
   log "launch train+eval $TAG (wm $WMD, cache $CV, reuse=$RO ${SX})"
-  sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml -n "$TAG" --priority p2 -y --async \
+  sky jobs launch scripts/sky/unigamma/tworoom_g98_rescue.yaml -n "$TAG" --priority p1 -y --async \
     --env ENVNAME=cube --env BASE=$BASE --env GRID=unig --env ONLYCFG=unig_ctrl_a2.5 \
     --env SPLIT=0 --env SMOKE=0 --env INCLUDE_WINNERS=0 --env STAGED=0 --env FULLCACHE=0 \
     --env REUSE_ONLY=$RO --env ACTOR_IMPORT_TAG="$IMP" --env EVAL_RAWDIR=volume --env EVAL_SOLVER_EXTRA="$SX" \
@@ -75,7 +75,10 @@ for IT in $(seq 1 $ITERS); do
   ST=$(job_status "$TT")
   if [ "$ST" != SUCCEEDED ]; then
     case "$ST" in RUNNING|STARTING|PENDING|RECOVERING|SUBMITTED) log "$TT already $ST; waiting";; *) launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}-it${IT}-n1s2-v1";; esac
-    wait_job "$TT" || { log "ABORT at train it$IT"; exit 1; }
+    if ! wait_job "$TT"; then   # one retry (preemption storms at p2 killed the first attempt 8x)
+      log "train it$IT failed once; relaunching"; sleep 60
+      launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}-it${IT}-n1s2-v1"; wait_job "$TT" || { log "ABORT at train it$IT"; exit 1; }
+    fi
   fi
   ACTOR_TAG=$TT; WM_SRC=$WMDIR
 done
