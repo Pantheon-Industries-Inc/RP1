@@ -1,0 +1,40 @@
+# Post-hoc cross-seed selection for one or more train+eval tags: per seed, the
+# best ckpt-select validation score (draws 48-51, from grid_driver.log) and the
+# report cells (draws 42-44, from logs/g_*_eval.log). Prints the val-selected
+# seed's report numbers next to the per-seed median, so the "seed lottery" cost
+# is a measured quantity rather than a guess.
+#   sky jobs launch scripts/sky/dyna2/select_seed.yaml -n sel -y --env TAGS="tagA tagB"
+name: dyna2-select-seed
+envs:
+  PANTHEON_USER: armin@pantheon.inc
+  TAGS: ""
+resources:
+  cpus: 2
+  memory: 4
+volumes:
+  /checkpoints: armin-rlp-checkpoints
+run: |
+  python3 - <<'PY'
+  import glob, json, os, re, statistics as st
+  root = f"/checkpoints/{os.environ['PANTHEON_USER']}"
+  for tag in os.environ["TAGS"].split():
+      d = f"{root}/{tag}"
+      val = {}
+      for ln in open(f"{d}/grid_driver.log", errors="replace") if os.path.exists(f"{d}/grid_driver.log") else []:
+          m = re.search(r"\[ckpt-select\] \S+ s(\d+) (?:winner \S+ \(val ([\d.]+)\)|final wins \(val ([\d.]+)\))", ln)
+          if m: val[int(m.group(1))] = float(m.group(2) or m.group(3))
+      rep = {}
+      for f in glob.glob(f"{d}/logs/g_*_s*_eval.log"):
+          s = int(re.search(r"_s(\d+)_eval\.log$", f).group(1))
+          sums = re.findall(r"\[summary\]\s*(\{.*?\})", open(f, errors="replace").read())
+          if sums: rep[s] = json.loads(sums[-1])
+      print(f"\n== {tag}: seeds {sorted(rep)}  val {val}")
+      for s in sorted(rep):
+          r = rep[s]; print(f"  s{s}: val={val.get(s)} h25={r.get('mean_rh5_h25'):.1f} h100={r.get('mean_rh5_h100'):.1f}")
+      if rep:
+          for off in ("h25", "h100"):
+              vals = [rep[s][f"mean_rh5_{off}"] for s in sorted(rep) if rep[s].get(f"mean_rh5_{off}") is not None]
+              best = max((s for s in rep if s in val), key=lambda s: val[s], default=None)
+              sel = rep[best][f"mean_rh5_{off}"] if best is not None else None
+              print(f"  {off}: median-of-seeds {st.median(vals):.1f} | mean {st.mean(vals):.1f} | val-selected seed s{best} -> {sel}")
+  PY

@@ -137,6 +137,8 @@ envs:
                            # hallucinates)
   CU_DYNA: "0"             # 1 = use the Dyna-finetuned cube WM (staged dirs
                            # lewm_cube_dyna / pldm_cube_dyna)
+  CU_DYNA_WM: ""           # absolute dir on the volume holding ONE .pt + config.json
+                           # (a Dyna v2 export, scripts/sky/dyna2/); overrides CU_DYNA
   CU_GAMMA: "0.98"         # Cube discount, for BOTH the offline TD teacher and the
                            # actor/co-trained critic (the unified-gamma arms; the
                            # banked cube recipe is 0.98)
@@ -373,7 +375,11 @@ setup: |
     # cube: LeWM = v2WM, PLDM = PLDM_OgBench, both LFS-tracked in the repo.
     # One .pt per dir -- the loader refuses an ambiguous checkpoint directory.
     C=~/repo/stable-worldmodel/checkpoints
-    if [ "${CU_DYNA:-0}" = 1 ]; then
+    if [ -n "${CU_DYNA_WM:-}" ]; then
+      # Dyna v2 export (dyna2_collect_ft.yaml): fine-tuned WM on the volume
+      [ -d "$CU_DYNA_WM" ] || { echo "missing CU_DYNA_WM dir: $CU_DYNA_WM" >&2; exit 1; }
+      SRC=$CU_DYNA_WM; DST=${BASE}_cube
+    elif [ "${CU_DYNA:-0}" = 1 ]; then
       # Dyna-finetuned WMs (one Dyna iteration on the planner's own failure
       # rollouts, h25 collection; the paper's RP1_Dyna row). WM-side only --
       # the unified planner config is unchanged.
