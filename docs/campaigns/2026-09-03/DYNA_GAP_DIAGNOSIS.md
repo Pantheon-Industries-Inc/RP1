@@ -189,3 +189,23 @@ single-seed report near 98 unless addressed separately.
 Data: `rlp-cu-pertask-{dyna,dyna-p,base,base-p}-20260903/rawlogs`,
 parsed by the scratchpad `parse_pertask.yaml`; frozen core from
 `rlp-atlas-cu-*-20260823/rawlogs`.
+
+## 9. Seed-lottery levers, measured on the existing actors (2026-09-04)
+
+**Cross-seed selection on val draws 48-51** (`scripts/sky/dyna2/select_seed.yaml`,
+job dyna2-select-base). Val-selected seed vs median-of-seeds:
+
+| arm | val scores (s0/s1/s2) | h25 median -> selected | h100 median -> selected |
+|---|---|---|---|
+| base LeWM | 82.3 / 82.8 / 83.8 | 90.0 -> 90.0 | 86.0 -> 83.3 |
+| base LeWM s3-5 | 81.0 / 84.3 / 82.5 | 90.0 -> 90.7 | 86.7 -> 87.3 |
+| Dyna LeWM | 88.0 / 84.8 / 87.5 | 94.0 -> **96.7** | 82.0 -> 84.0 |
+| base PLDM | 83.0 / 83.3 / 81.0 | 87.3 -> 87.3 | 85.3 -> 84.7 |
+| Dyna PLDM | 86.5 / 86.3 / 85.8 | 92.0 -> 90.7 | 85.3 -> 87.3 |
+
+Val scores sit within ~3 points of each other (200 val tasks, one h25/h100
+blend), so selection is at the noise floor: it gains +2.7 on Dyna-LeWM h25 and
+loses 1.3 on Dyna-PLDM h25. Cross-seed selection with four val draws is
+**not** a reliable lever; it would need a much larger val set (and per-horizon
+selection) before it can be reported. Deploy-time restarts (R=8) are being
+measured per task on the same Dyna-B actors (`rlp-cu-pertask-dyna[-p]-r8-20260903`).
