@@ -7,15 +7,17 @@ export PATH="$HOME/.sky/bin:$PATH"
 BASE=${1:?lewm|pldm}; ITERS=${2:-2}; DATE=${3:-20260903}
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd); cd "$ROOT"
 USERV=armin@pantheon.inc
-LOG=${DYNA2_LOG:-$ROOT/scratchpad/dyna2_driver_${BASE}.log}; mkdir -p "$(dirname "$LOG")"
+LOG=${DYNA2_LOG:-$ROOT/scratchpad/dyna2_driver_${BASE}${TAG_SUFFIX:-}.log}; mkdir -p "$(dirname "$LOG")"
 log(){ echo "[$(date -u +%m%d-%H:%M)] $*" | tee -a "$LOG"; }
 PSUF=""; [ "$BASE" = pldm ] && PSUF="-p"
 BASE_ACTOR_TAG=rlp-cu-v2l05-${DATE/20260903/20260902}; [ "$BASE" = pldm ] && BASE_ACTOR_TAG=rlp-cu-v2l05-p-p-20260902
 ACTOR_GLOB="g_cube_${BASE}_unig_ctrl_a2.5_s*.pt"
 ANCHOR=${ANCHOR_WEIGHT:-1.0}; FREEZE=${FREEZE_ENCODER:-0}
+SUF=${TAG_SUFFIX:-}                 # ablation arms: distinct tags, same pipeline
+CFT=${COLLECT_FROM_TAG:-}           # ablation arms: reuse a finished collection
 
 job_status(){ # <name> -> status word or ""
-  sky jobs queue 2>/dev/null | grep -E "^ *[0-9]+ +- +$1 " | head -1 \
+  sky jobs queue --limit 400 2>/dev/null | grep -E "^ *[0-9]+ +- +$1 " | head -1 \
     | grep -oE "SUCCEEDED|FAILED_SETUP|FAILED_PRECHECKS|FAILED_NO_RESOURCE|FAILED_CONTROLLER|FAILED|CANCELLED|CANCELLING|RUNNING|STARTING|PENDING|RECOVERING|SUBMITTED" | head -1
 }
 wait_job(){ # <name> -> 0 on SUCCEEDED, 1 otherwise
@@ -37,7 +39,7 @@ launch_collect(){ # <iter> <actor_tag> <wm_src> <out_tag>
   sky jobs launch scripts/sky/dyna2/dyna2_collect_ft.yaml -n "$OT" --priority p1 -y --async \
     --env BASE=$BASE --env ITER=$IT --env ACTOR_TAG="$AT" --env ACTOR_GLOB="$ACTOR_GLOB" \
     --env WM_SRC="$WS" --env OUT_TAG="$OT" --env ANCHOR_WEIGHT=$ANCHOR --env FREEZE_ENCODER=$FREEZE \
-    --env EPOCHS=1 --env NCALL=12 --env OFFSETS="25 100" --env MAXPAR=4 --env SMOKE=0 \
+    --env EPOCHS=1 --env NCALL=12 --env OFFSETS="25 100" --env MAXPAR=4 --env SMOKE=0 --env COLLECT_FROM_TAG="$CFT" \
     --env PANTHEON_USER=$USERV 2>&1 | tail -1 | tee -a "$LOG"
 }
 launch_train(){ # <tag> <wm_dir> <cache_version> [solver_extra]
@@ -61,8 +63,8 @@ launch_train(){ # <tag> <wm_dir> <cache_version> [solver_extra]
 log "=== DYNA2 driver base=$BASE iters=$ITERS anchor=$ANCHOR freeze=$FREEZE ==="
 ACTOR_TAG=$BASE_ACTOR_TAG; WM_SRC=""
 for IT in $(seq 1 $ITERS); do
-  CT=rlp-cu-dyna2-${BASE}-it${IT}-${DATE}
-  TT=rlp-cu-dyna2t-${BASE}-it${IT}-${DATE}
+  CT=rlp-cu-dyna2-${BASE}${SUF}-it${IT}-${DATE}
+  TT=rlp-cu-dyna2t-${BASE}${SUF}-it${IT}-${DATE}
   WMDIR=/checkpoints/$USERV/$CT/wm
   ST=$(job_status "$CT")
   if [ "$ST" != SUCCEEDED ]; then
@@ -74,10 +76,10 @@ for IT in $(seq 1 $ITERS); do
   fi
   ST=$(job_status "$TT")
   if [ "$ST" != SUCCEEDED ]; then
-    case "$ST" in RUNNING|STARTING|PENDING|RECOVERING|SUBMITTED) log "$TT already $ST; waiting";; *) launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}-it${IT}-n1s2-v1";; esac
+    case "$ST" in RUNNING|STARTING|PENDING|RECOVERING|SUBMITTED) log "$TT already $ST; waiting";; *) launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}${SUF}-it${IT}-n1s2-v1";; esac
     if ! wait_job "$TT"; then   # one retry (preemption storms at p2 killed the first attempt 8x)
       log "train it$IT failed once; relaunching"; sleep 60
-      launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}-it${IT}-n1s2-v1"; wait_job "$TT" || { log "ABORT at train it$IT"; exit 1; }
+      launch_train "$TT" "$WMDIR" "cu-dyna2-${BASE}${SUF}-it${IT}-n1s2-v1"; wait_job "$TT" || { log "ABORT at train it$IT"; exit 1; }
     fi
   fi
   ACTOR_TAG=$TT; WM_SRC=$WMDIR

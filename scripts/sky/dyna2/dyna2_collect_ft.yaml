@@ -28,6 +28,7 @@ envs:
   FREEZE_ENCODER: "0"
   EPOCHS: "1"
   FT_LR: "1e-5"
+  COLLECT_FROM_TAG: ""        # reuse this tag's onpolicy/ + collogs/ (ablations: fine-tune only)
   MAXPAR: "4"
   SMOKE: "0"
   WANDB_PROJECT: RLP
@@ -70,7 +71,7 @@ file_mounts:
 
 setup: |
   set -euo pipefail
-  sudo apt-get update -qq
+  sudo apt-get update -qq || true
   sudo apt-get install -yqq git git-lfs zstd libegl1 libgl1 libglew-dev libosmesa6 patchelf >/dev/null 2>&1 || true
   cd ~
   if [ ! -d repo ]; then
@@ -193,6 +194,13 @@ run: |
   PERSIST=/checkpoints/${PANTHEON_USER}/${OUT_TAG}; mkdir -p $PERSIST/{logs,wm,onpolicy,collogs}
   # resume across preemptions: collected lances and per-call logs are on the
   # volume, not on node-local raid0 (5 recoveries x 15 h with nothing kept, 2026-09-04)
+  if [ -n "${COLLECT_FROM_TAG:-}" ]; then
+    SRCP=/checkpoints/${PANTHEON_USER}/${COLLECT_FROM_TAG}
+    [ -d "$SRCP/onpolicy" ] || { echo "COLLECT_FROM_TAG has no onpolicy/: $SRCP" >&2; exit 1; }
+    rmdir $PERSIST/onpolicy 2>/dev/null; ln -sfn $SRCP/onpolicy $PERSIST/onpolicy
+    cp -n $SRCP/collogs/*.log $PERSIST/collogs/ 2>/dev/null || true
+    echo "[collect] reusing collection from $COLLECT_FROM_TAG ($(ls $SRCP/onpolicy | wc -l) lances)"
+  fi
   rm -rf ~/dyna/onp_*.lance 2>/dev/null; ln -sfn $PERSIST/onpolicy ~/dyna/onpolicy
   DRV=$PERSIST/logs/driver.log
   log(){ echo "[$(date -u +%m%d-%H:%M:%S)] $*" | tee -a "$DRV"; }

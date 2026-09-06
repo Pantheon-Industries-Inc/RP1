@@ -209,3 +209,42 @@ loses 1.3 on Dyna-PLDM h25. Cross-seed selection with four val draws is
 **not** a reliable lever; it would need a much larger val set (and per-horizon
 selection) before it can be reported. Deploy-time restarts were ruled out by directive (2026-09-04): the planner
 runs its K=8 refinement once, always; the R=8 evals were cancelled unrun.
+
+
+## 10. Dyna v2, iteration 1 (2026-09-05): anchored fine-tune, config-B collection at both offsets
+
+Tags `rlp-cu-dyna2t-{lewm,pldm}-it1-20260903` (WM from `rlp-cu-dyna2-*-it1`:
+3600 on-policy episodes per base from the config-B actors, 1800 at h25 + 1800
+at h100, 50/50 mix, latent anchor weight 1.0, native PLDM objective for PLDM,
+1 epoch lr 1e-5). Same eval protocol and per-task cross as section 7.
+
+| base | arm | h25 median (seeds) | h25 fail-cells /450 | h25 core cured / 9 | h100 median (seeds) | h100 fail-cells /450 | h100 core cured / still-always |
+|---|---|---|---|---|---|---|---|
+| LEWM | base | 90.0 (88.7/90.0/92.7) | 43 | 0 / 9 | 86.0 (82.7/86.0/86.7) | 67 | 0 / 17 |
+| LEWM | shipped Dyna | 94.0 (94.0/94.0/96.7) | 23 | 6 / 9 | 82.0 (82.0/82.0/84.0) | 78 | 0 / 17 |
+| LEWM | Dyna v2 it1 | 93.3 (92.0/93.3/97.3) | 26 | 1 / 9 | 82.0 (81.3/82.0/86.0) | 76 | 0 / 14 |
+| PLDM | base | 87.3 (86.7/87.3/88.0) | 57 | 0 / 9 | 85.3 (84.7/85.3/86.0) | 66 | 0 / 19 |
+| PLDM | shipped Dyna | 92.0 (90.7/92.0/92.0) | 38 | 2 / 9 | 85.3 (84.0/85.3/87.3) | 65 | 0 / 16 |
+| PLDM | Dyna v2 it1 | 92.0 (91.3/92.0/93.3) | 35 | 2 / 9 | 85.3 (84.7/85.3/88.0) | 63 | 0 / 15 |
+
+Reading:
+- **h25: v2 it1 lands where the shipped Dyna WM landed** (LeWM 93.3 vs 94.0,
+  PLDM 92.0 vs 92.0), but by a different route: it cures only 1 (LeWM) / 2
+  (PLDM) of the 9 frozen-core tasks where the shipped WM cured 6 / 2, and
+  instead removes seed-dependent failures. The LeWM residual is again three
+  always-fail tasks (draw 43 tasks 2 and 8, draw 44 task 8) plus stragglers.
+- **h100: the anchor did not remove LeWM's regression** (82.0 vs base 86.0;
+  PLDM flat at 85.3). No h100 core task is fully cured on either base, but
+  the always-fail set shrinks from 17 to 14 (LeWM) and 19 to 15 (PLDM) — the
+  h100 rollouts made 3-4 core tasks solvable for some seeds, which the
+  h25-only shipped WM never did (it made the set larger: 19).
+- Val-selected seeds (48-51): LeWM s1 97.3 / 86.0 (val 86.5 vs 83.3 for the
+  other two), PLDM s2 92.0 / 85.3. Same noise-floor caveat as section 9;
+  reported numbers stay median-of-seeds.
+- Interpretation: anchor weight 1.0 keeps the WM within 0.3% (LeWM) / 3.3%
+  (PLDM) relative L2 of the base, which protects the base's competence but
+  also blocks the larger correction the unanchored shipped WM made on the h25
+  core tasks. Iteration 2 (running, anchored to the it1 WM, collected with the
+  it1 actors) tests whether the correction compounds; an anchor ablation
+  (weight 0.1; frozen encoder) on the same it1 collection is queued to
+  separate "anchor too strong" from "data insufficient".
