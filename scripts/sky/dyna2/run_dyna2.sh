@@ -62,8 +62,8 @@ launch_train(){ # <tag> <wm_dir> <cache_version> [solver_extra]
 }
 
 log "=== DYNA2 driver base=$BASE iters=$ITERS anchor=$ANCHOR freeze=$FREEZE ==="
-ACTOR_TAG=$BASE_ACTOR_TAG; WM_SRC=""
-for IT in $(seq 1 $ITERS); do
+ACTOR_TAG=${START_ACTOR_TAG:-$BASE_ACTOR_TAG}; WM_SRC=${START_WM_SRC:-}
+for IT in $(seq ${START_ITER:-1} $ITERS); do
   CT=rlp-cu-dyna2-${BASE}${SUF}-it${IT}-${DATE}
   TT=rlp-cu-dyna2t-${BASE}${SUF}-it${IT}-${DATE}
   WMDIR=/checkpoints/$USERV/$CT/wm
