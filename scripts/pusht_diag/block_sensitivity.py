@@ -60,7 +60,11 @@ for e in range(NT):
     cfgs = {"start": s0.copy(), "agent@goal_block@start": np.r_[g[0], g[1], s0[2], s0[3], s0[4]], "agent@start_block@goal": np.r_[s0[0], s0[1], g[2], g[3], g[4]], "goal_config": g.copy()}
     zA, zB = encode(agent_sweep), encode(block_sweep); zC = encode([render(v) for v in cfgs.values()])
     zg = zg_all[e:e + 1]
-    row = {"task": e}
+    # task geometry: a block that is already within tolerance of its goal pose makes a
+    # low V(agent@goal, block@start) CORRECT, not an agent shortcut
+    row = {"task": e, "block_move_px": float(np.linalg.norm(g[2:4] - s0[2:4])),
+           "block_rot_deg": float(np.degrees(np.abs((g[4] - s0[4] + np.pi) % (2 * np.pi) - np.pi))),
+           "agent_move_px": float(np.linalg.norm(g[:2] - s0[:2]))}
     for nm in ("ac", "td"):
         vA, vB = V(nm, zA, zg.expand(len(zA), -1)), V(nm, zB, zg.expand(len(zB), -1)); vC = V(nm, zC, zg.expand(len(zC), -1))
         row[nm] = {"agent_sweep_range": float(vA.max() - vA.min()), "agent_sweep_std": float(vA.std()), "block_sweep_range": float(vB.max() - vB.min()), "block_sweep_std": float(vB.std()),

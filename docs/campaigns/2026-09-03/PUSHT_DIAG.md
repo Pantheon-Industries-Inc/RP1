@@ -315,3 +315,36 @@ Readouts per job: `rlp`, `cem_value`, `cem_tdvalue` (E4 pairing: base 65.6 /
 71.3 / 69.3 vs latent-CEM 78.9), and the E9 probe on the new critics (POST
 script; base: co-trained critic V(agent@goal, block@start) 18.6 vs V(start)
 22.9, 5/15 tasks satisfied by agent placement).
+
+### E10 results, arm A seed 0 (2026-09-08 evening; job 21043, ES picked step 4000 val 63)
+
+| condition | d42 | d43 | d44 | mean | base s0 (E1/E4) |
+|---|---|---|---|---|---|
+| rlp (aug critics) | 46.0 | 54.0 | 50.0 | **50.0** | 68.0 |
+| cem_value (aug co-critic) | 74.0 | 70.0 | 64.0 | 69.3 | 72.7 |
+| cem_tdvalue (aug teacher) | 58.0 | 74.0 | 54.0 | 62.0 | 67.3 |
+
+Aug cache: 2.0M rows in 14 min, expert agent speed p50 8.1 / p90 18.8 px/step,
+mean transit 9.4 steps; renderer fidelity pixel MAE 0.43 but latent L2
+re-render 0.66 vs consecutive-frame 1.23 (JPEG artifacts; `jpeg_quality=auto`
+added for a v2 cache, not used here).
+
+E9 probe on the augmented critics (same 15 tasks): the counterfactual hole is
+UNCHANGED -- collapse tasks {2, 4, 5, 9} before and after (task 9: 22.9 -> 0.6
+base, 12.8 -> 1.1 aug; task 4: 15.1 -> 1.6 vs 13.6 -> 1.2). Means: ac
+V(agent@goal, block@start) 18.8 (base 18.6), V(agent@start, block@goal) 12.7
+(base 17.8), agent sweep range 15.7 (19.7), block 28.5 (26.1). Half of all
+critic queries were displaced-agent frames, so an augmentation that left the
+probe untouched on exactly the same tasks points at the probe, not the critic.
+
+**Confound found in the base heatmaps:** on task 2 the block's start and goal
+positions coincide (right panel, o on *), i.e. the block barely moves in the
+25-step window and the expert spends the window repositioning the agent. For
+such tasks a low V(agent@goal, block@start) is CORRECT -- the remaining work
+IS agent transit. If the collapse tasks {2, 4, 5, 9} are the small-block-move
+tasks, E9's "agent shortcut" reading is wrong and E10 targeted a non-defect
+(consistent with it hurting: the transit term reshapes V at real states for
+no gain). Check running: `scripts/pusht_diag/task_geometry.py` (job
+pusht-geom-20260908) reports per-task block displacement/rotation and the
+within-tolerance flag for draws 42-44; `block_sensitivity.py` now records the
+same geometry per task.
