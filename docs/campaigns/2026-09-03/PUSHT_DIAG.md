@@ -415,3 +415,18 @@ where the block only has to be left alone and the agent placed within 20 px.
 Arm A (transit label) sits between base and B. So: agent sensitivity is
 load-bearing on h25 PushT; the critic's remaining deficit vs latent L2 is
 precision, not attribution. E10 closed negative; E11 (hybrid cost) running.
+
+### E10 arm A seed 1 (job 21064, ES step 4000 val 63): rlp 52/72/48 = **57.3** (base s1 64.0), cem_value 64.7 (73.3), cem_tdvalue 67.3 (68.7); E9 ac V(agent@goal, block@start) 17.9 vs V(start) 21.1. Consistent with seed 0: E10 negative.
+
+## E12 -- critic near-goal resolution arms (launched 2026-09-09, PushT + Cube)
+
+Both arms keep the config-B recipe and change only the critic training
+(teacher + co-critic): **E01** expectile 0.1 flat (teacher 0.03 -> 0.1;
+co-critic 0.1 -> 0.03 schedule -> 0.1 flat) as the control on expectile
+flattening; **NEAR** near-goal hindsight oversampling (30 % of in-episode
+goals drawn 1..3 steps ahead, `near_frac=0.3 near_max=3`). PushT tags
+`pusht-{e01,near}-s{0,1,2}-20260909` (readouts rlp / cem_value / cem_tdvalue
+vs base 65.6 / 71.3 / 69.3); Cube tags `rlp-cu-{e01,near03}-20260909`
+(unigamma yaml, CACHE_VERSION `cu-v2-n1s2-{e01,near03}-v1`, h25/h100 vs
+base 90.0 / 86.0). Success-tolerance relabeling (`TOL_RELABEL=1`) is
+implemented and smoke-tested but not launched (user chose the two arms).
