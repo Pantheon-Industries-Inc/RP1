@@ -288,6 +288,15 @@ run: |
         rlp_k64)
           run_eval rlp_k64 $ES core/solver=lip core.solver.iters_override=64 \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        cem_value)   # E4: CEM driven by the co-trained critic energy (windowed) instead of latent L2
+          run_eval cem_value $ES core/solver=cem core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_ac]";;
+        cem_tdvalue)  # E4b: CEM on the offline TD teacher
+          run_eval cem_tdvalue $ES core/solver=cem core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_td]";;
+        rlp_tdvalue)  # E6a: same actor, deploy critic swapped to the offline TD teacher
+          run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
         noop) run_eval noop $ES core/policy=no_move;;
       esac
