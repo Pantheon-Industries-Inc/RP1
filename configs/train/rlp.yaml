@@ -45,6 +45,16 @@ value:
                         # planner stage inherits the window automatically
   window_lag: null      # window frame spacing in primitive steps; required
                         # (= frameskip) whenever window_frames >= 2
+  tol_relabel: null     # success-tolerance relabeling of MC targets (needs the
+                        # `state` stage; see train/metric.yaml)
+  tol: null             # success-set spec override (dict), null = stage default
+  near_frac: null       # near-goal hindsight oversampling fraction
+  near_max: null
+
+# Optional stage 3c — logged-state cache for tolerance relabeling
+# (tools/cache_state), built when value.tol_relabel or planner.tol_relabel.
+tol_state_key: state
+tol_state_cache: null   # explicit path (null = <cache_directory>/<name>_state.pt)
 
 # Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.
@@ -80,3 +90,7 @@ planner:
   ckpt_every: null  # save a deployable planner snapshot every N steps so a
                     # selection pass can early-stop on held-out success
                     # (null/0 = off; forwarded to train/lip_ac)
+  tol_relabel: null # co-critic success-tolerance relabeling (see train/lip_ac.yaml)
+  tol: null
+  near_frac: null   # co-critic near-goal hindsight oversampling
+  near_max: null

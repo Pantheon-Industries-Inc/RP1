@@ -11,6 +11,15 @@ window_lag: 1
 aug_cache: null        # td: row-aligned agent-displaced cache (counterfactual augmentation)
 aug_p: 0.0             # fraction of TD queries swapped for their displaced-agent latent
 aug_transit_scale: 1.0 # label = d + aug_transit_scale * transit steps
+state_cache: null      # td: logged env state row-aligned with the cache (tools/cache_state)
+tol_relabel: false     # td: Monte-Carlo target = first entry into the goal's success set
+tol:                   # success-set test, env eval_state semantics (PushT defaults:
+  pos_dims: [0, 1, 2, 3]   #   joint agent+block position error < 20 px,
+  pos: 20.0                #   raw block-angle difference < 20 deg)
+  angle_dim: 4
+  angle: 0.3490658503988659
+near_frac: 0.0         # td: fraction of in-episode hindsight goals drawn 1..near_max steps ahead
+near_max: 3
 learner: td
 output:
   checkpoint: value

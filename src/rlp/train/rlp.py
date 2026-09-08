@@ -61,7 +61,7 @@ def _overrides(subtree: DictConfig) -> dict[str, object]:
 def _run(cfg: DictConfig) -> None:
     raw_skip = cfg.skip if isinstance(cfg.skip, str) else " ".join(cfg.skip)
     skip = {name.strip() for name in raw_skip.replace(",", " ").split() if name.strip()}
-    unknown = skip - {"cache", "subsample", "actions", "cache_aug", "value", "planner"}
+    unknown = skip - {"cache", "subsample", "actions", "cache_aug", "state", "value", "planner"}
     if unknown:
         raise ValueError(f"unknown skip stages: {sorted(unknown)}")
     cache_directory = Path(str(cfg.cache_directory)).expanduser()
@@ -80,6 +80,12 @@ def _run(cfg: DictConfig) -> None:
     aug_forward: dict[str, object] = (
         {"aug_p": aug_p, "aug_transit_scale": float(aug_cfg.transit_scale)} if aug_p > 0 and aug_cfg is not None else {}
     )
+    # success-tolerance relabeling needs the logged state row-aligned with the fs1 cache
+    tol_relabel = bool(cfg.value.get("tol_relabel")) or bool(cfg.planner.get("tol_relabel"))
+    state_cache = (
+        str(cfg.tol_state_cache) if cfg.get("tol_state_cache") else str(cache_directory / f"{cfg.name}_state.pt")
+    )
+    state_forward: dict[str, object] = {"state_cache": state_cache} if tol_relabel else {}
     stage_index = 0
 
     def run_stage(name: str, config_name: str, **values: object) -> object:
@@ -127,6 +133,15 @@ def _run(cfg: DictConfig) -> None:
             seed=int(aug_cfg.seed),
             workers=int(aug_cfg.workers),
         )
+    if tol_relabel and "state" not in skip:
+        run_stage(
+            "state",
+            "tools/cache_state",
+            dataset=str(cfg.dataset),
+            out=state_cache,
+            state_key=str(cfg.get("tol_state_key", "state")),
+            max_episodes=cfg.train_episodes,
+        )
     window_frames = cfg.value.get("window_frames")
     window_lag = cfg.value.get("window_lag")
     windowed = window_frames is not None and int(window_frames) > 1
@@ -155,6 +170,7 @@ def _run(cfg: DictConfig) -> None:
             **{"output.checkpoint": "value_td"},
             **({"aug_cache": cache_aug} if aug_p > 0 else {}),
             **aug_forward,
+            **state_forward,
             **value_overrides,
         )
     if "planner" not in skip:
@@ -189,6 +205,7 @@ def _run(cfg: DictConfig) -> None:
             **{"output.planner_checkpoint": "planner.pt", "output.value_checkpoint": "value_ac"},
             **({"cache_aug": cache_aug} if aug_p > 0 else {}),
             **aug_forward,
+            **state_forward,
             **planner_overrides,
         )
     logger.success(

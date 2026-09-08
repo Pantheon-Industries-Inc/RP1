@@ -60,6 +60,23 @@ def _run(cfg: DictConfig) -> None:
         aug = (aug_cache.z, aug_cache.state[:, -1].float())
         logger.info(f"Loaded agent-aug cache: {len(aug_cache.z)} rows, mean transit {aug[1].mean().item():.2f} steps")
 
+    # success-tolerance relabeling (td only): logged env state row-aligned with the cache
+    state = None
+    tolerance = None
+    if args.get("tol_relabel"):
+        if not args.get("state_cache"):
+            raise ValueError("tol_relabel=true requires state_cache (tools/cache_state output)")
+        state_cache = LatentCache.load(str(args.state_cache), mmap=False)
+        if (
+            len(state_cache.z) != len(cache.z)
+            or not torch.equal(state_cache.episode_idx, cache.episode_idx)
+            or not torch.equal(state_cache.step_idx, cache.step_idx)
+        ):
+            raise ValueError("state_cache rows do not align with the training cache")
+        state = state_cache.z.numpy()
+        tolerance = OmegaConf.to_container(args.tol, resolve=True)  # type: ignore[assignment]
+        logger.info(f"Loaded state cache for tolerance relabeling: {state.shape}, tol={tolerance}")
+
     learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
 
     module: nn.Module
@@ -105,8 +122,10 @@ def _run(cfg: DictConfig) -> None:
             rank_margin=args.rank_margin,
             aug_p=float(args.get("aug_p", 0.0) or 0.0),
             aug_transit_scale=float(args.get("aug_transit_scale", 1.0)),
+            near_frac=float(args.get("near_frac", 0.0) or 0.0),
+            near_max=int(args.get("near_max", 3) or 3),
         )
-        module = learners.td.fit(cache, td_cfg, device, aug=aug)
+        module = learners.td.fit(cache, td_cfg, device, aug=aug, state=state, tolerance=tolerance)
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,

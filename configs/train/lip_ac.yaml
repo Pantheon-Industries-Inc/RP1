@@ -10,6 +10,15 @@ cache_td: null
 cache_aug: null       # row-aligned agent-displaced fs1 cache (counterfactual critic augmentation)
 aug_p: 0.0            # fraction of critic TD queries swapped for their displaced-agent latent
 aug_transit_scale: 1.0
+state_cache: null     # logged env state row-aligned with cache_td (tools/cache_state)
+tol_relabel: false    # co-critic MC target = first entry into the goal's success set
+tol:                  # success-set test (PushT defaults; see train/metric.yaml)
+  pos_dims: [0, 1, 2, 3]
+  pos: 20.0
+  angle_dim: 4
+  angle: 0.3490658503988659
+near_frac: 0.0        # fraction of in-episode critic goals drawn 1..near_max steps ahead
+near_max: 3
 h5: ???
 wm: ???
 init_value: null

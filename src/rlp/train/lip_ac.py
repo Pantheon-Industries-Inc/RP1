@@ -231,6 +231,28 @@ def _run(cfg: DictConfig) -> None:
             f"transit_scale={float(a.aug_transit_scale)} mean transit {aug_transit.mean().item():.2f} steps"
         )
     aug_rng = np.random.default_rng(a.seed + 7)  # separate stream: the actor sampler's RNG stays frozen
+    # success-tolerance relabeling of the co-critic's MC targets (row-aligned logged state)
+    td_state: np.ndarray | None = None
+    td_tol: dict[str, object] | None = None
+    if a.get("tol_relabel"):
+        if c_td is None:
+            raise ValueError("tol_relabel needs the dense TD cache")
+        if not a.get("state_cache"):
+            raise ValueError("tol_relabel=true requires state_cache (tools/cache_state output)")
+        sc = LatentCache.load(str(a.state_cache), mmap=False)
+        if (
+            len(sc.z) != len(c_td.z)
+            or not torch.equal(sc.episode_idx, c_td.episode_idx)
+            or not torch.equal(sc.step_idx, c_td.step_idx)
+        ):
+            raise ValueError("state_cache rows do not align with cache_td")
+        td_state = sc.z.numpy()
+        td_tol = cast(dict[str, object], OmegaConf.to_container(a.tol, resolve=True))
+        logger.info(f"LIP-AC co-critic success-tolerance relabeling on: {td_tol}")
+    td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
+    td_near_max = int(a.get("near_max", 3) or 3)
+    if td_near_frac > 0:
+        logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
@@ -289,6 +311,10 @@ def _run(cfg: DictConfig) -> None:
             balanced=True,
             seed=a.seed,
             max_delta=a.td_max_delta,
+            state=td_state,
+            tolerance=td_tol,
+            near_frac=td_near_frac,
+            near_max=td_near_max,
         )
     )
     c_opt = None if a.actor_only else torch.optim.AdamW(critic.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)

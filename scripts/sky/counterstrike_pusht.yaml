@@ -74,6 +74,13 @@ envs:
   AUG_TRANSIT: "1.0"    # transit-cost scale on augmented labels (0 = label-preserving)
   AUG_CACHE_TAG: ""     # tag under $OUT_ROOT whose caches/ holds the aug cache
                         # (default: own tag; seeds 1/2 point at the seed-0 tag)
+  TOL_RELABEL: "0"      # 1 = success-tolerance relabeling of the TD teacher's and the
+                        # co-critic's MC targets (zero set = the env's success set;
+                        # PushT E12, 2026-09-09). Builds a row-aligned state cache
+                        # (seconds) next to the aug cache on the writable volume.
+  NEAR_FRAC: "0"        # fraction of in-episode hindsight goals drawn 1..NEAR_MAX steps
+                        # ahead, teacher + co-critic (0 = balanced buckets only)
+  NEAR_MAX: "3"
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -182,6 +189,14 @@ run: |
   if [ "${AGENT_AUG:-0}" != 0 ]; then
     [ -f "$AUG_FILE" ] && SKIP="$SKIP,cache_aug"
     AUG_EXTRA="agent_aug.p=$AGENT_AUG agent_aug.transit_scale=${AUG_TRANSIT:-1.0} agent_aug.cache=$AUG_FILE agent_aug.workers=16"
+  fi
+  STATE_FILE=$AUGCD/counterstrike_state.pt
+  if [ "${TOL_RELABEL:-0}" = 1 ]; then
+    [ -f "$STATE_FILE" ] && SKIP="$SKIP,state"
+    AUG_EXTRA="$AUG_EXTRA value.tol_relabel=true planner.tol_relabel=true tol_state_cache=$STATE_FILE"
+  fi
+  if [ "${NEAR_FRAC:-0}" != 0 ]; then
+    AUG_EXTRA="$AUG_EXTRA value.near_frac=$NEAR_FRAC planner.near_frac=$NEAR_FRAC value.near_max=${NEAR_MAX:-3} planner.near_max=${NEAR_MAX:-3}"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 

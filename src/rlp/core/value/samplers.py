@@ -197,7 +197,27 @@ class NStepGoalSampler(_BaseSampler):
         balanced: bool = True,
         seed: int = 0,
         max_delta: int | None = None,
+        state: np.ndarray | None = None,
+        tolerance: dict[str, object] | None = None,
+        near_frac: float = 0.0,
+        near_max: int = 3,
     ) -> None:
+        """
+        ``state`` + ``tolerance`` switch on **success-tolerance relabeling**:
+        the Monte-Carlo distance to an in-episode goal becomes the FIRST step at
+        which the logged state enters the goal's success set (the environment's
+        own test: joint position error over ``pos_dims`` < ``pos`` and, if
+        ``angle_dim`` is set, |angle difference| < ``angle``), not the goal's
+        frame index; a state already inside the set gets distance 0, and a
+        cross-episode goal whose set already contains the state is "reached".
+        The critic's zero set then coincides with the task's success set and
+        the ramp outside it is sharp, instead of the step-granular, optimistic
+        flat bottom an exact-frame target produces (PushT E10/E11 analysis).
+
+        ``near_frac`` draws that fraction of in-episode hindsight goals
+        1..``near_max`` steps ahead so the last steps are actually fitted
+        (balanced full-horizon buckets put a few percent of pairs there).
+        """
         super().__init__(cache, seed=seed, min_len=2)
         self.n = n_step
         self.max_delta = max_delta
@@ -205,6 +225,26 @@ class NStepGoalSampler(_BaseSampler):
         self.n_buckets = n_buckets
         self.balanced = balanced
         self.n_total = len(cache.z)
+        self.state = None if state is None else np.asarray(state, dtype=np.float64)
+        if self.state is not None and len(self.state) != self.n_total:
+            raise ValueError(f"state rows {len(self.state)} != cache rows {self.n_total}")
+        if self.state is not None and not tolerance:
+            raise ValueError("tolerance relabeling needs a tolerance spec (pos_dims, pos[, angle_dim, angle])")
+        self.tolerance = tolerance
+        self.near_frac = float(near_frac)
+        self.near_max = int(near_max)
+
+    def _within(self, s: np.ndarray, g: np.ndarray) -> np.ndarray:
+        """Success-set membership of state(s) ``s`` w.r.t. goal state ``g`` (env ``eval_state`` semantics)."""
+        if self.tolerance is None:
+            raise RuntimeError("tolerance not configured")
+        pos_dims = list(self.tolerance["pos_dims"])  # type: ignore[arg-type]
+        ok = np.linalg.norm(s[..., pos_dims] - g[..., pos_dims], axis=-1) < float(self.tolerance["pos"])  # type: ignore[arg-type]
+        angle_dim = self.tolerance.get("angle_dim")
+        if angle_dim is not None:
+            # the environment compares raw angles (no wrap-around); mirror it exactly
+            ok = ok & (np.abs(s[..., int(angle_dim)] - g[..., int(angle_dim)]) < float(self.tolerance["angle"]))  # type: ignore[arg-type]
+        return np.asarray(ok)
 
     def _offset(self, hi: int) -> int:
         if hi < 1:
@@ -235,14 +275,25 @@ class NStepGoalSampler(_BaseSampler):
             t_idx[b], tn_idx[b], n_eff[b] = rows[t], rows[t + ne], ne
             if self.rng.random() < self.p_cross:
                 g_idx[b] = int(self.rng.integers(0, self.n_total))  # cross-episode goal
+                if self.state is not None and bool(self._within(self.state[t_idx[b]], self.state[g_idx[b]])):
+                    reached[b], dist[b] = 1.0, 0.0  # already inside the goal's success set
             else:
                 _hi = L - 1 - t
                 if self.max_delta is not None:
                     _hi = min(_hi, self.max_delta)
-                delta = self._offset(_hi)
+                if self.near_frac > 0 and self.rng.random() < self.near_frac:
+                    delta = int(self.rng.integers(1, min(self.near_max, _hi) + 1))
+                else:
+                    delta = self._offset(_hi)
                 g_idx[b] = rows[t + delta]
-                if delta <= ne:  # goal reached within the n-step window
-                    reached[b], dist[b] = 1.0, float(delta)
+                first = delta
+                if self.state is not None:
+                    # first entry into the goal's success set along the logged trajectory
+                    # (the goal frame itself is always inside, so argmax is well defined)
+                    inside = self._within(self.state[rows[t : t + delta + 1]], self.state[rows[t + delta]])
+                    first = int(np.argmax(inside))
+                if first <= ne:  # goal reached within the n-step window
+                    reached[b], dist[b] = 1.0, float(first)
         return {
             "z_t": self.z[t_idx],
             "z_tn": self.z[tn_idx],

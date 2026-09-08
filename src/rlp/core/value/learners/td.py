@@ -62,6 +62,10 @@ class TDConfig:
     # grows by ``aug_transit_scale * transit`` (steps to walk the agent back)
     aug_p: float = 0.0
     aug_transit_scale: float = 1.0
+    # near-goal resolution: fraction of in-episode hindsight goals drawn
+    # 1..near_max steps ahead (see NStepGoalSampler)
+    near_frac: float = 0.0
+    near_max: int = 3
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
@@ -102,7 +106,14 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
     )
 
 
-def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu", aug: AugCache | None = None) -> MetricHead:
+def fit(
+    cache: LatentCache,
+    cfg: TDConfig,
+    device: str = "cpu",
+    aug: AugCache | None = None,
+    state: np.ndarray | None = None,
+    tolerance: dict[str, object] | None = None,
+) -> MetricHead:
     """Train and return a temporal-distance (quasi)metric head.
 
     ``aug`` enables the counterfactual agent augmentation: ``(z_aug, transit)``
@@ -110,6 +121,9 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu", aug: AugCache | 
     A fraction ``cfg.aug_p`` of every batch's query states is replaced by the
     displaced-agent latent; its target is the original label plus the transit
     cost — the cost of walking the agent back and then following the data.
+
+    ``state`` + ``tolerance`` switch on success-tolerance relabeling of the
+    Monte-Carlo targets (see :class:`NStepGoalSampler`).
     """
     torch.manual_seed(cfg.seed)
     use_aug = aug is not None and cfg.aug_p > 0
@@ -132,7 +146,15 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu", aug: AugCache | 
         balanced=cfg.balanced,
         seed=cfg.seed,
         max_delta=cfg.max_delta,
+        state=state,
+        tolerance=tolerance,
+        near_frac=cfg.near_frac,
+        near_max=cfg.near_max,
     )
+    if state is not None:
+        logger.info(f"TD success-tolerance relabeling on: {tolerance}")
+    if cfg.near_frac > 0:
+        logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
     g = cfg.gamma
     step_norm = 1.0
     episodes = cache.episodes()
