@@ -29,6 +29,7 @@ envs:
   EPOCHS: "1"
   FT_LR: "1e-5"
   COLLECT_FROM_TAG: ""        # reuse this tag's onpolicy/ + collogs/ (ablations: fine-tune only)
+  TRUNC_AFTER_SUCCESS: "10"   # cut successful on-policy episodes at first success + K rows ("" = keep whole)
   MAXPAR: "4"
   SMOKE: "0"
   WANDB_PROJECT: RLP
@@ -67,6 +68,7 @@ config:
 
 file_mounts:
   /tmp/dyna2/wm_finetune.py: ./scripts/sky/dyna2/overlays/wm_finetune.py
+  /tmp/dyna2/build_dyna_mix.py: ./scripts/sky/dyna2/overlays/build_dyna_mix.py
   /tmp/codex-overlays/lip.py: ./scripts/sky/overlays/lip.py
 
 setup: |
@@ -81,6 +83,7 @@ setup: |
   cd ~/repo && git remote set-url origin https://github.com/armin-sommer/Value_Metric_LeWM.git
   echo "[repo] $(git rev-parse --short HEAD) on eval-sweep"
   cp /tmp/dyna2/wm_finetune.py stable-worldmodel/scripts/train/wm_finetune.py
+  cp /tmp/dyna2/build_dyna_mix.py Dyna/dyna_harness/build_dyna_mix_trunc.py
   cp /tmp/codex-overlays/lip.py stable-worldmodel/stable_worldmodel/solver/lip.py
   pip install -q -e "$HOME/repo/stable-worldmodel[train,format]" \
     opencv-python-headless hdf5plugin hf_transfer wandb pylance \
@@ -247,10 +250,11 @@ run: |
   ls -d $PERSIST/onpolicy/onp_*.lance | tee -a "$DRV"
 
   # ---------------- P2: 50/50 outcome-labelled mix vs the expert 0:EPHI slice
-  MIX=~/dyna/mix_5050.lance
+  TRUNCFLAG=""; MIX=~/dyna/mix_5050.lance
+  [ -n "${TRUNC_AFTER_SUCCESS:-}" ] && { TRUNCFLAG="--truncate-after-success ${TRUNC_AFTER_SUCCESS}"; MIX=~/dyna/mix_5050_t${TRUNC_AFTER_SUCCESS}.lance; }
   EXHI=${EPHI}; [ "${SMOKE:-0}" = 1 ] && EXHI=400
   if [ ! -f "$MIX/.done" ]; then
-    python3 ~/repo/Dyna/dyna_harness/build_dyna_mix.py --expert "$EXPERT" \
+    python3 ~/repo/Dyna/dyna_harness/build_dyna_mix_trunc.py --expert "$EXPERT" $TRUNCFLAG \
       --onpolicy $(ls -d $PERSIST/onpolicy/onp_*.lance) --out "$MIX" --onpolicy-frac 0.5 --expert-ep-hi "$EXHI" \
       2>&1 | tee ~/gl/mix.log | tail -8
     grep -q BUILD_MIX_DONE ~/gl/mix.log || { log "mix FAILED"; tail -30 ~/gl/mix.log; exit 1; }
@@ -297,7 +301,7 @@ run: |
   n = sum(b[k].float().pow(2).sum().item() for k in common if a[k].shape == b[k].shape)
   print(f"[export] {len(ka)} tensors ({len(common)} shared with init); relative L2 drift from init = {math.sqrt(d/max(n,1e-9)):.4f}")
   PY
-  printf 'base=%s\niter=%s\nactor_tag=%s\nwm_src=%s\nanchor=%s\nfreeze=%s\nepochs=%s\nncall=%s\noffsets=%s\n' \
-    "$BASE" "$ITER" "$ACTOR_TAG" "${WM_SRC:-base}" "$ANCHOR_WEIGHT" "$FREEZE_ENCODER" "$EPOCHS" "$NCALL" "$OFFSETS" > $PERSIST/wm/PROVENANCE.txt
+  printf 'base=%s\niter=%s\nactor_tag=%s\nwm_src=%s\nanchor=%s\nfreeze=%s\nepochs=%s\nncall=%s\noffsets=%s\ntrunc_after_success=%s\ncollect_from=%s\n' \
+    "$BASE" "$ITER" "$ACTOR_TAG" "${WM_SRC:-base}" "$ANCHOR_WEIGHT" "$FREEZE_ENCODER" "$EPOCHS" "$NCALL" "$OFFSETS" "${TRUNC_AFTER_SUCCESS:-none}" "${COLLECT_FROM_TAG:-}" > $PERSIST/wm/PROVENANCE.txt
   ls -la $PERSIST/wm | tee -a "$DRV"
   log "DYNA2_COLLECT_FT_DONE $PERSIST/wm"

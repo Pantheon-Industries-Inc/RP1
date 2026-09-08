@@ -15,6 +15,7 @@ ACTOR_GLOB="g_cube_${BASE}_unig_ctrl_a2.5_s*.pt"
 ANCHOR=${ANCHOR_WEIGHT:-1.0}; FREEZE=${FREEZE_ENCODER:-0}
 SUF=${TAG_SUFFIX:-}                 # ablation arms: distinct tags, same pipeline
 CFT=${COLLECT_FROM_TAG:-}           # ablation arms: reuse a finished collection
+TRUNC=${TRUNC_AFTER_SUCCESS-10}     # post-success truncation K (export TRUNC_AFTER_SUCCESS="" to disable)
 
 job_status(){ # <name> -> status word or ""
   sky jobs queue --limit 400 2>/dev/null | grep -E "^ *[0-9]+ +- +$1 " | head -1 \
@@ -39,7 +40,7 @@ launch_collect(){ # <iter> <actor_tag> <wm_src> <out_tag>
   sky jobs launch scripts/sky/dyna2/dyna2_collect_ft.yaml -n "$OT" --priority p1 -y --async \
     --env BASE=$BASE --env ITER=$IT --env ACTOR_TAG="$AT" --env ACTOR_GLOB="$ACTOR_GLOB" \
     --env WM_SRC="$WS" --env OUT_TAG="$OT" --env ANCHOR_WEIGHT=$ANCHOR --env FREEZE_ENCODER=$FREEZE \
-    --env EPOCHS=1 --env NCALL=12 --env OFFSETS="25 100" --env MAXPAR=4 --env SMOKE=0 --env COLLECT_FROM_TAG="$CFT" \
+    --env EPOCHS=1 --env NCALL=12 --env OFFSETS="25 100" --env MAXPAR=4 --env SMOKE=0 --env COLLECT_FROM_TAG="$CFT" --env TRUNC_AFTER_SUCCESS="$TRUNC" \
     --env PANTHEON_USER=$USERV 2>&1 | tail -1 | tee -a "$LOG"
 }
 launch_train(){ # <tag> <wm_dir> <cache_version> [solver_extra]
