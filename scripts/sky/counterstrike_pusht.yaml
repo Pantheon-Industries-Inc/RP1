@@ -78,6 +78,7 @@ envs:
   PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
+  RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
   POST_ONLY: "0"         # 1 = skip training/evals, only run POST_SCRIPT_B64 on an existing $D
   SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
@@ -119,7 +120,7 @@ run: |
   # The base image presets LD_LIBRARY_PATH to system dirs whose libstdc++ is
   # older than the pixi env's toolchain; put the env's own runtime first.
   export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
-  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0 RLP_RECORD_MIN_LEN=${RECORD_MIN_LEN:-25}
   export RLP_DATA_HOME=/tmp/rlp-data
   mkdir -p "$RLP_DATA_HOME"
   D=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$EXPERIMENT_TAG

@@ -7,6 +7,7 @@ future public upstream evaluation hook can replace this subclass directly.
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from copy import deepcopy
@@ -173,7 +174,7 @@ class World(_World):
             def episodes() -> Iterator[dict[str, list[np.ndarray]]]:
                 for buffer in record_buffers:
                     episode = {key: list(values) for key, values in buffer.items()}
-                    if len(episode.get("action", ())) < 25:
+                    if len(episode.get("action", ())) < int(os.environ.get("RLP_RECORD_MIN_LEN", "25")):
                         stats["dropped"] += 1
                         continue
                     episode["action"].append(episode["action"].pop(0))
