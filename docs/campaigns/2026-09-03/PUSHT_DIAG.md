@@ -194,3 +194,45 @@ actors.
   moves far more with the agent than with the block, the fix is on the
   value target: block-centric goal conditioning (mask the agent in the goal
   frame, or a privileged block-pose distance target), not more optimisation.
+
+### E9 -- block-vs-agent sensitivity (actor s0, draw 42, first 15 tasks, 24x24 sweeps)
+
+| scorer | V range over AGENT sweep (block fixed) | V range over BLOCK sweep (agent fixed) | V(start) | V(agent at goal, block at start) | V(agent at start, block at goal) | V(goal config) |
+|---|---|---|---|---|---|---|
+| co-trained critic | 19.7 | 26.1 | 22.9 | **18.6** | 17.8 | 1.3 |
+| offline TD teacher | 10.8 | 8.2 | 13.4 | **8.6** | 12.0 | 0.6 |
+| latent L2 | 9.1 | 9.1 | | | | |
+
+- Moving ONLY the agent to its goal-frame position drops the co-trained
+  critic by more than 10 on 5 of 15 tasks (2, 4, 5, 9, 10); on task 9 (a
+  mode-A failure) V falls from 22.9 to 0.6 with the block untouched, on task
+  4 from 15.1 to 1.6. The critic declares those tasks essentially solved by
+  agent placement alone.
+- The offline teacher is worse: agent-only move 13.4 -> 8.6 vs block-only
+  13.4 -> 12.0, i.e. the teacher is mostly an agent-position distance.
+  Co-training (imagined rollouts, value expansion) partially repaired this
+  (block range 26 > agent range 20 on average) but left the agent shortcut
+  on a third of the tasks. This ordering matches E4 (teacher-CEM 69.3 <
+  co-trained-CEM 71.3 < latent-CEM 78.9): latent L2 weights agent and block
+  equally (9.1 vs 9.1).
+- Figure: `docs/figures/pusht_diag/e9_agent_vs_block.png`; data
+  `block_sensitivity.json`.
+
+**Diagnosis of the critic.** The value target -- temporal distance to a goal
+FRAME in a latent space where the agent is the salient moving object --
+lets the critic satisfy itself by putting the agent where the expert's agent
+ended, with the block wherever it is. A gradient refiner finds that shortcut
+(E1: energy down, success down); a sampler on latent L2 does not, because the
+block's pixels count as much as the agent's there. This is a specification
+defect of the target, not a capacity or optimisation defect.
+
+**Fix candidates (value-target side, untested):**
+1. Block-centric goal conditioning: erase/randomise the agent in the goal
+   frame (or condition the critic on the block-only latent), so the target
+   cannot be reached by agent placement.
+2. Privileged-state target: train the critic's temporal distance in
+   block-pose space (position + angle, the eval's own success metric), as the
+   cube stack does with `privileged_block_0_pos`, and read it through the
+   latent at deploy.
+3. Agent-position augmentation: for each training pair, re-render the goal
+   frame with the agent moved, so the critic learns agent invariance.

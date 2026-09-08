@@ -1,0 +1,436 @@
+{
+ "per_task": [
+  {
+   "task": 0,
+   "ac": {
+    "agent_sweep_range": 16.331249237060547,
+    "agent_sweep_std": 3.076490879058838,
+    "block_sweep_range": 23.952178955078125,
+    "block_sweep_std": 4.331753730773926,
+    "V_start": 19.857982635498047,
+    "V_agent@goal_block@start": 29.840604782104492,
+    "V_agent@start_block@goal": 16.32345962524414,
+    "V_goal_config": 0.8193343877792358
+   },
+   "td": {
+    "agent_sweep_range": 7.320554733276367,
+    "agent_sweep_std": 1.3977265357971191,
+    "block_sweep_range": 9.666214942932129,
+    "block_sweep_std": 1.8846607208251953,
+    "V_start": 11.232539176940918,
+    "V_agent@goal_block@start": 15.176140785217285,
+    "V_agent@start_block@goal": 11.058614730834961,
+    "V_goal_config": 0.5522171258926392
+   },
+   "latent": {
+    "agent_sweep_range": 4.836536407470703,
+    "block_sweep_range": 6.709226608276367
+   }
+  },
+  {
+   "task": 1,
+   "ac": {
+    "agent_sweep_range": 15.37991714477539,
+    "agent_sweep_std": 3.6298916339874268,
+    "block_sweep_range": 18.246572494506836,
+    "block_sweep_std": 3.6596930027008057,
+    "V_start": 36.400638580322266,
+    "V_agent@goal_block@start": 38.42216491699219,
+    "V_agent@start_block@goal": 22.909786224365234,
+    "V_goal_config": 2.4204208850860596
+   },
+   "td": {
+    "agent_sweep_range": 9.060587882995605,
+    "agent_sweep_std": 2.063983678817749,
+    "block_sweep_range": 5.498833656311035,
+    "block_sweep_std": 1.171303629875183,
+    "V_start": 14.907476425170898,
+    "V_agent@goal_block@start": 17.108945846557617,
+    "V_agent@start_block@goal": 16.513015747070312,
+    "V_goal_config": 1.009252667427063
+   },
+   "latent": {
+    "agent_sweep_range": 4.63911247253418,
+    "block_sweep_range": 5.68940544128418
+   }
+  },
+  {
+   "task": 2,
+   "ac": {
+    "agent_sweep_range": 26.914350509643555,
+    "agent_sweep_std": 6.527343273162842,
+    "block_sweep_range": 21.810739517211914,
+    "block_sweep_std": 5.161395072937012,
+    "V_start": 27.066822052001953,
+    "V_agent@goal_block@start": 8.440152168273926,
+    "V_agent@start_block@goal": 25.466564178466797,
+    "V_goal_config": 1.3742437362670898
+   },
+   "td": {
+    "agent_sweep_range": 16.036710739135742,
+    "agent_sweep_std": 3.4169795513153076,
+    "block_sweep_range": 7.1469221115112305,
+    "block_sweep_std": 1.5330333709716797,
+    "V_start": 16.17159652709961,
+    "V_agent@goal_block@start": 3.7115578651428223,
+    "V_agent@start_block@goal": 15.872587203979492,
+    "V_goal_config": 0.6943279504776001
+   },
+   "latent": {
+    "agent_sweep_range": 12.128860473632812,
+    "block_sweep_range": 7.4287004470825195
+   }
+  },
+  {
+   "task": 3,
+   "ac": {
+    "agent_sweep_range": 16.155029296875,
+    "agent_sweep_std": 3.4402008056640625,
+    "block_sweep_range": 24.943599700927734,
+    "block_sweep_std": 5.189861297607422,
+    "V_start": 26.252439498901367,
+    "V_agent@goal_block@start": 23.705760955810547,
+    "V_agent@start_block@goal": 18.971092224121094,
+    "V_goal_config": 0.7646276950836182
+   },
+   "td": {
+    "agent_sweep_range": 8.13070297241211,
+    "agent_sweep_std": 2.120676040649414,
+    "block_sweep_range": 8.038290023803711,
+    "block_sweep_std": 1.8075928688049316,
+    "V_start": 14.390597343444824,
+    "V_agent@goal_block@start": 9.602109909057617,
+    "V_agent@start_block@goal": 12.868486404418945,
+    "V_goal_config": 0.3915027379989624
+   },
+   "latent": {
+    "agent_sweep_range": 4.906190872192383,
+    "block_sweep_range": 10.192081451416016
+   }
+  },
+  {
+   "task": 4,
+   "ac": {
+    "agent_sweep_range": 27.551862716674805,
+    "agent_sweep_std": 5.208452224731445,
+    "block_sweep_range": 27.91082000732422,
+    "block_sweep_std": 6.078543186187744,
+    "V_start": 15.124626159667969,
+    "V_agent@goal_block@start": 1.6137357950210571,
+    "V_agent@start_block@goal": 15.48550033569336,
+    "V_goal_config": 1.6137357950210571
+   },
+   "td": {
+    "agent_sweep_range": 15.529411315917969,
+    "agent_sweep_std": 3.2147583961486816,
+    "block_sweep_range": 8.52226734161377,
+    "block_sweep_std": 1.4158762693405151,
+    "V_start": 9.062838554382324,
+    "V_agent@goal_block@start": 0.8072210550308228,
+    "V_agent@start_block@goal": 9.063193321228027,
+    "V_goal_config": 0.8072210550308228
+   },
+   "latent": {
+    "agent_sweep_range": 13.738630294799805,
+    "block_sweep_range": 12.884538650512695
+   }
+  },
+  {
+   "task": 5,
+   "ac": {
+    "agent_sweep_range": 24.910205841064453,
+    "agent_sweep_std": 6.721895694732666,
+    "block_sweep_range": 30.693195343017578,
+    "block_sweep_std": 5.761954307556152,
+    "V_start": 18.131420135498047,
+    "V_agent@goal_block@start": 3.661677122116089,
+    "V_agent@start_block@goal": 18.147607803344727,
+    "V_goal_config": 1.96253502368927
+   },
+   "td": {
+    "agent_sweep_range": 14.822338104248047,
+    "agent_sweep_std": 4.222838878631592,
+    "block_sweep_range": 8.632741928100586,
+    "block_sweep_std": 1.3811455965042114,
+    "V_start": 10.878300666809082,
+    "V_agent@goal_block@start": 1.876011848449707,
+    "V_agent@start_block@goal": 10.920071601867676,
+    "V_goal_config": 1.1683855056762695
+   },
+   "latent": {
+    "agent_sweep_range": 14.93038558959961,
+    "block_sweep_range": 11.513575553894043
+   }
+  },
+  {
+   "task": 6,
+   "ac": {
+    "agent_sweep_range": 10.635906219482422,
+    "agent_sweep_std": 2.235335111618042,
+    "block_sweep_range": 35.60280227661133,
+    "block_sweep_std": 4.945363521575928,
+    "V_start": 26.026063919067383,
+    "V_agent@goal_block@start": 24.164091110229492,
+    "V_agent@start_block@goal": 8.310606956481934,
+    "V_goal_config": 2.4242141246795654
+   },
+   "td": {
+    "agent_sweep_range": 7.652615547180176,
+    "agent_sweep_std": 1.4395928382873535,
+    "block_sweep_range": 11.378897666931152,
+    "block_sweep_std": 1.5980567932128906,
+    "V_start": 15.290543556213379,
+    "V_agent@goal_block@start": 11.348837852478027,
+    "V_agent@start_block@goal": 8.252264022827148,
+    "V_goal_config": 0.9354714751243591
+   },
+   "latent": {
+    "agent_sweep_range": 7.556658744812012,
+    "block_sweep_range": 16.0208797454834
+   }
+  },
+  {
+   "task": 7,
+   "ac": {
+    "agent_sweep_range": 14.229068756103516,
+    "agent_sweep_std": 3.23073410987854,
+    "block_sweep_range": 23.866342544555664,
+    "block_sweep_std": 4.951230049133301,
+    "V_start": 21.277700424194336,
+    "V_agent@goal_block@start": 24.307880401611328,
+    "V_agent@start_block@goal": 13.725626945495605,
+    "V_goal_config": 1.2808233499526978
+   },
+   "td": {
+    "agent_sweep_range": 6.83708381652832,
+    "agent_sweep_std": 1.3236767053604126,
+    "block_sweep_range": 9.376596450805664,
+    "block_sweep_std": 2.0135509967803955,
+    "V_start": 11.700563430786133,
+    "V_agent@goal_block@start": 10.05366039276123,
+    "V_agent@start_block@goal": 11.488306999206543,
+    "V_goal_config": 0.7000275254249573
+   },
+   "latent": {
+    "agent_sweep_range": 5.230568885803223,
+    "block_sweep_range": 7.133487701416016
+   }
+  },
+  {
+   "task": 8,
+   "ac": {
+    "agent_sweep_range": 21.609281539916992,
+    "agent_sweep_std": 4.299317359924316,
+    "block_sweep_range": 30.47169303894043,
+    "block_sweep_std": 5.874593734741211,
+    "V_start": 17.69420051574707,
+    "V_agent@goal_block@start": 17.642845153808594,
+    "V_agent@start_block@goal": 13.501431465148926,
+    "V_goal_config": 1.0065757036209106
+   },
+   "td": {
+    "agent_sweep_range": 13.298097610473633,
+    "agent_sweep_std": 2.3709914684295654,
+    "block_sweep_range": 10.589091300964355,
+    "block_sweep_std": 2.184767484664917,
+    "V_start": 13.02216625213623,
+    "V_agent@goal_block@start": 11.32296371459961,
+    "V_agent@start_block@goal": 10.919634819030762,
+    "V_goal_config": 0.40310484170913696
+   },
+   "latent": {
+    "agent_sweep_range": 10.328478813171387,
+    "block_sweep_range": 9.888691902160645
+   }
+  },
+  {
+   "task": 9,
+   "ac": {
+    "agent_sweep_range": 28.8889102935791,
+    "agent_sweep_std": 6.308913707733154,
+    "block_sweep_range": 21.215961456298828,
+    "block_sweep_std": 4.278202533721924,
+    "V_start": 22.90734100341797,
+    "V_agent@goal_block@start": 0.6278176307678223,
+    "V_agent@start_block@goal": 23.30682373046875,
+    "V_goal_config": 0.6278176307678223
+   },
+   "td": {
+    "agent_sweep_range": 17.374244689941406,
+    "agent_sweep_std": 3.498842239379883,
+    "block_sweep_range": 7.4570817947387695,
+    "block_sweep_std": 1.3972649574279785,
+    "V_start": 13.432559967041016,
+    "V_agent@goal_block@start": 0.27141618728637695,
+    "V_agent@start_block@goal": 13.54421615600586,
+    "V_goal_config": 0.27141618728637695
+   },
+   "latent": {
+    "agent_sweep_range": 17.476530075073242,
+    "block_sweep_range": 6.4242048263549805
+   }
+  },
+  {
+   "task": 10,
+   "ac": {
+    "agent_sweep_range": 21.68697738647461,
+    "agent_sweep_std": 5.287841320037842,
+    "block_sweep_range": 26.371994018554688,
+    "block_sweep_std": 4.790704727172852,
+    "V_start": 18.23853874206543,
+    "V_agent@goal_block@start": 5.668349266052246,
+    "V_agent@start_block@goal": 18.82162094116211,
+    "V_goal_config": 1.2365293502807617
+   },
+   "td": {
+    "agent_sweep_range": 12.202935218811035,
+    "agent_sweep_std": 3.08052396774292,
+    "block_sweep_range": 6.62462043762207,
+    "block_sweep_std": 1.433388113975525,
+    "V_start": 13.153131484985352,
+    "V_agent@goal_block@start": 3.169743299484253,
+    "V_agent@start_block@goal": 13.126399993896484,
+    "V_goal_config": 0.6578912138938904
+   },
+   "latent": {
+    "agent_sweep_range": 11.117111206054688,
+    "block_sweep_range": 7.987679481506348
+   }
+  },
+  {
+   "task": 11,
+   "ac": {
+    "agent_sweep_range": 16.075342178344727,
+    "agent_sweep_std": 4.080740928649902,
+    "block_sweep_range": 32.82528305053711,
+    "block_sweep_std": 5.186233043670654,
+    "V_start": 22.316997528076172,
+    "V_agent@goal_block@start": 23.32731819152832,
+    "V_agent@start_block@goal": 12.947924613952637,
+    "V_goal_config": 0.4626326262950897
+   },
+   "td": {
+    "agent_sweep_range": 6.490926742553711,
+    "agent_sweep_std": 1.6488972902297974,
+    "block_sweep_range": 8.012371063232422,
+    "block_sweep_std": 1.207980990409851,
+    "V_start": 13.712096214294434,
+    "V_agent@goal_block@start": 10.000503540039062,
+    "V_agent@start_block@goal": 9.54311466217041,
+    "V_goal_config": 0.34345829486846924
+   },
+   "latent": {
+    "agent_sweep_range": 7.146692276000977,
+    "block_sweep_range": 12.137402534484863
+   }
+  },
+  {
+   "task": 12,
+   "ac": {
+    "agent_sweep_range": 16.385696411132812,
+    "agent_sweep_std": 2.593165874481201,
+    "block_sweep_range": 22.929439544677734,
+    "block_sweep_std": 3.4159798622131348,
+    "V_start": 23.190784454345703,
+    "V_agent@goal_block@start": 25.424346923828125,
+    "V_agent@start_block@goal": 22.675325393676758,
+    "V_goal_config": 1.5554556846618652
+   },
+   "td": {
+    "agent_sweep_range": 9.72889232635498,
+    "agent_sweep_std": 1.8766041994094849,
+    "block_sweep_range": 7.128786087036133,
+    "block_sweep_std": 1.0017292499542236,
+    "V_start": 14.680810928344727,
+    "V_agent@goal_block@start": 9.24407958984375,
+    "V_agent@start_block@goal": 14.855060577392578,
+    "V_goal_config": 0.6703279614448547
+   },
+   "latent": {
+    "agent_sweep_range": 8.0429048538208,
+    "block_sweep_range": 6.01191520690918
+   }
+  },
+  {
+   "task": 13,
+   "ac": {
+    "agent_sweep_range": 17.965911865234375,
+    "agent_sweep_std": 3.9557313919067383,
+    "block_sweep_range": 28.04448127746582,
+    "block_sweep_std": 4.1881890296936035,
+    "V_start": 24.186368942260742,
+    "V_agent@goal_block@start": 34.72124099731445,
+    "V_agent@start_block@goal": 16.252986907958984,
+    "V_goal_config": 0.7019863128662109
+   },
+   "td": {
+    "agent_sweep_range": 6.778327941894531,
+    "agent_sweep_std": 1.6123706102371216,
+    "block_sweep_range": 8.96086311340332,
+    "block_sweep_std": 1.1853967905044556,
+    "V_start": 14.01895523071289,
+    "V_agent@goal_block@start": 17.778976440429688,
+    "V_agent@start_block@goal": 8.372811317443848,
+    "V_goal_config": 0.46698909997940063
+   },
+   "latent": {
+    "agent_sweep_range": 3.303220748901367,
+    "block_sweep_range": 8.880569458007812
+   }
+  },
+  {
+   "task": 14,
+   "ac": {
+    "agent_sweep_range": 20.321609497070312,
+    "agent_sweep_std": 3.7979817390441895,
+    "block_sweep_range": 22.366718292236328,
+    "block_sweep_std": 4.125232219696045,
+    "V_start": 24.963661193847656,
+    "V_agent@goal_block@start": 17.07502555847168,
+    "V_agent@start_block@goal": 19.54287338256836,
+    "V_goal_config": 0.6349231600761414
+   },
+   "td": {
+    "agent_sweep_range": 11.178116798400879,
+    "agent_sweep_std": 2.665114402770996,
+    "block_sweep_range": 5.874638557434082,
+    "block_sweep_std": 1.3562331199645996,
+    "V_start": 15.836812973022461,
+    "V_agent@goal_block@start": 7.37935733795166,
+    "V_agent@start_block@goal": 13.086963653564453,
+    "V_goal_config": 0.3184211552143097
+   },
+   "latent": {
+    "agent_sweep_range": 11.386899948120117,
+    "block_sweep_range": 6.998429298400879
+   }
+  }
+ ],
+ "W": 4,
+ "mean": {
+  "ac": {
+   "agent_sweep_range": 19.669421259562174,
+   "agent_sweep_std": 4.292935736974081,
+   "block_sweep_range": 26.083454767862957,
+   "block_sweep_std": 4.795928621292115,
+   "V_start": 22.909039052327476,
+   "V_agent@goal_block@start": 18.576200731595357,
+   "V_agent@start_block@goal": 17.759282048543295,
+   "V_goal_config": 1.2590570310751596
+  },
+  "td": {
+   "agent_sweep_range": 10.829436429341634,
+   "agent_sweep_std": 2.3969051202138263,
+   "block_sweep_range": 8.193881098429362,
+   "block_sweep_std": 1.5047987302144368,
+   "V_start": 13.432732582092285,
+   "V_agent@goal_block@start": 8.590101710955302,
+   "V_agent@start_block@goal": 11.9656494140625,
+   "V_goal_config": 0.6260009864966075
+  },
+  "latent": {
+   "agent_sweep_range": 9.117918777465821,
+   "block_sweep_range": 9.060052553812662
+  }
+ }
+}
