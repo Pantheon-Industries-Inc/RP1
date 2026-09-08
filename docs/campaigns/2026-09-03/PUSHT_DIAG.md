@@ -398,3 +398,20 @@ critic for long-range ordering and let the latent distance carry the
 near-goal precision (hybrid cost / residual-on-latent critic), tested first
 as a zero-training deploy-time blend for CEM, then as the training objective
 of the refiner.
+
+### E10 arm B seed 0 (label-preserving augmentation, transit 0; job 21066, ES final val 32)
+
+| condition | d42 | d43 | d44 | mean | by class (in-tol / <40 / >=40) |
+|---|---|---|---|---|---|
+| rlp | 28.0 | 34.0 | 12.0 | **24.7** | 13.3 / 32.5 / 27.7 |
+| cem_value | 36.0 | 44.0 | 30.0 | 36.7 | 24.4 / 35.0 / 46.2 |
+| cem_tdvalue | 40.0 | 46.0 | 32.0 | 39.3 | 31.1 / 40.0 / 44.6 |
+
+E9 on the arm-B co-critic: agent sweep range 9.8 (base 19.7, arm A 15.7),
+block 32.4, V(agent@start, block@goal) 9.3. Telling the critic that the agent's
+position does not matter (same label for the displaced frame) halves its agent
+sensitivity and collapses success on the pure agent-transit class (13-31%),
+where the block only has to be left alone and the agent placed within 20 px.
+Arm A (transit label) sits between base and B. So: agent sensitivity is
+load-bearing on h25 PushT; the critic's remaining deficit vs latent L2 is
+precision, not attribution. E10 closed negative; E11 (hybrid cost) running.
