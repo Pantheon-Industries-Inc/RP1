@@ -430,3 +430,29 @@ vs base 65.6 / 71.3 / 69.3); Cube tags `rlp-cu-{e01,near03}-20260909`
 (unigamma yaml, CACHE_VERSION `cu-v2-n1s2-{e01,near03}-v1`, h25/h100 vs
 base 90.0 / 86.0). Success-tolerance relabeling (`TOL_RELABEL=1`) is
 implemented and smoke-tested but not launched (user chose the two arms).
+
+## E13 -- critic granularity: probe + arms (launched 2026-09-09, p1)
+
+Question: can the temporal-distance critic be made to resolve the last steps
+(the joint 20 px / 20 deg success set ~ 2 agent steps) while staying the only
+planning objective? Knobs (teacher + co-critic unless noted), all offline:
+
+| arm | change | tags |
+|---|---|---|
+| E01 | expectile 0.1 flat (control on flattening) | pusht-e01-s{0,1,2} (running) |
+| NEAR | 30 % of in-episode goals at 1..3 steps | pusht-near-s{0,1,2} (running) |
+| TOL | success-tolerance relabeling: MC target = first entry into the env's success set (zero set = task success set) | pusht-tol-s{0,1,2}-20260909 |
+| EXPN | distance-dependent expectile: 0.5 for targets < 3 steps, 0.03 else | pusht-expn-s0-20260909 |
+| N5 | teacher n-step 5 (exact MC targets within 5 steps; co-critic stays n50) | pusht-n5-s0-20260909 |
+| NW | near-goal loss weight (1+d)^-1, mean-normalised | pusht-nw-s0-20260909 |
+| COMBO | TOL + NEAR + EXPN + N5, three seeds, after the singles report | -- |
+
+Resolution probe (`scripts/pusht_diag/resolution_probe.py`, job
+pusht-resprobe-20260909 on the base s0 critics): goal configs of the 50
+draw-42 tasks perturbed radially (block-only / agent-only / joint 0..60 px,
+block angle 0..40 deg), rendered from state, V(pert, goal) per critic and
+latent L2; readouts = V(r)-V(0) curves, relative slope inside 30 px / 20 deg,
+AUC(inside tolerance vs 20-40 near miss). Re-run with `CRITICS=` on each new
+critic; a critic that scores well here AND plans better validates the
+granularity reading. Cube: E01 + NEAR running (`rlp-cu-{e01,near03}`);
+TOL/EXPN/N5/NW port to the legacy overlays once PushT picks winners.

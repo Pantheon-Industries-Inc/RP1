@@ -254,7 +254,9 @@ def _run(cfg: DictConfig) -> None:
     if td_near_frac > 0:
         logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
     if a.get("expectile_near") is not None:
-        logger.info(f"LIP-AC co-critic distance-dependent expectile: {a.expectile_near} below {a.get('near_steps', 3.0)} steps")
+        logger.info(
+            f"LIP-AC co-critic distance-dependent expectile: {a.expectile_near} below {a.get('near_steps', 3.0)} steps"
+        )
     if float(a.get("near_weight", 0.0) or 0.0) > 0:
         logger.info(f"LIP-AC co-critic near-goal loss weighting: (1+d)^-{a.near_weight}")
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)

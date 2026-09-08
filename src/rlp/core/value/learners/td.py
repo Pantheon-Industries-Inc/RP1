@@ -194,7 +194,9 @@ def fit(
     if cfg.near_frac > 0:
         logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
     if cfg.expectile_near is not None:
-        logger.info(f"TD distance-dependent expectile: {cfg.expectile_near} below {cfg.near_steps} steps, else {cfg.expectile}")
+        logger.info(
+            f"TD distance-dependent expectile: {cfg.expectile_near} below {cfg.near_steps} steps, else {cfg.expectile}"
+        )
     if cfg.near_weight > 0:
         logger.info(f"TD near-goal loss weighting: (1+d)^-{cfg.near_weight}")
     g = cfg.gamma
