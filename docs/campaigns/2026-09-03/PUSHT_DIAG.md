@@ -348,3 +348,53 @@ no gain). Check running: `scripts/pusht_diag/task_geometry.py` (job
 pusht-geom-20260908) reports per-task block displacement/rotation and the
 within-tolerance flag for draws 42-44; `block_sensitivity.py` now records the
 same geometry per task.
+
+### Task geometry (job pusht-geom-20260908): the E9 confound is confirmed
+
+Per draw (50 h25 tasks): block already within the success tolerance at the
+START on 18 / 18 / 9 tasks (d42 / d43 / d44); block moves < 40 px on 29 / 31 /
+25; median block move 32 / 23 / 40 px vs median agent move 143 / 118 / 142 px.
+Draw-42 first-15 tasks with the block already in tolerance: {2, 4, 5, 9, 10,
+12} -- E9's collapse set {2, 4, 5, 9, 10} is a subset. **E9's "agent shortcut"
+was the critic being right**: on those tasks the remaining work is agent
+transit, and a temporal-distance critic that drops to ~1 once only the agent
+is placed is correctly calibrated. h25 PushT is agent-transit dominated; the
+critic's agent weighting is legitimate. E10 (E9-motivated) therefore
+addressed a non-defect, consistent with its seed-0 result (rlp 50 vs 68).
+What E4/E5 still show -- the critic ranks plans worse than latent L2 and is
+optimistic on imagined failures -- needs a different mechanism; see the
+per-class outcome cross below.
+
+### Outcomes by task class (per-episode arrays from the diag3 / e4 / augA logs; 3 actors x draws 42-44 = 450 cells)
+
+Classes from the task geometry: block already within the success tolerance at
+the start (135 cells), block moves < 40 px (120), block moves >= 40 px (195).
+
+| condition | block in tolerance | block < 40 px | block >= 40 px | overall |
+|---|---|---|---|---|
+| rlp | 74.8 | 57.5 | 64.1 | 65.6 |
+| cem_latent | 84.4 | 75.0 | 77.9 | 79.1 |
+| CEM plan through the LIP path (K=0) | 76.3 | 75.0 | 84.6 | 79.6 |
+| CEM plan + K=8 refinement | 72.6 | 67.5 | 67.2 | 68.9 |
+| cem_value (co-trained critic) | 77.0 | 65.0 | 71.3 | 71.3 |
+| cem_tdvalue (teacher) | 78.5 | 65.0 | 65.6 | 69.3 |
+| rlp_tdvalue | 71.1 | 45.0 | 50.8 | 55.3 |
+| AUG-A rlp s0 (150 cells) | 53.3 | 45.0 | 50.8 | 50.0 |
+| AUG-A cem_value s0 | 77.8 | 67.5 | 64.6 | 69.3 |
+| noop | 2.2 | 0.0 | 0.0 | 0.7 |
+
+Mode-A cells (CEM ok, RLP fail) by class: 23 / 27 / 42 -- proportional to
+class size (30 / 27 / 43 % of cells), i.e. RLP's deficit is NOT block-specific.
+
+Reading: the critic loses to latent L2 in EVERY class, including the pure
+agent-transit tasks where the block must merely not be disturbed (77-78.5 vs
+84.4 for the sampler; 74.8 for the refiner). That is a precision problem near
+the goal, not an agent/block attribution problem: the success tolerance
+(20 px joint) is ~2 agent steps, and a temporal-distance head at expectile
+0.03 is flat at V ~ 1-3 there, while latent L2 has a sharp minimum at the goal
+configuration. Together with E5 (optimism on imagined off-manifold latents)
+this points at the deployable, fully-offline fix: keep the temporal-distance
+critic for long-range ordering and let the latent distance carry the
+near-goal precision (hybrid cost / residual-on-latent critic), tested first
+as a zero-training deploy-time blend for CEM, then as the training objective
+of the refiner.

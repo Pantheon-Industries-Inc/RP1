@@ -82,6 +82,7 @@ envs:
                          # CEM plan), rlp_ceminit_k0 (the CEM plan through the LIP
                          # path, K=0 control), rlp_k64 (continuation, 64 iterations)
   ACTOR_TAG: ""          # reuse another tag's train_checkpoints/ (eval-only job)
+  HYB_LAMS: "1.0"        # blend weights for the cem_hybrid / cem_hybrid_td conditions (E11)
   PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
@@ -311,6 +312,17 @@ run: |
         cem_tdvalue)  # E4b: CEM on the offline TD teacher
           run_eval cem_tdvalue $ES core/solver=cem core/value=metric core.value.mode=replacement \
             "core.value.checkpoints=[$D/train_checkpoints/value_td]";;
+        cem_hybrid)   # E11: CEM on standardized latent L2 + lam * standardized critic (near-goal precision from
+                      # the latent, long-range ordering from the critic); one eval per lam in HYB_LAMS
+          for LAM in ${HYB_LAMS:-1.0}; do
+            run_eval "cem_hybrid_l${LAM/./p}" $ES core/solver=cem core/value=metric core.value.mode=hybrid \
+              core.value.blend_weight=$LAM "core.value.checkpoints=[$D/train_checkpoints/value_ac]"
+          done;;
+        cem_hybrid_td)  # E11b: same blend with the offline TD teacher
+          for LAM in ${HYB_LAMS:-1.0}; do
+            run_eval "cem_hybrid_td_l${LAM/./p}" $ES core/solver=cem core/value=metric core.value.mode=hybrid \
+              core.value.blend_weight=$LAM "core.value.checkpoints=[$D/train_checkpoints/value_td]"
+          done;;
         rlp_tdvalue)  # E6a: same actor, deploy critic swapped to the offline TD teacher
           run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
