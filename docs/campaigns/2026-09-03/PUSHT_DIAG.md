@@ -59,18 +59,44 @@ reaches. Mode A is therefore not "the basin was never found"; it is
   5, i.e. the planner's own scores flag them at t=0 (reproduces the
   counterstrike self-flagging result).
 
-## E3 -- WM-error attribution
-Pending (`pusht-diag3-*`): imagined-vs-real latent divergence over the first
-plan under RLP's, CEM's and the expert's actions from the same starts.
+## E3 -- WM-error attribution (actor s0, draws 42/43/44)
 
-## What this points to (before E3)
+Imagined-vs-real latent divergence ||z_imag_t - z_real_t|| over the first plan
+(5 blocks x 5 steps), rolling the frozen WM from the real start frames on the
+EXECUTED actions of each arm (recorded rollouts) and on the expert's actions
+from the same start rows (h5). Means over episodes; block 5 = plan end.
+
+| actions | draw 42 | draw 43 | draw 44 | n per draw |
+|---|---|---|---|---|
+| expert (dataset) | 1.35 2.06 2.68 3.26 **3.74** | 1.14 1.65 2.19 2.64 **3.13** | 1.29 1.78 2.18 2.89 **3.64** | 50 |
+| CEM (latent cost) | 1.45 2.76 4.52 5.55 **6.01** | 1.42 2.12 2.37 4.15 **5.32** | 2.60 3.57 4.22 5.31 **6.40** | 16 / 15 / 17 |
+| RLP (K=8) | 1.93 3.85 5.16 5.46 **5.77** | 2.02 2.86 2.99 3.55 **4.30** | 1.93 3.46 4.73 5.61 **6.56** | 25 / 20 / 34 |
+
+Caveat: the recorder drops episodes shorter than 25 steps and successful
+episodes terminate early, so the planner rows are biased toward long
+(failing) episodes; the expert rows are all 50 tasks.
+
+Reading: the WM is ~1.7x worse off the expert distribution, and **equally so
+under CEM's and RLP's actions**. The world model does not single out the
+refiner's plans; both planners drive it into the same error band. So the
+RLP-vs-CEM gap is not "RLP finds WM holes CEM avoids" -- it is the OBJECTIVE:
+RLP descends the learned critic energy E, CEM optimises the raw latent L2
+distance, and E1 showed E improving while reality worsens. The exploitable
+component is the critic evaluated on imagined states (both planners' imagined
+states are equally wrong; only the critic-driven descent turns that error into
+a confident bad plan).
+
+## What this points to
 1. Do not extend K at deploy; if more descent is wanted it must be trained in
    (K=24 was flat in the counterstrike campaign, so this is not the lever).
-2. The refiner's imagined objective is exploitable along its own path:
-   candidates are (a) Dyna for PushT with the planner's own rollouts (the
-   cube recipe: config-B collection, both offsets, two iterations) so the WM
-   is correct where the refiner goes; (b) an anchor toward CEM/expert plans
-   during training (`planner.bc_weight` exists, untested at B); (c) training
-   the co-critic on the refiner's own final plans (value expansion is on at
-   1.0 already, so the critic still ends up wrong there -- E3 decides between
-   WM error and critic error).
+2. E3 says the WM error is planner-agnostic, so PushT Dyna would lift CEM
+   and RLP alike and is not the gap-closer. The exploitable part is the
+   critic on imagined states. Decisive next test (E4, one eval-only job):
+   CEM on the critic energy (`core/value=metric`, replacement mode) vs CEM on
+   latent L2 on the same draws. If critic-CEM also drops to ~65, the critic
+   is the defect (fix: critic training on planner-visited imagined states /
+   a conservative critic); if critic-CEM stays ~79, the defect is the
+   gradient descent path itself (fix: an anchor toward the latent objective
+   or toward CEM/expert plans in the refiner's training, `planner.bc_weight`).
+3. In either case the July "value exonerated" reading was for the old
+   stack; under config B the objective is where the gap lives.
