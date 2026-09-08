@@ -252,3 +252,21 @@ epistemic uncertainty, so a pessimistic ensemble critic would not remove it.
 Caveat: two members, single-frame (the first teacher batch was trained
 without the w4 window flags); a three-member 4-frame ensemble
 (`pusht-teacher-w4-s12/s13` + the s0 teacher) is training to confirm.
+
+### E7 confirmed with three 4-frame teachers (s0 teacher + seeds 12/13, identical window and cache)
+
+| draw | std across teachers: RLP ok / mode A / both fail | mean energy: ok / mode A / both fail | AUC(std: mode A vs ok) | AUC(mean E: mode A vs ok) |
+|---|---|---|---|---|
+| 42 | 0.45 / 0.60 / 0.67 | 4.4 / 7.5 / 6.5 | 0.67 | 0.79 |
+| 43 | 0.39 / 0.56 / 0.64 | 3.7 / 4.9 / 10.3 | 0.73 | 0.65 |
+| 44 | 0.41 / 0.53 / 0.71 | 4.7 / 5.8 / 6.7 | 0.61 | 0.61 |
+
+Same conclusion as the single-frame pair, with a small refinement: mode-A
+states are slightly less certain (disagreement 1.3-1.4x that of successes,
+AUC 0.61-0.73), but the disagreement (0.5-0.6) is 2-6x smaller than the
+energy gap between classes (1.1-3.1) and far smaller than the 10-15 point
+energy the refiner removes along its path. The shortcut is shared target
+bias; an ensemble-pessimistic critic could shave a little off mode A but
+cannot be the fix. Final ranking of the critic story: E9 (agent-placement
+target) explains the mechanism, E4 quantifies the cost even for a sampler,
+E7 excludes uncertainty-based remedies.
