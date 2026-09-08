@@ -236,3 +236,19 @@ defect of the target, not a capacity or optimisation defect.
    latent at deploy.
 3. Agent-position augmentation: for each training pair, re-render the goal
    frame with the agent moved, so the critic learns agent invariance.
+
+### E7 -- epistemic disagreement (two single-frame TD teachers, seeds 10/11, same cache; actor s0's t=0 plans)
+
+| draw | std across teachers: RLP ok / mode A / both fail | mean energy: ok / mode A / both fail | AUC(std separates mode A from ok) | AUC(mean E separates mode A from ok) |
+|---|---|---|---|---|
+| 42 | 0.21 / 0.19 / 0.35 | 3.0 / 5.7 / 5.0 | 0.48 | 0.73 |
+| 43 | 0.18 / 0.18 / 0.46 | 2.6 / 2.3 / 7.9 | 0.61 | 0.52 |
+| 44 | 0.17 / 0.33 / 0.37 | 2.9 / 3.9 / 4.0 | 0.67 | 0.64 |
+
+Independently seeded teachers agree to within 0.2-0.4 on energies of 3-8;
+mode-A plans are not where they disagree (AUC 0.48-0.67, inconsistent). The
+agent-placement shortcut is a SHARED systematic bias of the target, not
+epistemic uncertainty, so a pessimistic ensemble critic would not remove it.
+Caveat: two members, single-frame (the first teacher batch was trained
+without the w4 window flags); a three-member 4-frame ensemble
+(`pusht-teacher-w4-s12/s13` + the s0 teacher) is training to confirm.
