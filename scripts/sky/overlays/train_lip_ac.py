@@ -524,7 +524,7 @@ def main():
                                       max_delta=a.td_max_delta,
                                       near_frac=a.near_frac, near_max=a.near_max)
         if a.near_frac > 0:
-            logging.info(f"LIP-AC co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps")
+            print(f"[lip-ac] co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps", flush=True)
         c_opt = torch.optim.AdamW(critic.parameters(), lr=a.critic_lr,
                                   weight_decay=a.critic_wd)
     for prm in teacher.parameters():
