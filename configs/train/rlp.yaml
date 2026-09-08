@@ -50,6 +50,9 @@ value:
   tol: null             # success-set spec override (dict), null = stage default
   near_frac: null       # near-goal hindsight oversampling fraction
   near_max: null
+  expectile_near: null  # distance-dependent expectile below near_steps
+  near_steps: null
+  near_weight: null     # near-goal loss weighting exponent
 
 # Optional stage 3c — logged-state cache for tolerance relabeling
 # (tools/cache_state), built when value.tol_relabel or planner.tol_relabel.
@@ -94,3 +97,6 @@ planner:
   tol: null
   near_frac: null   # co-critic near-goal hindsight oversampling
   near_max: null
+  expectile_near: null  # co-critic distance-dependent expectile below near_steps
+  near_steps: null
+  near_weight: null     # co-critic near-goal loss weighting exponent

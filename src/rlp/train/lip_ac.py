@@ -63,7 +63,7 @@ from rlp.core.solver.lip import ValueFunction
 from rlp.core.temporal import trajectory_value, window_pair, windowed_trajectory_value
 from rlp.core.value import load_metric
 from rlp.core.value.io import build_metric, save_metric
-from rlp.core.value.learners.td import _expectile_loss
+from rlp.core.value.learners.td import _expectile_loss, near_goal_terms
 from rlp.core.value.samplers import NStepGoalSampler
 from rlp.core.world_model import load_pretrained
 from rlp.core.world_model.protocols import LatentWorldModel
@@ -253,6 +253,10 @@ def _run(cfg: DictConfig) -> None:
     td_near_max = int(a.get("near_max", 3) or 3)
     if td_near_frac > 0:
         logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
+    if a.get("expectile_near") is not None:
+        logger.info(f"LIP-AC co-critic distance-dependent expectile: {a.expectile_near} below {a.get('near_steps', 3.0)} steps")
+    if float(a.get("near_weight", 0.0) or 0.0) > 0:
+        logger.info(f"LIP-AC co-critic near-goal loss weighting: (1+d)^-{a.near_weight}")
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
@@ -390,7 +394,14 @@ def _run(cfg: DictConfig) -> None:
                 disc = a.gamma**ne_total
                 cost = (1.0 - disc) / (1.0 - a.gamma)
             tgt = reached * (dist + transit) + (1.0 - reached) * (cost + disc * d_next)
-        loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau, a.huber_beta)
+        tau_t, sample_weights = near_goal_terms(
+            tgt,
+            tau,
+            None if a.get("expectile_near") is None else float(a.expectile_near),
+            float(a.get("near_steps", 3.0) or 3.0),
+            float(a.get("near_weight", 0.0) or 0.0),
+        )
+        loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
         if expand is not None:  # value expansion on planner rollouts
             z0e, traje, zge = expand
             with torch.no_grad():

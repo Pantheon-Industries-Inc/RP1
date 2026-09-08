@@ -81,6 +81,10 @@ envs:
   NEAR_FRAC: "0"        # fraction of in-episode hindsight goals drawn 1..NEAR_MAX steps
                         # ahead, teacher + co-critic (0 = balanced buckets only)
   NEAR_MAX: "3"
+  EXPECTILE_NEAR: ""    # distance-dependent expectile: value for targets below NEAR_STEPS
+                        # (e.g. 0.5), teacher + co-critic; empty = off
+  NEAR_STEPS: "3"
+  NEAR_WEIGHT: "0"      # near-goal loss weighting exponent (1+d)^-w, teacher + co-critic
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -197,6 +201,12 @@ run: |
   fi
   if [ "${NEAR_FRAC:-0}" != 0 ]; then
     AUG_EXTRA="$AUG_EXTRA value.near_frac=$NEAR_FRAC planner.near_frac=$NEAR_FRAC value.near_max=${NEAR_MAX:-3} planner.near_max=${NEAR_MAX:-3}"
+  fi
+  if [ -n "${EXPECTILE_NEAR:-}" ]; then
+    AUG_EXTRA="$AUG_EXTRA value.expectile_near=$EXPECTILE_NEAR planner.expectile_near=$EXPECTILE_NEAR value.near_steps=${NEAR_STEPS:-3} planner.near_steps=${NEAR_STEPS:-3}"
+  fi
+  if [ "${NEAR_WEIGHT:-0}" != 0 ]; then
+    AUG_EXTRA="$AUG_EXTRA value.near_weight=$NEAR_WEIGHT planner.near_weight=$NEAR_WEIGHT"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 

@@ -8,7 +8,10 @@ envs:
   DRAW: "42"
   GRID: "40"
   SKIP_HEAT: "0"
-  SCRIPT: scripts/pusht_diag/figures.py   # or scripts/pusht_diag/block_sensitivity.py (E9)
+  SCRIPT: scripts/pusht_diag/figures.py   # or scripts/pusht_diag/block_sensitivity.py (E9),
+                                          # scripts/pusht_diag/resolution_probe.py (E13 near-goal resolution)
+  CRITICS: ""            # resolution_probe: "label=<value dir> ..." (default: ACTOR's value_ac / value_td)
+  NT: "50"
   PANTHEON_USER: armin@pantheon.inc
 workdir: .
 resources:
@@ -40,6 +43,6 @@ run: |
   mkdir -p $OUT; [ "${SKIP_HEAT:-0}" = 1 ] && rm -f $OUT/*.mp4
   pixi run python ${SCRIPT:-scripts/pusht_diag/figures.py}
   echo "== outputs"; ls -la $OUT
-  for f in $OUT/*.mp4 $OUT/INDEX.md $OUT/e9_*.png $OUT/block_sensitivity.json; do [ -f "$f" ] || continue
+  for f in $OUT/*.mp4 $OUT/INDEX.md $OUT/e9_*.png $OUT/block_sensitivity.json $OUT/resolution_probe.json $OUT/resolution_probe.png $OUT/task_geometry.json; do [ -f "$f" ] || continue
     echo "[b64:$(basename $f)]"; base64 -w0 "$f"; echo; echo "[/b64]"
   done

@@ -66,18 +66,56 @@ class TDConfig:
     # 1..near_max steps ahead (see NStepGoalSampler)
     near_frac: float = 0.0
     near_max: int = 3
+    # distance-dependent expectile: targets below ``near_steps`` use
+    # ``expectile_near`` (e.g. 0.5 = neutral) instead of the optimistic
+    # ``expectile``; None = one expectile everywhere
+    expectile_near: float | None = None
+    near_steps: float = 3.0
+    # near-goal loss weighting: per-sample weight (1 + target)^-near_weight,
+    # normalised to mean 1 over the batch (0 = off)
+    near_weight: float = 0.0
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
+
+
+def near_goal_terms(
+    target: torch.Tensor,
+    expectile: float,
+    expectile_near: float | None,
+    near_steps: float,
+    near_weight: float,
+) -> tuple[torch.Tensor | float, torch.Tensor | None]:
+    """Per-sample expectile and loss weight for the near-goal resolution knobs."""
+    tau: torch.Tensor | float = expectile
+    if expectile_near is not None:
+        tau = torch.where(
+            target < float(near_steps),
+            torch.full_like(target, float(expectile_near)),
+            torch.full_like(target, float(expectile)),
+        )
+    weights = None
+    if near_weight > 0:
+        weights = (1.0 + target.clamp_min(0.0)).pow(-float(near_weight))
+        weights = weights / weights.mean().clamp_min(1e-8)
+    return tau, weights
 
 # (z_aug, transit): row-aligned agent-displaced latents (already windowed like
 # the training cache) and the per-row free-transit cost in primitive steps
 type AugCache = tuple[torch.Tensor, torch.Tensor]
 
 
-def _expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
+def _expectile_loss(
+    diff: torch.Tensor,
+    expectile: float | torch.Tensor,
+    beta: float,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Expectile-weighted Huber loss; ``expectile`` may be per-sample, ``weights`` rescale samples."""
     huber = torch.nn.functional.smooth_l1_loss(diff, torch.zeros_like(diff), beta=beta, reduction="none")
     weight = torch.where(diff > 0, 1.0 - expectile, expectile)  # diff=pred-target
+    if weights is not None:
+        weight = weight * weights
     return (weight * huber).mean()
 
 
@@ -155,6 +193,10 @@ def fit(
         logger.info(f"TD success-tolerance relabeling on: {tolerance}")
     if cfg.near_frac > 0:
         logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
+    if cfg.expectile_near is not None:
+        logger.info(f"TD distance-dependent expectile: {cfg.expectile_near} below {cfg.near_steps} steps, else {cfg.expectile}")
+    if cfg.near_weight > 0:
+        logger.info(f"TD near-goal loss weighting: (1+d)^-{cfg.near_weight}")
     g = cfg.gamma
     step_norm = 1.0
     episodes = cache.episodes()
@@ -223,7 +265,8 @@ def fit(
             boot = c + disc * d_next
             tgt = reached * (dist + transit) + (1.0 - reached) * boot
         pred = value(z_t, z_g)
-        loss = _expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
+        tau, sample_weights = near_goal_terms(tgt, cfg.expectile, cfg.expectile_near, cfg.near_steps, cfg.near_weight)
+        loss = _expectile_loss(pred - tgt, tau, cfg.huber_beta, sample_weights)
         if cfg.rank_weight > 0:
             z_near, z_far, z_rank_goal, gap = (item.to(device) for item in rank_batch(cfg.batch_size))
             rank_loss = torch.relu(
@@ -251,4 +294,4 @@ def fit(
     return value
 
 
-__all__ = ["AugCache", "TDConfig", "fit", "_expectile_loss"]
+__all__ = ["AugCache", "TDConfig", "fit", "near_goal_terms", "_expectile_loss"]

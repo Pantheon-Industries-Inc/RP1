@@ -124,6 +124,9 @@ def _run(cfg: DictConfig) -> None:
             aug_transit_scale=float(args.get("aug_transit_scale", 1.0)),
             near_frac=float(args.get("near_frac", 0.0) or 0.0),
             near_max=int(args.get("near_max", 3) or 3),
+            expectile_near=(None if args.get("expectile_near") is None else float(args.expectile_near)),
+            near_steps=float(args.get("near_steps", 3.0) or 3.0),
+            near_weight=float(args.get("near_weight", 0.0) or 0.0),
         )
         module = learners.td.fit(cache, td_cfg, device, aug=aug, state=state, tolerance=tolerance)
     else:  # contrastive

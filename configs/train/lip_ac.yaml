@@ -19,6 +19,9 @@ tol:                  # success-set test (PushT defaults; see train/metric.yaml)
   angle: 0.3490658503988659
 near_frac: 0.0        # fraction of in-episode critic goals drawn 1..near_max steps ahead
 near_max: 3
+expectile_near: null  # co-critic expectile for targets below near_steps (e.g. 0.5); null = schedule everywhere
+near_steps: 3.0
+near_weight: 0.0      # co-critic per-sample loss weight (1+target)^-near_weight, mean-normalised
 h5: ???
 wm: ???
 init_value: null

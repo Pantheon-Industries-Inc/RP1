@@ -20,6 +20,9 @@ tol:                   # success-set test, env eval_state semantics (PushT defau
   angle: 0.3490658503988659
 near_frac: 0.0         # td: fraction of in-episode hindsight goals drawn 1..near_max steps ahead
 near_max: 3
+expectile_near: null   # td: expectile for targets below near_steps (e.g. 0.5); null = `expectile` everywhere
+near_steps: 3.0
+near_weight: 0.0       # td: per-sample loss weight (1+target)^-near_weight, mean-normalised (0 = off)
 learner: td
 output:
   checkpoint: value
