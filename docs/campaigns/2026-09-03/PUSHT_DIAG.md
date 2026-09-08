@@ -456,3 +456,28 @@ AUC(inside tolerance vs 20-40 near miss). Re-run with `CRITICS=` on each new
 critic; a critic that scores well here AND plans better validates the
 granularity reading. Cube: E01 + NEAR running (`rlp-cu-{e01,near03}`);
 TOL/EXPN/N5/NW port to the legacy overlays once PushT picks winners.
+
+### E11 final (3 actors x draws 42-44, 450 cells per row)
+
+| CEM objective (standardized latent L2 + lam * standardized critic) | co-trained critic | teacher |
+|---|---|---|
+| lam 0.5 | 76.9 | 74.7 |
+| lam 1.0 | 77.6 | 76.2 |
+| lam 2.0 | 74.0 | 73.3 |
+| reference: latent only 78.9, critic only 71.3 (ac) / 69.3 (td) | | |
+
+No blend beats latent distance alone; the critic adds no ranking information
+on these h25 tasks and degrades the objective as its weight grows.
+
+### E12 arm E01 (expectile 0.1 flat, teacher + co-critic), seeds 0 / 1
+
+| condition | s0 (base s0) | s1 (base s1) |
+|---|---|---|
+| rlp | 56.0 (68.0) | 57.3 (64.0) |
+| cem_value | 68.7 (72.7) | 67.3 (73.3) |
+| cem_tdvalue | 70.7 (67.3) | 72.0 (68.7) |
+
+ES picked step 2000 (val 68) / final (val 76). Less optimism makes the
+offline teacher a slightly better sampler objective (+3) but the co-critic
+and the refiner worse (-10 on rlp): the expectile-flattening explanation
+does not carry over to the planner. Seed 2 pending.
