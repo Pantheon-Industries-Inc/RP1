@@ -13,27 +13,27 @@ per-iteration probes (`E_iters`, `lat_iters`), rollout recording
 first launch (`pusht-diag2-*`, killed by the legacy volume's disk quota):
 draw 42 for all three actors, draw 43 for actor 2.
 
-## E1 -- oracle initialisation (success %, 50 tasks per cell)
+## E1 -- oracle initialisation (all three actors, draws 42/43/44; success %, means over draws)
 
-| actor | draw | zero-init K=8 (`rlp`) | CEM plan, K=0 | **CEM plan + K=8** | CEM (`cem_latent`) | K=64 |
-|---|---|---|---|---|---|---|
-| s0 | 42 | 66 | 80 | **66** | 78 | 52 |
-| s1 | 42 | 60 | 78 | **72** | 78 | 14 |
-| s2 | 42 | 62 | 80 | **64** | 78 | 24 |
-| s2 | 43 | 78 | 84 | **88** | 84 | 44 |
+| actor | zero-init K=8 (`rlp`) | CEM plan, K=0 (control) | **CEM plan + K=8** | CEM (`cem_latent`) | K=64 |
+|---|---|---|---|---|---|
+| s0 | 68.0 | 80.0 | **68.7** | 79.3 | 38.7 |
+| s1 | 64.0 | 79.3 | **68.7** | 78.7 | 9.3 |
+| s2 | 64.7 | 79.3 | **69.3** | 79.3 | 30.0 |
+| mean | 65.6 | 79.6 | **68.9** | 79.1 | 26.0 |
 
-Paired, draw 42 (three actors): CEM-init refinement fixes 4 / 7 / 5 of the
-10 / 11 / 10 mode-A episodes (RLP fails, CEM succeeds) but LOSES 10 / 7 / 9
-episodes CEM had solved. The K=0 control agrees with `cem_latent` on 47 / 46 /
-47 of 50 episodes (implementation check passed).
+Paired over the 9 (actor, draw) cells: the K=0 control agrees with
+`cem_latent` on 41-47 of 50 episodes per cell (implementation check passed).
+Refinement FROM the CEM plan fixes 3-11 of the mode-A episodes per cell but
+loses 2-15 episodes CEM had solved (sum over cells: fixes 55, loses 76).
 
 **Verdict: the refiner cannot hold a good plan.** Handed CEM's plan, eight
 learned iterations lower the critic energy (E 11 -> 7.5-8.2, below the
-zero-init endpoint of 8.7-9.1) while real success drops from ~79 to ~67. The
+zero-init endpoint of 8.7-9.1) while real success drops from ~79 to ~69. The
 imagined objective improves, the outcome worsens: the gradient-based update
-walks into critic/WM error that CEM's coarse population search never
-reaches. Mode A is therefore not "the basin was never found"; it is
-"the descent direction is exploitable".
+walks into critic error that CEM's coarse population search never reaches.
+Mode A is therefore not "the basin was never found"; it is "the descent
+direction is exploitable".
 
 ## E2 -- refinement audit (critic energy E_k, t=0 replan, means per class)
 
