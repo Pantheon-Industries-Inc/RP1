@@ -127,3 +127,70 @@ a confident bad plan).
   teachers of the energy at RLP's imagined terminal states, mode-A vs ok.
   High disagreement on mode-A => the exploit sits in epistemic uncertainty;
   a pessimistic ensemble critic is then the fix candidate.
+
+## Results of the critic experiments (2026-09-08, evening)
+
+### E4 -- objective swap for the sampler (3 actors x draws 42/43/44, success %)
+
+| objective for CEM (300x30) | s0 | s1 | s2 | mean |
+|---|---|---|---|---|
+| latent L2 (`cem_latent`) | 78.7 | 78.7 | 79.3 | **78.9** |
+| co-trained critic (`cem_value`) | 72.7 | 73.3 | 68.0 | **71.3** |
+| offline TD teacher (`cem_tdvalue`) | 67.3 | 68.7 | 72.0 | **69.3** |
+| RLP actor, deploy critic = teacher (`rlp_tdvalue`) | 54.0 | 60.0 | 52.0 | 55.3 (vs 65.6 with the co-trained critic) |
+
+**The critic is a worse planning objective than raw latent distance even for a
+sampler** (-7.6 with the co-trained critic, -9.6 with the teacher). So the
+defect is in the critic itself, not only in the gradient path through it; the
+refiner (E1: 65.6 -> 68.9 from a CEM init) adds a further ~3-7 on top.
+Co-training helps: swapping the teacher in at deploy costs the refiner 10
+points, so critic drift is not the problem.
+
+### E5 -- real-vs-imagined calibration (actor s0, co-trained critic; teacher in brackets)
+
+| rollouts | AUC(E on REAL end state predicts success) | AUC(E on IMAGINED end state) | optimism gap E_imag - E_real, successes / failures |
+|---|---|---|---|
+| RLP d42 | 0.68 (0.74) | 0.56 (0.60) | +1.0 / **-2.9** |
+| RLP d43 | 0.58 (0.61) | 0.59 (0.61) | +0.2 / +0.1 |
+| RLP d44 | 0.70 (0.66) | 0.56 (0.46) | -0.4 / **-3.6** |
+| CEM d42 | 0.57 (0.57) | 0.57 (0.57) | -2.6 / -2.0 |
+| CEM d43 | 0.88 (0.77) | 0.73 (0.66) | -0.7 / -1.6 |
+| CEM d44 | 0.72 (0.73) | 0.82 (0.85) | -0.5 / +1.1 |
+
+Two defects, both on the critic side: (1) even on the REAL states actually
+reached, the critic separates success from failure only weakly (AUC
+0.6-0.7); (2) on RLP's failing rollouts the imagined end state is scored
+2.9-3.6 more optimistically than the real one, while successes show no such
+gap -- the refiner's plans land where the critic is optimistic about the
+imagined state. (Recorder bias: planner rows over-represent long episodes.)
+
+### E8 -- velocity channel (rlp probes, t=0 plan): NULL
+Static-stack minus window energy is +0.3 / +2.6 / +0.8 for mode-A vs
++1.3 / +0.9 / -0.2 for successes (co-trained critic); no consistent
+mode-A-specific gap, AUCs unchanged (0.67-0.78 either way). The refiner's
+advantage is not manufactured in the window's velocity components.
+Teacher-vs-co-trained energies correlate 0.90-0.94 on the same inputs.
+
+### E3 replicated on actors s1 and s2
+Plan-end divergence: expert 3.1-3.7; CEM 5.3-6.4; RLP 5.6-6.2 (one outlier
+cell, s1 draw 42: 10.2). Planner-agnostic WM error confirmed on all three
+actors.
+
+### Where this leaves the critic
+- Not the WM (E3), not the window's velocity channel (E8), not critic drift
+  from co-training (E4/E6a), not the descent path alone (E4: the sampler
+  loses 8 points on the same critic).
+- The critic's VALUE TARGET is the suspect: it ranks end states only weakly
+  by real success and is optimistic on imagined failing states. The
+  heatmaps point at a concrete mechanism: V over agent position has a sharp
+  minimum at the expert's goal-frame AGENT position, i.e. the critic behaves
+  largely as an agent-position distance. PushT success is a BLOCK-pose
+  criterion; a critic that rewards "agent where the expert's agent ended"
+  is exactly what a gradient refiner will satisfy without moving the block.
+- **E9 (launched): block-vs-agent sensitivity.** Sweep the block pose with
+  the agent fixed and the agent with the block fixed for the same tasks;
+  compare V's dynamic range and the decomposition
+  V(agent@goal, block@start) vs V(agent@start, block@goal) vs both. If V
+  moves far more with the agent than with the block, the fix is on the
+  value target: block-centric goal conditioning (mask the agent in the goal
+  frame, or a privileged block-pose distance target), not more optimisation.
