@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np, torch
 from rlp.core.value import load_metric
 D = Path(os.environ["D"]); dev = "cuda" if torch.cuda.is_available() else "cpu"
-teachers = [load_metric(p, device=dev) for p in os.environ["TEACHERS"].split()]
+teachers = [load_metric(p, device=dev) for p in os.environ["TEACHERS"].replace(":", " ").split()]
 ck = torch.load(D / "train_checkpoints" / "planner.pt", map_location="cpu", weights_only=False); W = int(ck.get("window_frames") or 1)
 def successes(label, seed):
     f = D / f"results_{label}_s{seed}.txt"
