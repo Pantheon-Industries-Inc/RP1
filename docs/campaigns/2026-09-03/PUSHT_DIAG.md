@@ -100,3 +100,30 @@ a confident bad plan).
    or toward CEM/expert plans in the refiner's training, `planner.bc_weight`).
 3. In either case the July "value exonerated" reading was for the old
    stack; under config B the objective is where the gap lives.
+
+## Critic experiments launched 2026-09-08 (E4, E5, E6a, E7, E8)
+
+- **E4 -- objective swap for the sampler** (`pusht-e4-s{0,1,2}`): CEM driven by
+  the co-trained critic (`cem_value`), CEM driven by the offline TD teacher
+  (`cem_tdvalue`), and `cem_latent` on the same draws. Critic-CEM ~65 => the
+  critic ranks plans wrongly on its own; ~79 => only the gradient path is at
+  fault.
+- **E6a -- deploy-time critic swap for the refiner** (same jobs,
+  `rlp_tdvalue`): the s0-s2 actors run with the OFFLINE teacher as the deploy
+  critic instead of the co-trained one. Measures how much of RLP's outcome is
+  the co-trained critic's drift (TwoRoom precedent: teacher swap +0.9).
+- **E5 -- real-vs-imagined calibration** (`critic_probe.py`, POST_ONLY on
+  `pusht-diag3-s0`): critic energy of the REAL window reached at the end of
+  the first plan vs the IMAGINED window on the same executed actions, for
+  RLP and CEM rollouts, co-trained and teacher critics; optimism gap by
+  outcome; AUC of E_real / E_imag for predicting success. Separates "critic
+  wrong on real states" from "critic wrong on imagined states".
+- **E8 -- velocity channel** (same job, rlp probes): energy of the imagined
+  4-frame window vs a static stack of the terminal frame. A mode-A-specific
+  gap says the refiner's advantage is manufactured in the window's velocity
+  components.
+- **E7 -- epistemic disagreement** (`pusht-teacher-s10/s11`: two more TD
+  teachers on the same cache, different seeds; analysis follows): std across
+  teachers of the energy at RLP's imagined terminal states, mode-A vs ok.
+  High disagreement on mode-A => the exploit sits in epistemic uncertainty;
+  a pessimistic ensemble critic is then the fix candidate.
