@@ -66,6 +66,9 @@ def main():
     p.add_argument("--tol", type=float, default=0.05,
                    help="dwell: per-joint tolerance for r=1{in ball}; match the eval criterion")
     p.add_argument("--p-cross", type=float, default=0.3)
+    p.add_argument("--near-frac", type=float, default=0.0,
+                   help="td: fraction of in-episode hindsight goals drawn 1..near-max steps ahead")
+    p.add_argument("--near-max", type=int, default=3)
     p.add_argument("--embed-dim", type=int, default=128)
     p.add_argument("--no-balanced", action="store_true")
     # contrastive
@@ -110,6 +113,7 @@ def main():
             p_cross=args.p_cross, balanced=(not args.no_balanced), max_delta=args.max_delta,
             batch_size=args.batch_size, steps=args.steps, seed=args.seed,
             symmetric=args.symmetric,
+            near_frac=args.near_frac, near_max=args.near_max,
         )
         module = learners.td.fit(cache, cfg, device)
         arch = {"head": args.head, "hidden_dim": args.hidden_dim, "depth": args.depth,

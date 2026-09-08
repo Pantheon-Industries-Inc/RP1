@@ -30,6 +30,22 @@ from ..latent_cache import LatentCache
 from ..samplers import NStepGoalSampler
 
 
+class _NearGoalSampler(NStepGoalSampler):
+    """NStepGoalSampler drawing a fraction of in-episode hindsight goals 1..near_max
+    steps ahead, so the head resolves the last steps (balanced full-horizon
+    buckets put a few percent of pairs there). near_frac=0 is the legacy sampler."""
+
+    def __init__(self, *args, near_frac: float = 0.0, near_max: int = 3, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert hasattr(NStepGoalSampler, "_offset"), "legacy NStepGoalSampler lacks _offset(); cannot oversample near goals"
+        self.near_frac, self.near_max = float(near_frac), int(near_max)
+
+    def _offset(self, hi):
+        if self.near_frac > 0 and self.rng.random() < self.near_frac:
+            return int(self.rng.integers(1, max(1, min(self.near_max, int(hi))) + 1))
+        return super()._offset(hi)
+
+
 @dataclass
 class TDConfig:
     head: str = "quasimetric"     # 'mlp' | 'quasimetric'
@@ -59,6 +75,8 @@ class TDConfig:
     n_buckets: int = 10
     seed: int = 0
     huber_beta: float = 1.0
+    near_frac: float = 0.0        # near-goal oversampling: fraction of in-episode goals at 1..near_max steps
+    near_max: int = 3
 
 
 def _expectile_loss(diff, expectile, beta):
@@ -82,9 +100,11 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu"):
         p.requires_grad_(False)
 
     opt = torch.optim.AdamW(value.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    sampler = NStepGoalSampler(cache, n_step=cfg.n_step, p_cross=cfg.p_cross,
+    sampler = _NearGoalSampler(cache, n_step=cfg.n_step, p_cross=cfg.p_cross,
                                n_buckets=cfg.n_buckets, balanced=cfg.balanced, seed=cfg.seed,
-                               max_delta=cfg.max_delta)
+                               max_delta=cfg.max_delta, near_frac=cfg.near_frac, near_max=cfg.near_max)
+    if cfg.near_frac > 0:
+        logging.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
     g = cfg.gamma
     value.train()
     pbar = tqdm(range(cfg.steps), desc=f"td(n={cfg.n_step},g={cfg.gamma},{cfg.head})")

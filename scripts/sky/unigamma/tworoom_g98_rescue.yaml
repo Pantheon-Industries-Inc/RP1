@@ -139,6 +139,12 @@ envs:
                            # lewm_cube_dyna / pldm_cube_dyna)
   CU_DYNA_WM: ""           # absolute dir on the volume holding ONE .pt + config.json
                            # (a Dyna v2 export, scripts/sky/dyna2/); overrides CU_DYNA
+  CU_TD_EXPECTILE: "0.03"  # cube offline TD teacher expectile (E12 arm: 0.1)
+  CU_EXPECTILE: "0.1"      # cube co-critic expectile schedule start (recipe 0.1)
+  CU_EXPECTILE_FINAL: "0.03"  # ... and end (recipe 0.03; E12 arm: 0.1 flat)
+  NEAR_FRAC: "0"           # near-goal hindsight oversampling, teacher + co-critic
+                           # (fraction of in-episode goals at 1..NEAR_MAX steps; E12)
+  NEAR_MAX: "3"
   CU_GAMMA: "0.98"         # Cube discount, for BOTH the offline TD teacher and the
                            # actor/co-trained critic (the unified-gamma arms; the
                            # banked cube recipe is 0.98)
@@ -467,7 +473,7 @@ setup: |
   # ---- TD critic to warm-start the co-trained value from. Cube uses the
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
   TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
-  [ "$ENVNAME" = cube ] && TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+  [ "$ENVNAME" = cube ] && TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
   # per-seed guard, not any-file: a cap-cancelled builder can leave a partial
   # ~/gm (e.g. s0/s1 without s2) that an any-file guard would accept and the
   # validation below would then fatally reject
@@ -477,6 +483,7 @@ setup: |
     if [ ! -f ~/gm/td_grid_s${TDS}.pt ]; then
       CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
         --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step ${TR_NSTEP:-50} \
+        --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} \
         --boundary ${BOUNDARY:-legacy} \
         --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
         > ~/gl/td_critic_s${TDS}.log 2>&1
@@ -511,7 +518,7 @@ setup: |
   # the node cache heals forward.
   if [ "${REUSE_ONLY:-0}" != 1 ]; then
     BF_TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
-    [ "$ENVNAME" = cube ] && BF_TDFLAGS="--expectile 0.03 --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+    [ "$ENVNAME" = cube ] && BF_TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
     BF_SEEDS="0"
     [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"
     for TDS in $BF_SEEDS; do
@@ -519,6 +526,7 @@ setup: |
         echo "[cache-backfill] td_grid_s${TDS} missing from READY cache; training it"
         CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
           --head quasimetric --cache ~/gc/fs1.pt $BF_TDFLAGS --n-step ${TR_NSTEP:-50} \
+          --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} \
           --boundary ${BOUNDARY:-legacy} \
           --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
           > ~/gl/td_backfill_s${TDS}.log 2>&1 \
@@ -1068,7 +1076,7 @@ run: |
   # tworoom passes nothing here.
   RECIPE=""
   [ "$ENVNAME" = tworoom ] && RECIPE="--gamma ${TR_GAMMA:-1.0} --replay-prob ${TW_REPLAY:-0}"
-  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob 0.5 --expand-weight ${CU_EXPAND:-1.0} --freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
+  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob 0.5 --expand-weight ${CU_EXPAND:-1.0} --freeze-critic-frac 0.5 --expectile ${CU_EXPECTILE:-0.1} --expectile-final ${CU_EXPECTILE_FINAL:-0.03} --critic-lr 1e-3 --critic-lr-final 1e-4"
   FROZEN_ARGS=""
   if [ "${ACTOR_ONLY:-0}" = 1 ]; then
     # Keep each environment's established actor-only recipe. TwoRoom's
@@ -1404,7 +1412,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \

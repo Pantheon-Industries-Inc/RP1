@@ -71,6 +71,21 @@ from stable_worldmodel.trm.learners.td import _expectile_loss
 from stable_worldmodel.trm.samplers import NStepGoalSampler
 
 
+class _NearGoalSampler(NStepGoalSampler):
+    """NStepGoalSampler drawing a fraction of in-episode hindsight goals 1..near_max
+    steps ahead (near-goal resolution for the co-critic). near_frac=0 = legacy."""
+
+    def __init__(self, *args, near_frac: float = 0.0, near_max: int = 3, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert hasattr(NStepGoalSampler, "_offset"), "legacy NStepGoalSampler lacks _offset(); cannot oversample near goals"
+        self.near_frac, self.near_max = float(near_frac), int(near_max)
+
+    def _offset(self, hi):
+        if self.near_frac > 0 and self.rng.random() < self.near_frac:
+            return int(self.rng.integers(1, max(1, min(self.near_max, int(hi))) + 1))
+        return super()._offset(hi)
+
+
 def _cos(base, final, t, T):
     """Cosine decay base -> final over T steps; base when final is None."""
     if final is None or T <= 0:
@@ -214,6 +229,9 @@ def main():
                         "discounting); disc = discount the exact branch too")
     p.add_argument("--td-batch", type=int, default=1024)
     p.add_argument("--td-p-cross", type=float, default=0.3)
+    p.add_argument("--near-frac", type=float, default=0.0,
+                   help="co-critic: fraction of in-episode hindsight goals drawn 1..near-max steps ahead")
+    p.add_argument("--near-max", type=int, default=3)
     p.add_argument("--ac-weight", type=float, default=0.0,
                    help="anti-constancy regularizer: penalize the batch-level "
                         "constancy of net plan displacement (the TwoRoom "
@@ -501,9 +519,12 @@ def main():
             critic = build_metric("td", c_td.latent_dim, arch).to(dev)
         critic.train()
         teacher = copy.deepcopy(critic).to(dev)
-        td_sampler = NStepGoalSampler(c_td, n_step=a.n_step, p_cross=a.td_p_cross,
+        td_sampler = _NearGoalSampler(c_td, n_step=a.n_step, p_cross=a.td_p_cross,
                                       n_buckets=10, balanced=True, seed=a.seed,
-                                      max_delta=a.td_max_delta)
+                                      max_delta=a.td_max_delta,
+                                      near_frac=a.near_frac, near_max=a.near_max)
+        if a.near_frac > 0:
+            logging.info(f"LIP-AC co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps")
         c_opt = torch.optim.AdamW(critic.parameters(), lr=a.critic_lr,
                                   weight_decay=a.critic_wd)
     for prm in teacher.parameters():
