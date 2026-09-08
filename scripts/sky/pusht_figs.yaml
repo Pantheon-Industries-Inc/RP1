@@ -7,6 +7,7 @@ envs:
   ACTOR_TAG: pusht-v2l05-s0-20260902    # on /checkpoints (legacy)
   DRAW: "42"
   GRID: "40"
+  SKIP_HEAT: "0"
   PANTHEON_USER: armin@pantheon.inc
 workdir: .
 resources:
@@ -33,10 +34,10 @@ run: |
   export H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
   export DIAG=/newcheckpoints/$PANTHEON_USER/$DIAG_TAG ACTOR=/checkpoints/$PANTHEON_USER/$ACTOR_TAG
   export WM=$DIAG/lewm_pusht_official; [ -f $WM/weights.pt ] || WM=$ACTOR/lewm_pusht_official
-  export OUT=/newcheckpoints/$PANTHEON_USER/pusht-figs-${DIAG_TAG}-d${DRAW}
+  export OUT=/newcheckpoints/$PANTHEON_USER/pusht-figs-${DIAG_TAG}-d${DRAW} SKIP_HEAT=${SKIP_HEAT:-0}
   ls $DIAG | head -30; ls $ACTOR/train_checkpoints
   pixi run python scripts/pusht_diag/figures.py
   echo "== outputs"; ls -la $OUT
-  for f in $OUT/*.png $OUT/*.mp4 $OUT/INDEX.md $OUT/summary.json; do
+  [ "${SKIP_HEAT:-0}" = 1 ] && rm -f $OUT/*.mp4; for f in $OUT/*.mp4 $OUT/INDEX.md; do
     echo "[b64:$(basename $f)]"; base64 -w0 "$f"; echo; echo "[/b64]"
   done

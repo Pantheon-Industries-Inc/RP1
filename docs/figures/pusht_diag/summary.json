@@ -1,0 +1,27 @@
+{
+ "3": {
+  "class": "modeA",
+  "spearman_V_vs_bfs": 0.849739563519117,
+  "spearman_latent_vs_bfs": 0.7775976722081228
+ },
+ "9": {
+  "class": "modeA",
+  "spearman_V_vs_bfs": 0.8872231897360742,
+  "spearman_latent_vs_bfs": 0.7937185520373465
+ },
+ "13": {
+  "class": "modeA",
+  "spearman_V_vs_bfs": -0.13714268479244296,
+  "spearman_latent_vs_bfs": 0.06027737185696887
+ },
+ "0": {
+  "class": "both_ok",
+  "spearman_V_vs_bfs": -0.11854604291726853,
+  "spearman_latent_vs_bfs": 0.5409963339269968
+ },
+ "4": {
+  "class": "both_ok",
+  "spearman_V_vs_bfs": 0.7926894981612299,
+  "spearman_latent_vs_bfs": 0.7742851242000859
+ }
+}

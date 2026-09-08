@@ -156,6 +156,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 zg_all = encode(goal_frames)
 summary = {}
+if os.environ.get("SKIP_HEAT", "0") == "1":
+    heat_eps = []
+    try:
+        summary = json.loads((OUT / "summary.json").read_text())
+    except Exception:  # noqa: BLE001
+        summary = {}
 for k, e in enumerate(heat_eps):
     s0 = start_state[e]; g = goal_state[e]
     frames = []
@@ -204,8 +210,30 @@ def load_rollouts(label):
     return out
 
 
-roll = {lab: load_rollouts(lab) for lab in ("rlp", "cem_latent")}
-print(f"[figs] rollouts: rlp {len(roll['rlp'])} eps, cem {len(roll['cem_latent'])} eps", flush=True)
+roll_raw = {lab: load_rollouts(lab) for lab in ("rlp", "cem_latent")}
+# The recorder keeps only episodes with >= 25 steps and numbers them by kept
+# order, so recorded id k is NOT task k. Recover the task of each kept episode
+# by matching its first frame to the 50 task start frames (same env, same
+# state -> near-identical renders).
+starts = np.stack([np.asarray(f, dtype=np.float32) for f in start_frames_h5])  # (50,H,W,3)
+roll = {}
+for lab, eps in roll_raw.items():
+    mapped = {}
+    for k, frames in eps.items():
+        f0 = np.asarray(frames[0], dtype=np.float32)
+        if f0.shape != starts.shape[1:]:
+            f0 = np.asarray(Image.fromarray(frames[0]).resize(starts.shape[1:3][::-1]), dtype=np.float32)
+        d = ((starts - f0) ** 2).mean(axis=(1, 2, 3)); e = int(np.argmin(d))
+        mapped[e] = (frames, float(d[e]), float(np.sort(d)[1]))
+    roll[lab] = mapped
+    print(f"[figs] {lab}: {len(eps)} kept episodes -> tasks {sorted(mapped)}; worst match mse {max(v[1] for v in mapped.values()):.1f}, min runner-up {min(v[2] for v in mapped.values()):.1f}", flush=True)
+fail_eps = [e for e in modeA if e in roll["rlp"]][:5]
+if len(fail_eps) < 5:
+    fail_eps += [e for e in both_fail if e in roll["rlp"] and e not in fail_eps][: 5 - len(fail_eps)]
+succ_eps = [e for e in both_ok if e in roll["rlp"] and e in roll["cem_latent"]][:5]
+if len(succ_eps) < 5:  # both succeeded but one finished in < 25 steps (not recorded): show what exists
+    succ_eps += [e for e in both_ok if e in roll["rlp"] and e not in succ_eps][: 5 - len(succ_eps)]
+print(f"[figs] video tasks: fail {fail_eps} success {succ_eps}", flush=True)
 
 
 def border(img, ok, w=6):
@@ -218,19 +246,22 @@ index = ["| file | task | CEM | RLP |", "|---|---|---|---|"]
 for kind, eps in (("fail", fail_eps), ("success", succ_eps)):
     for e in eps:
         e = int(e)
-        keys = sorted(roll["rlp"].keys())
-        ce, re_ = roll["cem_latent"][keys[e]], roll["rlp"][keys[e]]
-        n_fr = max(len(ce), len(re_)); goal = goal_frames[e]
+        re_ = roll["rlp"][e][0]
+        ce = roll["cem_latent"][e][0] if e in roll["cem_latent"] else None
+        n_fr = max(len(ce) if ce else 0, len(re_)); goal = goal_frames[e]
         frames = []
         for t in range(n_fr + 10):
-            a = ce[min(t, len(ce) - 1)]; b = re_[min(t, len(re_) - 1)]
+            b = re_[min(t, len(re_) - 1)]
+            a = ce[min(t, len(ce) - 1)] if ce else (np.full_like(b, 255) if t else start_frames_h5[e])
             frames.append(np.concatenate([border(a, bool(c_ok[e])), border(b, bool(r_ok[e])), goal], axis=1))
-        name = f"{kind}_task{e:02d}_cem-{'OK' if c_ok[e] else 'FAIL'}_rlp-{'OK' if r_ok[e] else 'FAIL'}.mp4"
+        cem_tag = ("OK" if c_ok[e] else "FAIL") + ("" if ce else "-fast(unrecorded)")
+        name = f"{kind}_task{e:02d}_cem-{cem_tag}_rlp-{'OK' if r_ok[e] else 'FAIL'}.mp4"
         imageio.mimwrite(OUT / name, frames, fps=10, codec="libx264", quality=7, macro_block_size=1)
-        index.append(f"| {name} | {e} | {'OK' if c_ok[e] else 'FAIL'} | {'OK' if r_ok[e] else 'FAIL'} |")
+        index.append(f"| {name} | {e} | {cem_tag} | {'OK' if r_ok[e] else 'FAIL'} |")
 (OUT / "INDEX.md").write_text(
     f"# PushT draw {DRAW}, actor {ACTOR.name}: CEM (left) | RLP (middle) | goal frame (right)\n\n"
     "Border colour = outcome of that planner on that task (green success, red failure). "
+    "A CEM panel marked fast(unrecorded) succeeded in under 25 steps, which the recorder does not keep; its start frame is shown, then white. "
     "Failure videos = tasks RLP fails (CEM succeeds where available); success videos = both succeed.\n\n"
     + "\n".join(index) + "\n\nHeatmaps: " + json.dumps(summary) + "\n")
 (OUT / "summary.json").write_text(json.dumps(summary, indent=1))
