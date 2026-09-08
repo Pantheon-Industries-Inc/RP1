@@ -131,8 +131,18 @@ def wm_divergence():
     tf = T.Compose([T.ToImage(), T.ToDtype(torch.float32, scale=True), T.Normalize(mean=stats["mean"], std=stats["std"]), T.Resize(224)])
     BLOCK, H = 5, 5
 
+    def to_frame(x):  # recorded lances hold JPEG bytes; the h5 holds uint8 arrays
+        if isinstance(x, (bytes, bytearray, np.bytes_)):
+            import io
+            from PIL import Image
+            return np.asarray(Image.open(io.BytesIO(bytes(x))).convert("RGB"))
+        x = np.asarray(x)
+        if x.dtype.kind in "SO":
+            return to_frame(x.item() if x.shape == () else x.tolist())
+        return x
+
     def enc(frames):  # (T,H,W,3) uint8 -> (T,D)
-        px = torch.stack([tf(f) for f in frames]).to(dev)
+        px = torch.stack([tf(to_frame(f)) for f in frames]).to(dev)
         with torch.no_grad():
             return wm.encode({"pixels": px.unsqueeze(0)})["emb"][0].float()
 
@@ -166,11 +176,12 @@ def wm_divergence():
             for i, e in enumerate(eps):
                 m = ep == e
                 order = np.argsort(st[m])
-                pix = np.stack([np.asarray(x) for x in np.asarray(t.column("pixels").to_pylist(), dtype=object)[m][order]])
+                pix_all = np.asarray(t.column("pixels").to_pylist(), dtype=object)
+                pix = [pix_all[m][order][j] for j in range(int(m.sum()))]
                 act = np.stack(t.column("action").to_numpy(zero_copy_only=False)[m][order]).astype(np.float64)
                 if len(pix) < H * BLOCK + 1:
                     continue
-                frames = pix[: H * BLOCK + 1 : BLOCK]  # t = 0,5,...,25
+                frames = [pix[j] for j in range(0, H * BLOCK + 1, BLOCK)]  # t = 0,5,...,25
                 z_real = enc(frames)  # (H+1, D)
                 z_imag = imagine(z_real, act[: H * BLOCK])  # (H, D)
                 d = (z_imag - z_real[1:]).norm(dim=-1).cpu().numpy()
@@ -190,7 +201,9 @@ def wm_divergence():
             lo, hi, off, n = 16000, 18685, 25, 50
             ep_ids = np.unique(epi); ep_ids = ep_ids[(ep_ids >= lo) & (ep_ids < hi)]
             maxlen = {e: int(stp[epi == e].max()) for e in ep_ids}
-            valid = np.array([i for i in range(len(epi)) if epi[i] in maxlen and stp[i] <= maxlen[epi[i]] - off - 1])
+            keep = np.isin(epi, ep_ids)
+            mx = np.zeros(len(epi), dtype=np.int64); mx[keep] = np.array([maxlen[e] for e in epi[keep]])
+            valid = np.nonzero(keep & (stp <= mx - off))[0]
             exp_out = {}
             for s in SEEDS:
                 g = np.random.default_rng(s)

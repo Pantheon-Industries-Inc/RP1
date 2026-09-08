@@ -79,6 +79,7 @@ envs:
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
+  POST_ONLY: "0"         # 1 = skip training/evals, only run POST_SCRIPT_B64 on an existing $D
   SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
   POST_SCRIPT_B64: ""     # optional python (base64) run in the pixi env after evals
   EVAL_EXTRA: ""         # extra hydra overrides for every eval call
@@ -194,7 +195,7 @@ run: |
     [ -f "$SRC/planner.pt" ] || { echo "ACTOR_TAG has no planner.pt: $SRC" >&2; exit 1; }
     cp -r "$SRC" "$D/train_checkpoints"; echo "[actor-import] $ACTOR_TAG -> $D/train_checkpoints"
   fi
-  if [ ! -f "$D/train_checkpoints/planner.pt" ]; then
+  if [ "${POST_ONLY:-0}" != 1 ] && [ ! -f "$D/train_checkpoints/planner.pt" ]; then
     pixi run train model=rlp \
       wm="$WM" \
       dataset="$H5" \
@@ -264,6 +265,7 @@ run: |
     cat "$out" 2>/dev/null || echo "metrics: MISSING"
   }
 
+  [ "${POST_ONLY:-0}" = 1 ] && EVAL_SEEDS=""
   for ES in $EVAL_SEEDS; do
     for COND in $EVAL_CONDS; do
       case $COND in
