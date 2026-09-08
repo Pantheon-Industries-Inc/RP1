@@ -248,3 +248,60 @@ Reading:
   it1 actors) tests whether the correction compounds; an anchor ablation
   (weight 0.1; frozen encoder) on the same it1 collection is queued to
   separate "anchor too strong" from "data insufficient".
+
+## 11. Dyna v2, iteration 2 and the anchor ablations (2026-09-07)
+
+Same protocol as sections 7 and 10 (held-out 8000:10000, 3 seeds x draws
+42-44, config B, per-task arrays). Iteration 2 = collect with the iteration-1
+actors through the iteration-1 WM at both offsets, anchored fine-tune from
+the iteration-1 WM, fresh caches/TD/actors. Ablations reuse the iteration-1
+LeWM collection and change only the fine-tune.
+
+| base | arm | h25 median (seeds) | h25 fail-cells /450 | h25 core cured /9 | h25 always-fail tasks | h100 median (seeds) | h100 fail-cells /450 | h100 always-fail tasks |
+|---|---|---|---|---|---|---|---|---|
+| LeWM | base (config B) | 90.0 (88.7/90.0/92.7) | 43 | 0 | 11 | 86.0 (82.7/86.0/86.7) | 67 | 17 |
+| LeWM | shipped Dyna | 94.0 (94.0/94.0/96.7) | 23 | 6 | 3 | 82.0 (82.0/82.0/84.0) | 78 | 19 |
+| LeWM | v2 it1, anchor 1.0 | 93.3 (92.0/93.3/97.3) | 26 | 1 | 3 | 82.0 (81.3/82.0/86.0) | 76 | 15 |
+| LeWM | v2 it1, anchor 0.1 | 93.3 (93.3/93.3/94.0) | 29 | 1 | 5 | 84.7 (82.0/84.7/86.0) | 71 | 17 |
+| LeWM | v2 it1, frozen encoder | 92.0 (87.3/92.0/96.0) | 37 | 3 | 5 | 77.3 (76.7/77.3/84.0) | 93 | 22 |
+| LeWM | **v2 it2, anchor 1.0** | **94.7** (93.3/94.7/97.3) | **22** | 3 | **1** | **87.3** (86.7/87.3/87.3) | **58** | 15 |
+| PLDM | base | 87.3 (86.7/87.3/88.0) | 57 | 0 | 14 | 85.3 (84.7/85.3/86.0) | 66 | 20 |
+| PLDM | shipped Dyna | 92.0 (90.7/92.0/92.0) | 38 | 2 | 7 | 85.3 (84.0/85.3/87.3) | 65 | 16 |
+| PLDM | v2 it1 | 92.0 (91.3/92.0/93.3) | 35 | 2 | 8 | 85.3 (84.7/85.3/88.0) | 63 | 15 |
+| PLDM | **v2 it2** | **94.0** (90.0/94.0/96.0) | **30** | 3 | 5 | **86.0** (85.3/86.0/87.3) | **62** | 16 |
+
+Reading:
+- **Iteration 2 is the first Dyna WM that improves BOTH horizons over the
+  frozen base on both bases.** LeWM 94.7 / 87.3 vs base 90.0 / 86.0; PLDM
+  94.0 / 86.0 vs 87.3 / 85.3. LeWM h100 seeds are 86.7/87.3/87.3, i.e. the
+  seed spread collapsed (base 82.7-86.7); fail-cells drop 67 -> 58 at h100
+  and 43 -> 22 at h25. Val scores (draws 48-51) jumped to 89.0-90.5 from
+  ~83-86 for every other LeWM arm, the same "post-Dyna variance collapse"
+  signature the July campaign saw for amax 1.6.
+- **The h100 regression of one-iteration Dyna was not "forgetting".** The
+  anchored it1 WM sat 0.3% from the base and still regressed 4 points; the
+  second iteration, anchored to it1 and trained on rollouts of the it1
+  actors, recovers all of it and more. Consistent with the section-8 reading:
+  a rebuilt critic/actor on a shifted latent space needs the on-policy data
+  to cover where the *new* planner goes, which only the second collection
+  provides.
+- **Anchor ablation (LeWM, same it1 data):** anchor 0.1 trades nothing at
+  h25 (93.3) for +2.7 at h100 (84.7) — weaker anchoring helps h100, i.e. the
+  fine-tune direction is right and the anchor at 1.0 is slightly too tight.
+  Freezing the encoder is clearly wrong (92.0 / 77.3, h100 fail-cells 93):
+  the correction lives in the encoder, not only the predictor.
+- **Residual after it2, LeWM h25 (22 fail-cells):** one always-fail task
+  (draw 43 task 8, the same block-8 episode family that survived every WM),
+  and 19 seed-dependent cells over 15 tasks, none failing more than 2 of 3
+  seeds. The WM-intrinsic core at h25 is down to a single task; the rest is
+  the planner lottery. Ceiling without the lottery: 99.3.
+- **Residual after it2, LeWM h100 (58 fail-cells):** 15 always-fail tasks
+  (all frozen-core), one core task cured (draw 43 task 26), the always-fail
+  set no longer grows. h100 is now a core problem again, not a regression.
+- PLDM it2 h25 seeds 90/94/96: higher variance than LeWM; its 5 always-fail
+  tasks are all frozen-core (8, 9, 33 family).
+
+Next (queued): iteration-1 arms with post-success truncation of the
+collected episodes (`--truncate-after-success 10`, both bases, same it1
+collections, anchor 1.0) to measure the data-composition fix in isolation;
+then iteration 3 on LeWM with anchor 0.1 and truncation.
