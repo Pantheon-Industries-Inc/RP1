@@ -216,17 +216,31 @@ roll_raw = {lab: load_rollouts(lab) for lab in ("rlp", "cem_latent")}
 # by matching its first frame to the 50 task start frames (same env, same
 # state -> near-identical renders).
 starts = np.stack([np.asarray(f, dtype=np.float32) for f in start_frames_h5])  # (50,H,W,3)
+from scipy.optimize import linear_sum_assignment
 roll = {}
 for lab, eps in roll_raw.items():
-    mapped = {}
-    for k, frames in eps.items():
-        f0 = np.asarray(frames[0], dtype=np.float32)
+    ok_arr = r_ok if lab == "rlp" else c_ok
+    ks = sorted(eps)
+    cost = np.zeros((len(ks), len(starts)), dtype=np.float64)
+    for a, k in enumerate(ks):
+        f0 = np.asarray(eps[k][0], dtype=np.float32)
         if f0.shape != starts.shape[1:]:
-            f0 = np.asarray(Image.fromarray(frames[0]).resize(starts.shape[1:3][::-1]), dtype=np.float32)
-        d = ((starts - f0) ** 2).mean(axis=(1, 2, 3)); e = int(np.argmin(d))
-        mapped[e] = (frames, float(d[e]), float(np.sort(d)[1]))
-    roll[lab] = mapped
-    print(f"[figs] {lab}: {len(eps)} kept episodes -> tasks {sorted(mapped)}; worst match mse {max(v[1] for v in mapped.values()):.1f}, min runner-up {min(v[2] for v in mapped.values()):.1f}", flush=True)
+            f0 = np.asarray(Image.fromarray(eps[k][0]).resize(starts.shape[1:3][::-1]), dtype=np.float32)
+        cost[a] = ((starts - f0) ** 2).mean(axis=(1, 2, 3))
+        # a kept episode that ran the full 50-step budget cannot be an early success;
+        # one that stopped before 50 steps must be a success (terminate_at_goal)
+        full = len(eps[k]) >= 50
+        for e in range(len(starts)):
+            if (not full and not ok_arr[e]):
+                cost[a, e] += 1e6
+    rows_, cols_ = linear_sum_assignment(cost)
+    mapped = {}
+    for a, e in zip(rows_, cols_):
+        srt = np.sort(cost[a]); mapped[int(e)] = (eps[ks[a]], float(cost[a, e]), float(srt[1] if len(srt) > 1 else np.inf))
+    bad = [e for e, v in mapped.items() if v[1] > 1e5]
+    print(f"[figs] {lab}: {len(ks)} kept episodes -> tasks {sorted(mapped)}; assigned mse max {max(v[1] for v in mapped.values()):.1f}, "
+          f"median {np.median([v[1] for v in mapped.values()]):.1f}; outcome-inconsistent assignments: {bad}", flush=True)
+    roll[lab] = {e: v for e, v in mapped.items() if v[1] < 1e5}
 fail_eps = [e for e in modeA if e in roll["rlp"]][:5]
 if len(fail_eps) < 5:
     fail_eps += [e for e in both_fail if e in roll["rlp"] and e not in fail_eps][: 5 - len(fail_eps)]

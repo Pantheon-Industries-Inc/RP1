@@ -36,8 +36,9 @@ run: |
   export WM=$DIAG/lewm_pusht_official; [ -f $WM/weights.pt ] || WM=$ACTOR/lewm_pusht_official
   export OUT=/newcheckpoints/$PANTHEON_USER/pusht-figs-${DIAG_TAG}-d${DRAW} SKIP_HEAT=${SKIP_HEAT:-0}
   ls $DIAG | head -30; ls $ACTOR/train_checkpoints
+  mkdir -p $OUT; [ "${SKIP_HEAT:-0}" = 1 ] && rm -f $OUT/*.mp4
   pixi run python scripts/pusht_diag/figures.py
   echo "== outputs"; ls -la $OUT
-  [ "${SKIP_HEAT:-0}" = 1 ] && rm -f $OUT/*.mp4; for f in $OUT/*.mp4 $OUT/INDEX.md; do
+  for f in $OUT/*.mp4 $OUT/INDEX.md; do
     echo "[b64:$(basename $f)]"; base64 -w0 "$f"; echo; echo "[/b64]"
   done
