@@ -574,6 +574,8 @@ class LIPSolver(CEMSolver):
                     A = self.actor(A, gA, E, z0_r, zg_r, traj_f, k=k_it, vtraj=vtraj)
                 buf.append(A.clone())
         with torch.no_grad():
+            if not buf:  # iters_override=0: emit the initial plan untouched (control arm)
+                buf = [A.detach().clone()]
             cands = torch.stack(buf if self.lip_select == "buffer" else buf[-1:], dim=1)
             C = cands.shape[1]
             cf = cands.reshape(B * R * C, self.horizon, self.action_dim)

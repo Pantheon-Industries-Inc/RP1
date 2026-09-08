@@ -245,7 +245,8 @@ run: |
     pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
       runtime.seed=$seed \
       evaluation.num_episodes=$EVAL_N \
-      "$@" $extra 2>&1 | tee "$D/evallog_${label}_s${seed}.txt" | grep -v "Solver\|solve completed"
+      "$@" $extra 2>&1 | tee "$D/evallog_${label}_s${seed}.txt" | grep -v "Solver\|solve completed" \
+      || echo "[eval-failed] $label seed=$seed (see evallog_${label}_s${seed}.txt)"
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
