@@ -77,6 +77,8 @@ envs:
   ACTOR_TAG: ""          # reuse another tag's train_checkpoints/ (eval-only job)
   PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
+  RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
+  OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
   SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
   POST_SCRIPT_B64: ""     # optional python (base64) run in the pixi env after evals
   EVAL_EXTRA: ""         # extra hydra overrides for every eval call
@@ -96,7 +98,8 @@ resources:
     telemetry-opt-out-reason: replication-validation
 
 volumes:
-  /checkpoints: checkpoints
+  /checkpoints: checkpoints                  # legacy PVC: read-side (actors, caches, WM); quota-exhausted for writes
+  /newcheckpoints: armin-rlp-checkpoints     # 2026-09-08: outputs go here (OUT_ROOT)
 
 setup: |
   set -euo pipefail
@@ -118,7 +121,7 @@ run: |
   export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
   export RLP_DATA_HOME=/tmp/rlp-data
   mkdir -p "$RLP_DATA_HOME"
-  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  D=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$EXPERIMENT_TAG
   mkdir -p "$D" && chmod 777 "$D"
   CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
 
@@ -128,6 +131,9 @@ run: |
   # World model: official release weights, converted once to this stack's
   # vit_hf (transformers-5 q_proj) key naming. Durable on /checkpoints.
   WM=$D/lewm_pusht_official
+  if [ ! -f "$WM/weights.pt" ] && [ -n "${ACTOR_TAG:-}" ] && [ -f /checkpoints/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official/weights.pt ]; then
+    cp -r /checkpoints/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official "$WM"; echo "[wm] copied from $ACTOR_TAG"
+  fi
   if [ ! -f "$WM/weights.pt" ] || [ ! -f "$WM/config.json" ]; then
     mkdir -p "$WM"
     RAW=$RLP_DATA_HOME/wm_raw
@@ -238,7 +244,7 @@ run: |
     # __SEED__/__LABEL__ are substituted per call (probe dirs etc.).
     local extra="${EVAL_EXTRA:-}"
     extra="${extra//__SEED__/$seed}"; extra="${extra//__LABEL__/$label}"
-    [ "${RECORD:-0}" = 1 ] && extra="$extra environment.record_path=$D/rec_${label}_s${seed}.lance"
+    if [ "${RECORD:-0}" = 1 ]; then case " ${RECORD_CONDS:-rlp cem_latent} " in *" $label "*) extra="$extra environment.record_path=$D/rec_${label}_s${seed}.lance";; esac; fi
     case "$label" in rlp*) [ "${PROBES:-0}" = 1 ] && extra="$extra core.solver.record_probes=true core.solver.probe_directory=$D/probes_${label}_s${seed}";; esac
     # episode_range 16000:18685 and h25 (goal_offset 25 / budget 50) are the
     # shipped config defaults; the run exercises them rather than overriding.
@@ -255,7 +261,7 @@ run: |
       [ -n "$VD" ] && cp -r "$VD" "$D/videos_${label}_s${seed}"
     fi
     echo "----- RESULT $label seed=$seed -----"
-    cat "$out"
+    cat "$out" 2>/dev/null || echo "metrics: MISSING"
   }
 
   for ES in $EVAL_SEEDS; do
