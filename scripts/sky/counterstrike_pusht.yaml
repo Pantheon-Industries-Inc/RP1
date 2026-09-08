@@ -81,6 +81,7 @@ envs:
   RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
   POST_ONLY: "0"         # 1 = skip training/evals, only run POST_SCRIPT_B64 on an existing $D
+  POST_ENV: ""           # extra "KEY=VALUE KEY2=VALUE2" exported for the POST script
   SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
   POST_SCRIPT_B64: ""     # optional python (base64) run in the pixi env after evals
   EVAL_EXTRA: ""         # extra hydra overrides for every eval call
@@ -306,5 +307,5 @@ run: |
   if [ -n "${POST_SCRIPT_B64:-}" ]; then
     echo "$POST_SCRIPT_B64" | base64 -d > /tmp/post.py
     echo "[post] running post script"
-    D="$D" CD="$CD" H5="$H5" pixi run python /tmp/post.py || echo "[post] FAILED"
+    env $POST_ENV D="$D" CD="$CD" H5="$H5" pixi run python /tmp/post.py || echo "[post] FAILED"
   fi
