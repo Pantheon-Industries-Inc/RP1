@@ -26,3 +26,9 @@ value_path: null  # override the value recorded in the actor checkpoint
 init_mode: zero
 init_samples: 64
 init_scale: 1.5
+# Diagnostics (2026-09-08): init_mode "cem" starts refinement from a CEM run on
+# the planning cost (oracle-initialisation test); iters_override sets the
+# deploy-time K (0 = emit the init plan; >K = continuation). Both are
+# diagnostic only -- the shipped protocol is the checkpoint's K, zero init.
+cem_init_steps: 30
+iters_override: null

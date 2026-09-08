@@ -157,6 +157,8 @@ class LIPSolver(CEMSolver):
         init_mode: str = "zero",
         init_samples: int = 64,
         init_scale: float = 1.5,
+        cem_init_steps: int = 30,
+        iters_override: int | None = None,
         reuse_trajectory: bool | str = True,
         graphed: bool | str = False,
         record_probes: bool = False,
@@ -180,6 +182,16 @@ class LIPSolver(CEMSolver):
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
+        # init_mode="cem": A(0) = the mean of a CEM run on the solver's planning
+        # cost (num_samples x cem_init_steps, topk elites -- the cem_latent
+        # arm's own update rule), then the K learned refinements as usual. An
+        # oracle-initialisation diagnostic: separates "the refiner cannot find
+        # the basin" from "the refiner cannot hold a good plan".
+        self.cem_init_steps = int(cem_init_steps)
+        # iters_override: deploy-time K (None = the checkpoint's trained K).
+        # 0 = emit the initial plan untouched (control arm); >K = continuation
+        # diagnostic. Diagnostic only -- the shipped protocol is one K=8 pass.
+        self.iters_override = None if iters_override is None else int(iters_override)
         # Default TRUE since 2026-08-12: the gradient unroll's trajectory is
         # reused as the actor features (9 fwd + 8 bwd instead of 17 fwd +
         # 8 bwd). The discarded unroll was a bit-exact duplicate — verified by
@@ -276,6 +288,9 @@ class LIPSolver(CEMSolver):
         self.actor.eval()
         self._actor_horizon = ck["horizon"]  # plan length must match the trained net
         self.lip_iters = ck["iters"]
+        if self.iters_override is not None:
+            logger.info(f"LIP iterations overridden at deploy: {self.lip_iters} -> {self.iters_override}")
+            self.lip_iters = self.iters_override
         self.temporal_objective = ck.get("temporal_objective", "terminal")
         if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
             raise ValueError(f"unsupported temporal objective: {self.temporal_objective}")
@@ -385,6 +400,40 @@ class LIPSolver(CEMSolver):
                 E = self.lip_value(term.float(), zg_c).view(B, C)
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
+    def _cem_init(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        """A(0) = CEM mean on the solver's planning cost (the cem_latent arm's
+        rule: N(mean, var) samples, top-k elites, mean/std update), batched
+        exactly like :meth:`solve`'s MPPI loop. Returns (B, H, adim)."""
+        H, adim = self.horizon, self.action_dim
+        mean = torch.zeros(n_envs, H, adim, device=self.device, dtype=self.dtype)
+        var = self.var_scale * torch.ones_like(mean)
+        with torch.no_grad():
+            for start_idx in range(0, n_envs, self.batch_size):
+                end_idx = min(start_idx + self.batch_size, n_envs)
+                bs = end_idx - start_idx
+                batch_mean, batch_var = mean[start_idx:end_idx], var[start_idx:end_idx]
+                expanded: dict[str, Any] = {}
+                for k, v in info_dict.items():
+                    vb = v[start_idx:end_idx]
+                    if torch.is_tensor(v):
+                        td = self.dtype if vb.is_floating_point() else None
+                        vb = vb.to(device=self.device, dtype=td).unsqueeze(1).expand(bs, self.num_samples, *vb.shape[1:])
+                    elif isinstance(v, np.ndarray):
+                        vb = np.repeat(vb[:, None, ...], self.num_samples, axis=1)
+                    expanded[k] = vb
+                for _ in range(self.cem_init_steps):
+                    cand = torch.randn(bs, self.num_samples, H, adim, generator=self.torch_gen,
+                                       device=self.device, dtype=self.dtype)
+                    cand = cand * batch_var.unsqueeze(1) + batch_mean.unsqueeze(1)
+                    cand[:, 0] = batch_mean
+                    costs = cast(EnvironmentCost, self.model).get_cost(expanded, cand)
+                    _, top = torch.topk(costs, k=self.topk, dim=1, largest=False)
+                    rows = torch.arange(bs, device=self.device).unsqueeze(1).expand(-1, self.topk)
+                    elites = cand[rows, top]
+                    batch_mean, batch_var = elites.mean(dim=1), elites.std(dim=1)
+                mean[start_idx:end_idx] = batch_mean
+        return mean.float()
+
     # ------------------------------------------------------------------ lip
     def _graphed_for(self, wm: Any, z_hist: torch.Tensor, a_hist: torch.Tensor, z_goal: torch.Tensor) -> Any:
         """Lazily build the CUDA-graphed refinement and stage this decision.
@@ -459,6 +508,11 @@ class LIPSolver(CEMSolver):
         A[::R] = 0.0  # one zero-init restart per env
         if self.init_mode == "value" and R == 1:
             A = self._value_init(wm, z_hist, a_hist, zg)
+        elif self.init_mode == "cem" and R == 1:
+            A = self._cem_init(info_dict, B).clamp(-float(self.actor.amax), float(self.actor.amax))
+        A_init = A.detach().clone()
+        e_iters: list[torch.Tensor] = []   # E(A_k) before the k-th update, k = 0..K-1
+        lat_iters: list[torch.Tensor] = [] # imagined terminal latent distance of A_k
         s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
         graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []
@@ -499,6 +553,9 @@ class LIPSolver(CEMSolver):
                     else:
                         traj_f = rollout_traj(wm, zh_r, a_hist, A)
                     E = self._score(traj_f, zg_r, zh_r)
+                if self.probe_directory is not None:
+                    e_iters.append(E.detach().float().clone())
+                    lat_iters.append((traj_f[:, -1].float() - zg_r).norm(dim=-1).detach())
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
@@ -563,6 +620,12 @@ class LIPSolver(CEMSolver):
                     "best": best.detach().cpu(),
                     "lat_traj": lat_traj.detach().cpu(),
                     "cands": cands.view(B, R * C, self.horizon, self.action_dim).detach().cpu(),
+                    # diagnostics (2026-09-08): refinement trajectory per iteration
+                    "A_init": A_init.cpu(),
+                    "E_iters": torch.stack(e_iters).cpu() if e_iters else torch.zeros(0),
+                    "lat_iters": torch.stack(lat_iters).cpu() if lat_iters else torch.zeros(0),
+                    "init_mode": self.init_mode,
+                    "iters": int(self.lip_iters),
                 },
                 self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
             )

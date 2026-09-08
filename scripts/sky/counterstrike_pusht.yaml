@@ -71,6 +71,12 @@ envs:
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
   EVAL_CONDS: "rlp cem_latent noop"
+                         # diagnostics (2026-09-08): rlp_ceminit (K refinements from a
+                         # CEM plan), rlp_ceminit_k0 (the CEM plan through the LIP
+                         # path, K=0 control), rlp_k64 (continuation, 64 iterations)
+  ACTOR_TAG: ""          # reuse another tag's train_checkpoints/ (eval-only job)
+  PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
+  RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
   SAVE_VIDEOS: "0"        # 1 = persist per-eval video panels to $D
   POST_SCRIPT_B64: ""     # optional python (base64) run in the pixi env after evals
   EVAL_EXTRA: ""         # extra hydra overrides for every eval call
@@ -177,6 +183,11 @@ run: |
     TD_EXTRA="planner.gamma=1.0 planner.n_step=1 planner.expectile=0.03 planner.expectile_final=0.01"
   fi
 
+  if [ -n "${ACTOR_TAG:-}" ] && [ ! -f "$D/train_checkpoints/planner.pt" ]; then
+    SRC=/checkpoints/$PANTHEON_USER/$ACTOR_TAG/train_checkpoints
+    [ -f "$SRC/planner.pt" ] || { echo "ACTOR_TAG has no planner.pt: $SRC" >&2; exit 1; }
+    cp -r "$SRC" "$D/train_checkpoints"; echo "[actor-import] $ACTOR_TAG -> $D/train_checkpoints"
+  fi
   if [ ! -f "$D/train_checkpoints/planner.pt" ]; then
     pixi run train model=rlp \
       wm="$WM" \
@@ -227,12 +238,14 @@ run: |
     # __SEED__/__LABEL__ are substituted per call (probe dirs etc.).
     local extra="${EVAL_EXTRA:-}"
     extra="${extra//__SEED__/$seed}"; extra="${extra//__LABEL__/$label}"
+    [ "${RECORD:-0}" = 1 ] && extra="$extra environment.record_path=$D/rec_${label}_s${seed}.lance"
+    case "$label" in rlp*) [ "${PROBES:-0}" = 1 ] && extra="$extra core.solver.record_probes=true core.solver.probe_directory=$D/probes_${label}_s${seed}";; esac
     # episode_range 16000:18685 and h25 (goal_offset 25 / budget 50) are the
     # shipped config defaults; the run exercises them rather than overriding.
     pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
       runtime.seed=$seed \
       evaluation.num_episodes=$EVAL_N \
-      "$@" $extra
+      "$@" $extra 2>&1 | tee "$D/evallog_${label}_s${seed}.txt" | grep -v "Solver\|solve completed"
     local run=$(ls -dt logs/*/* | head -1)
     local out="$D/results_${label}_s${seed}.txt"
     cp "$run"/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
@@ -256,6 +269,15 @@ run: |
             run_eval "rlp_${DTAG}" $ES core/solver=lip \
               core.solver.actor_path="$D/train_checkpoints/planner_${DTAG}.pt"
           done;;
+        rlp_ceminit)
+          run_eval rlp_ceminit $ES core/solver=lip core.solver.init_mode=cem \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        rlp_ceminit_k0)
+          run_eval rlp_ceminit_k0 $ES core/solver=lip core.solver.init_mode=cem core.solver.iters_override=0 \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        rlp_k64)
+          run_eval rlp_k64 $ES core/solver=lip core.solver.iters_override=64 \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
         noop) run_eval noop $ES core/policy=no_move;;
       esac
