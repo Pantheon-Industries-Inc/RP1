@@ -55,8 +55,12 @@ def _init_worker(resolution: int) -> None:
     _ENV.reset(seed=0)
 
 
-def _render_chunk(states5: np.ndarray) -> np.ndarray:
-    """Render ``(B, 5)`` PushT states (agent xy, block xy, block angle) to uint8 frames."""
+def _render_chunk(states5: np.ndarray, jpeg_quality: int = 0) -> np.ndarray:
+    """Render ``(B, 5)`` PushT states (agent xy, block xy, block angle) to uint8 frames.
+
+    ``jpeg_quality > 0`` round-trips every frame through JPEG so the renders
+    carry the stored dataset frames' compression artifacts.
+    """
     if _ENV is None:
         raise RuntimeError("render worker not initialised")
     size = int(_ENV.render_size)
@@ -64,7 +68,11 @@ def _render_chunk(states5: np.ndarray) -> np.ndarray:
     for i, s in enumerate(states5):
         _ENV._set_state(np.asarray(s[:5], dtype=np.float64))
         out[i] = _ENV.render()
-    return out
+    return _jpeg_roundtrip(out, jpeg_quality) if jpeg_quality else out
+
+
+def _render_chunk_args(args: tuple[np.ndarray, int]) -> np.ndarray:
+    return _render_chunk(*args)
 
 
 def _decode_jpeg(p: object) -> np.ndarray:
@@ -74,6 +82,30 @@ def _decode_jpeg(p: object) -> np.ndarray:
         return np.asarray(Image.open(BytesIO(bytes(p))).convert("RGB"))
     x = np.asarray(p)
     return x.transpose(1, 2, 0) if (x.ndim == 3 and x.shape[0] == 3 and x.shape[-1] != 3) else x
+
+
+def _jpeg_roundtrip(frames: np.ndarray, quality: int) -> np.ndarray:
+    """Re-encode raw renders as JPEG at ``quality`` so they carry the stored
+    frames' compression artifacts (otherwise the encoder can tell augmented
+    frames from real ones by their lack of artifacts)."""
+    from PIL import Image
+
+    out = np.empty_like(frames)
+    for i, frame in enumerate(frames):
+        buffer = BytesIO()
+        Image.fromarray(frame).save(buffer, format="JPEG", quality=int(quality))
+        out[i] = np.asarray(Image.open(BytesIO(buffer.getvalue())).convert("RGB"))
+    return out
+
+
+def _match_jpeg_quality(renders: np.ndarray, stored: np.ndarray, candidates: tuple[int, ...]) -> tuple[int, float]:
+    """Pick the JPEG quality whose round-trip best reproduces the stored frames (pixel MAE)."""
+    best_q, best_mae = 0, float(np.abs(renders.astype(np.int16) - stored.astype(np.int16)).mean())
+    for q in candidates:
+        mae = float(np.abs(_jpeg_roundtrip(renders, q).astype(np.int16) - stored.astype(np.int16)).mean())
+        if mae < best_mae:
+            best_q, best_mae = q, mae
+    return best_q, best_mae
 
 
 def _episode_rows(episode_idx: np.ndarray, step_idx: np.ndarray) -> list[np.ndarray]:
@@ -145,11 +177,30 @@ def _run(cfg: DictConfig) -> None:
         wm = load_wm(str(args.wm), device=device)
         featurizer = build_featurizer(wm, device=device, img_size=int(args.resolution), train_res=args.train_res)
 
+        # ---- JPEG matching: the stored frames are JPEG-decoded, raw renders are
+        # not; pick the quality that best reproduces the stored pixels so the
+        # encoder cannot tell augmented frames from real ones by artifacts
+        jpeg_q = 0
+        raw_true_render = None
+        if fid_frames is not None and len(fid_rows):
+            raw_true_render = pool.apply(_render_chunk, (state[fid_rows, :5], 0))
+            jq = args.jpeg_quality
+            if jq is not None and str(jq) == "auto":
+                qualities = (50, 60, 70, 75, 80, 85, 90, 95)
+                jpeg_q, matched_mae = _match_jpeg_quality(raw_true_render, fid_frames, qualities)
+                logger.info(
+                    f"JPEG quality matched to the stored frames: q={jpeg_q or 'none'} (pixel MAE {matched_mae:.3f})"
+                )
+            elif jq is not None and int(jq) > 0:
+                jpeg_q = int(jq)
+        elif args.jpeg_quality is not None and str(args.jpeg_quality) != "auto":
+            jpeg_q = int(args.jpeg_quality)
+
         batch = int(args.batch_size)
-        chunks = [aug5[i : i + batch] for i in range(0, n, batch)]
+        chunks = [(aug5[i : i + batch], jpeg_q) for i in range(0, n, batch)]
         z_chunks: list[torch.Tensor] = []
         log_every = max(1, len(chunks) // 20)
-        for k, frames in enumerate(pool.imap(_render_chunk, chunks, chunksize=1), start=1):
+        for k, frames in enumerate(pool.imap(_render_chunk_args, chunks, chunksize=1), start=1):
             with torch.no_grad():
                 z_chunks.append(featurizer({"pixels": frames}).float().cpu())
             if k == 1 or k % log_every == 0 or k == len(chunks):
@@ -169,11 +220,12 @@ def _run(cfg: DictConfig) -> None:
             "agent_speed_p50": speed_p50,
             "agent_speed_p90": speed_p90,
             "transit_speed": transit_speed,
+            "jpeg_quality": jpeg_q,
             "state_layout": "state(7)|displaced_agent_xy(2)|transit_steps(1)",
         }
-        if fid_frames is not None and len(fid_rows):
-            true_render = pool.apply(_render_chunk, (state[fid_rows, :5],))
-            aug_render = pool.apply(_render_chunk, (aug5[fid_rows],))
+        if fid_frames is not None and len(fid_rows) and raw_true_render is not None:
+            true_render = _jpeg_roundtrip(raw_true_render, jpeg_q) if jpeg_q else raw_true_render
+            aug_render = pool.apply(_render_chunk, (aug5[fid_rows], jpeg_q))
             pix_mae = float(np.abs(true_render.astype(np.int16) - fid_frames.astype(np.int16)).mean())
             pix_frac = float((np.abs(true_render.astype(np.int16) - fid_frames.astype(np.int16)).max(-1) > 40).mean())
             with torch.no_grad():
