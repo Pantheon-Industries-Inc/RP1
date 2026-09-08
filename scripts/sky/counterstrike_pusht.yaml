@@ -67,6 +67,13 @@ envs:
   TRAIN_OVERRIDES: ""   # extra hydra overrides for the model=rlp train call,
                         # e.g. "planner.ac_weight=0.2 core.planner.transformer_layers=3
                         # core.value.depth=3" (deepcap + anti-constancy)
+  AGENT_AUG: "0"        # critic counterfactual augmentation (2026-09-08, PUSHT_DIAG E9):
+                        # fraction of critic TD queries re-rendered with the agent
+                        # displaced, label d + AUG_TRANSIT * walk-back steps. 0 = off.
+                        # Builds <AUG_CACHE>/counterstrike_fs1_agentaug.pt once (~1 h).
+  AUG_TRANSIT: "1.0"    # transit-cost scale on augmented labels (0 = label-preserving)
+  AUG_CACHE_TAG: ""     # tag under $OUT_ROOT whose caches/ holds the aug cache
+                        # (default: own tag; seeds 1/2 point at the seed-0 tag)
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -127,6 +134,9 @@ run: |
   D=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$EXPERIMENT_TAG
   mkdir -p "$D" && chmod 777 "$D"
   CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
+  # agent-aug cache lives on the writable volume (the legacy PVC is quota-exhausted)
+  AUGCD=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/${AUG_CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$AUGCD"
+  AUG_FILE=$AUGCD/counterstrike_fs1_agentaug.pt
 
   pixi run tool tool=fetch_dataset dataset=pusht
   H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
@@ -152,7 +162,8 @@ run: |
   if [ "$WAIT_CACHE_MIN" != 0 ] && [ -n "$CACHE_TAG" ]; then
     WAITED=0
     until [ -f "$CD/counterstrike_fs1.pt" ] && [ -f "$CD/counterstrike_fs5.pt" ] \
-        && [ -f "$CD/counterstrike_actions.h5" ]; do
+        && [ -f "$CD/counterstrike_actions.h5" ] \
+        && { [ "${AGENT_AUG:-0}" = 0 ] || [ -z "${AUG_CACHE_TAG:-}" ] || [ -f "$AUG_FILE" ]; }; do
       if [ "$WAITED" -ge "$WAIT_CACHE_MIN" ]; then
         echo "cache wait timed out after ${WAITED}m; building locally"
         break
@@ -166,6 +177,11 @@ run: |
   [ -f "$CD/counterstrike_fs1.pt" ] && SKIP="cache"
   [ -f "$CD/counterstrike_fs5.pt" ] && SKIP="$SKIP,subsample"
   [ -f "$CD/counterstrike_actions.h5" ] && SKIP="$SKIP,actions"
+  AUG_EXTRA=""
+  if [ "${AGENT_AUG:-0}" != 0 ]; then
+    [ -f "$AUG_FILE" ] && SKIP="$SKIP,cache_aug"
+    AUG_EXTRA="agent_aug.p=$AGENT_AUG agent_aug.transit_scale=${AUG_TRANSIT:-1.0} agent_aug.cache=$AUG_FILE agent_aug.workers=16"
+  fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 
   TRAIN_EXTRA=""
@@ -207,7 +223,7 @@ run: |
       planner.amax=$AMAX planner.mean_weight=$MEAN_WEIGHT \
       planner.expand_weight=$EXPAND \
       planner.actor_lr=$ACTOR_LR planner.actor_lr_final=$ACTOR_LR_FINAL \
-      $ITER_EXTRA $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA ${TRAIN_OVERRIDES:-}
+      $ITER_EXTRA $TD_EXTRA "skip=[$SKIP]" $TRAIN_EXTRA $AUG_EXTRA ${TRAIN_OVERRIDES:-}
     RUN=$(ls -dt logs/*/* | head -1)
     rm -rf "$D/train_checkpoints"
     cp -r "$RUN/checkpoints" "$D/train_checkpoints"

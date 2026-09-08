@@ -14,9 +14,22 @@ state_key: null    # optional ground-truth state column cached for diagnostics
 train_episodes: 8000  # value/planner train on episodes [0, N); eval draws the rest (paper split)
 train_res: null
 cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
-skip: []           # stages to skip, e.g. skip=[cache,subsample,actions]
+skip: []           # stages to skip, e.g. skip=[cache,subsample,actions,cache_aug]
 device: auto
 seed: 0
+
+# Optional stage 3b — counterfactual agent augmentation for the critic (PushT;
+# docs/campaigns/2026-09-03/PUSHT_DIAG.md E9). Re-renders every train frame
+# with the agent displaced (tools/cache_agent_aug) and hands the row-aligned
+# cache to the value and planner stages: a fraction `p` of critic TD queries
+# use the displaced latent with label d + transit_scale * (steps to walk the
+# agent back). p = 0 disables the stage entirely.
+agent_aug:
+  p: 0.0
+  transit_scale: 1.0
+  seed: 0
+  workers: 12
+  cache: null        # explicit cache path (null = <cache_directory>/<name>_fs1_agentaug.pt)
 
 # Stage 4 — offline quasimetric critic (train/metric, learner=td).
 # Keys are forwarded verbatim onto configs/train/metric.yaml.

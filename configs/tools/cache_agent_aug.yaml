@@ -1,0 +1,24 @@
+# @package _global_
+# Agent-displaced latent cache (PushT counterfactual augmentation for the
+# temporal-distance critic). Rows align with the plain fs1 cache; `state`
+# carries [logged state | displaced agent xy | transit steps].
+defaults:
+  - /logging: default
+  - _self_
+entrypoint: {_target_: rlp.tools.data.cache_agent_aug._run}
+wm: ???
+dataset: ???          # PushT h5 with pixels / state / episode_idx / step_idx
+out: ???
+state_key: state
+batch_size: 256
+max_episodes: null    # train split prefix (rows are episode-contiguous)
+device: auto
+train_res: null
+resolution: 224
+seed: 0
+workers: 12           # CPU render workers (pygame, dummy SDL driver)
+start_method: spawn   # multiprocessing start method for the render pool
+arena_low: 40.0       # displaced-agent target centre range (512-px canvas)
+arena_high: 472.0
+margin: 20.0          # keep the displaced agent inside the walls (radius 15)
+fidelity_rows: 512    # rows re-rendered at the TRUE state to check the renderer

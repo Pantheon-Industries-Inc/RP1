@@ -15,6 +15,7 @@ Example::
         learner=regression output.checkpoint=tworoom_regression scale=100
 """
 
+import torch
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
@@ -40,6 +41,24 @@ def _run(cfg: DictConfig) -> None:
         int(args.window_frames), int(args.window_lag)
     )
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
+
+    # counterfactual agent augmentation (td only): a row-aligned cache of the
+    # same frames re-rendered with the agent displaced, plus the transit cost
+    aug = None
+    if args.get("aug_cache") and float(args.get("aug_p", 0.0) or 0.0) > 0:
+        aug_cache = LatentCache.load(str(args.aug_cache), mmap=bool(args.cache_mmap)).windowed(
+            int(args.window_frames), int(args.window_lag)
+        )
+        if (
+            len(aug_cache.z) != len(cache.z)
+            or not torch.equal(aug_cache.episode_idx, cache.episode_idx)
+            or not torch.equal(aug_cache.step_idx, cache.step_idx)
+        ):
+            raise ValueError("aug_cache rows do not align with the training cache")
+        if aug_cache.state is None:
+            raise ValueError("aug_cache carries no state column (transit steps expected in its last column)")
+        aug = (aug_cache.z, aug_cache.state[:, -1].float())
+        logger.info(f"Loaded agent-aug cache: {len(aug_cache.z)} rows, mean transit {aug[1].mean().item():.2f} steps")
 
     learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
 
@@ -84,8 +103,10 @@ def _run(cfg: DictConfig) -> None:
             num_components=args.num_components,
             rank_weight=args.rank_weight,
             rank_margin=args.rank_margin,
+            aug_p=float(args.get("aug_p", 0.0) or 0.0),
+            aug_transit_scale=float(args.get("aug_transit_scale", 1.0)),
         )
-        module = learners.td.fit(cache, td_cfg, device)
+        module = learners.td.fit(cache, td_cfg, device, aug=aug)
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,

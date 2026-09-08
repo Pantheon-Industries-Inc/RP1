@@ -209,6 +209,28 @@ def _run(cfg: DictConfig) -> None:
 
     # ------------------------------------------------------------ critic (fs1 cache)
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
+    # counterfactual agent augmentation: a row-aligned cache of the same frames
+    # re-rendered with the agent displaced (rlp.tools.data.cache_agent_aug);
+    # a fraction aug_p of critic queries use it, labelled d + transit
+    c_aug: LatentCache | None = None
+    aug_transit: torch.Tensor | None = None
+    aug_p = float(a.get("aug_p", 0.0) or 0.0)
+    if c_td is not None and a.get("cache_aug") and aug_p > 0:
+        c_aug = LatentCache.load(str(a.cache_aug), mmap=bool(a.cache_mmap))
+        if (
+            len(c_aug.z) != len(c_td.z)
+            or not torch.equal(c_aug.episode_idx, c_td.episode_idx)
+            or not torch.equal(c_aug.step_idx, c_td.step_idx)
+        ):
+            raise ValueError("cache_aug rows do not align with cache_td")
+        if c_aug.state is None:
+            raise ValueError("cache_aug carries no state column (transit steps expected in its last column)")
+        aug_transit = c_aug.state[:, -1].float()
+        logger.info(
+            f"LIP-AC critic counterfactual agent augmentation: p={aug_p} "
+            f"transit_scale={float(a.aug_transit_scale)} mean transit {aug_transit.mean().item():.2f} steps"
+        )
+    aug_rng = np.random.default_rng(a.seed + 7)  # separate stream: the actor sampler's RNG stays frozen
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
@@ -271,21 +293,24 @@ def _run(cfg: DictConfig) -> None:
     )
     c_opt = None if a.actor_only else torch.optim.AdamW(critic.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
 
-    def _window_rows(indices: torch.Tensor) -> torch.Tensor:
+    def _window_rows(indices: torch.Tensor, source: LatentCache | None = None) -> torch.Tensor:
         """Stack dense TD-cache rows into m-frame windows.
 
         Exactly the ``LatentCache.windowed`` construction: frames one action
         block (``fs`` primitive steps) apart, oldest first, clamped to the
-        episode's first row at episode starts.
+        episode's first row at episode starts. ``source`` reads the latents
+        from a row-aligned cache (the agent-displaced one) with the same
+        episode bookkeeping.
         """
         if c_td is None:
             raise RuntimeError("window rows requested without the dense TD cache")
+        src = c_td if source is None else source
         columns = []
         for k in range(vframes - 1, -1, -1):
             offset = k * fs
             j = indices - offset
             j = torch.where(c_td.step_idx[indices] < offset, indices - c_td.step_idx[indices], j)
-            columns.append(c_td.z[j])
+            columns.append(src.z[j])
         return torch.cat(columns, dim=-1)
 
     n_plan = a.horizon * fs  # plan length in primitive steps
@@ -319,14 +344,26 @@ def _run(cfg: DictConfig) -> None:
             b["reached"].to(dev),
             b["dist"].to(dev),
         )
+        transit = torch.zeros(a.td_batch, device=dev)
+        if c_aug is not None and aug_transit is not None:
+            # displaced-agent queries: same frames, agent elsewhere; the label
+            # gains the steps needed to walk the agent back first
+            mask = torch.from_numpy(aug_rng.random(a.td_batch) < aug_p)
+            if bool(mask.any()):
+                t_aug = b["t_idx"][mask]
+                z_aug = _window_rows(t_aug, c_aug) if vframes > 1 else c_aug.z[t_aug]
+                z_t = z_t.clone()
+                z_t[mask.to(dev)] = z_aug.to(dev).float()
+                transit[mask.to(dev)] = (aug_transit[t_aug] * float(a.aug_transit_scale)).to(dev)
         with torch.no_grad():
             d_next = teacher_fn(z_tn, z_g)
+            ne_total = ne + transit
             if a.gamma >= 1.0:
-                cost, disc = ne, torch.ones_like(ne)
+                cost, disc = ne_total, torch.ones_like(ne)
             else:
-                disc = a.gamma**ne
+                disc = a.gamma**ne_total
                 cost = (1.0 - disc) / (1.0 - a.gamma)
-            tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
+            tgt = reached * (dist + transit) + (1.0 - reached) * (cost + disc * d_next)
         loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau, a.huber_beta)
         if expand is not None:  # value expansion on planner rollouts
             z0e, traje, zge = expand

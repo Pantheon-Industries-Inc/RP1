@@ -270,3 +270,48 @@ bias; an ensemble-pessimistic critic could shave a little off mode A but
 cannot be the fix. Final ranking of the critic story: E9 (agent-placement
 target) explains the mechanism, E4 quantifies the cost even for a sampler,
 E7 excludes uncertainty-based remedies.
+
+## E10 -- the fix: counterfactual agent augmentation of the critic (launched 2026-09-08)
+
+Correction to the fix framing above: the PushT success check (`swm/PushT-v1`
+`eval_state`) compares the **agent and block positions jointly** (`||goal[:4] -
+state[:4]|| < 20` and block angle < 20 deg). The agent's goal position is part
+of the task, so erasing the agent from goal frames would break the criterion.
+The E9 defect is not that the critic reads the agent; it is that expert data
+never contains "agent where the expert's agent ended, block elsewhere", so
+nothing pins V high there and the refiner walks into that hole.
+
+Fix = cover the counterfactual on the query side, goal untouched:
+
+* `tools/cache_agent_aug` re-renders every train frame from its logged state
+  with the agent displaced by a per-episode constant offset (uniform target
+  over the arena, agent keeps its real motion), encodes it with the frozen WM
+  and stores a row-aligned fs1 cache with `transit` = steps to walk the agent
+  back (`|delta| / p90 per-step agent speed`).
+* TD teacher (`train/metric`, learner td) and the co-trained critic
+  (`train/lip_ac`): with prob `aug_p` the query `z_t` (window) is swapped for
+  its displaced-agent latent and the label becomes `d + transit` (reached:
+  `dist + transit`; bootstrap: `c(n_eff + transit) + gamma^(n_eff+transit)
+  d(z_tn, z_g)` with the REAL successor). Upper bound on the true cost (walk
+  back, then follow the data); the low expectile keeps the usual optimism.
+* Actor sampling, goals, expansion tuple and deployment are unchanged, so the
+  deployed queries stay in distribution (`aug_p = 0.5` keeps half real).
+* `model=rlp` gains stage `cache_aug` and the `agent_aug.{p,transit_scale,
+  cache,workers}` subtree; `counterstrike_pusht.yaml` gains `AGENT_AUG`,
+  `AUG_TRANSIT`, `AUG_CACHE_TAG` (the aug cache lives on `/newcheckpoints`).
+  Local smoke (synthetic PushT h5, TwoRoom WM stand-in): re-render fidelity
+  pixel MAE 0.00, latent L2 re-render 0.02 vs consecutive-frame 1.48.
+
+Arms (config B recipe exactly as `pusht-v2l05-s*-20260902`, incl. within-run
+ES on val draws 50/51; report draws 42/43/44, one K=8 pass):
+`scripts/sky/launch_pusht_agentaug.sh`
+
+| arm | aug_p | transit_scale | tags |
+|---|---|---|---|
+| A | 0.5 | 1.0 | pusht-augA-s{0,1,2}-20260908 |
+| B | 0.5 | 0 (label-preserving) | pusht-augB-s0-20260908 |
+
+Readouts per job: `rlp`, `cem_value`, `cem_tdvalue` (E4 pairing: base 65.6 /
+71.3 / 69.3 vs latent-CEM 78.9), and the E9 probe on the new critics (POST
+script; base: co-trained critic V(agent@goal, block@start) 18.6 vs V(start)
+22.9, 5/15 tasks satisfied by agent placement).

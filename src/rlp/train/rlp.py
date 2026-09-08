@@ -61,7 +61,7 @@ def _overrides(subtree: DictConfig) -> dict[str, object]:
 def _run(cfg: DictConfig) -> None:
     raw_skip = cfg.skip if isinstance(cfg.skip, str) else " ".join(cfg.skip)
     skip = {name.strip() for name in raw_skip.replace(",", " ").split() if name.strip()}
-    unknown = skip - {"cache", "subsample", "actions", "value", "planner"}
+    unknown = skip - {"cache", "subsample", "actions", "cache_aug", "value", "planner"}
     if unknown:
         raise ValueError(f"unknown skip stages: {sorted(unknown)}")
     cache_directory = Path(str(cfg.cache_directory)).expanduser()
@@ -70,6 +70,16 @@ def _run(cfg: DictConfig) -> None:
     cache_fs5 = str(cache_directory / f"{cfg.name}_fs{cfg.frameskip}.pt")
     actions_h5 = str(cache_directory / f"{cfg.name}_actions.h5")
     value_checkpoint = str(Path(cfg.run.checkpoints) / "value_td")
+    aug_cfg = cfg.get("agent_aug")
+    aug_p = float(aug_cfg.p) if aug_cfg is not None and aug_cfg.get("p") else 0.0
+    cache_aug = (
+        str(aug_cfg.cache)
+        if aug_cfg is not None and aug_cfg.get("cache")
+        else str(cache_directory / f"{cfg.name}_fs1_agentaug.pt")
+    )
+    aug_forward: dict[str, object] = (
+        {"aug_p": aug_p, "aug_transit_scale": float(aug_cfg.transit_scale)} if aug_p > 0 and aug_cfg is not None else {}
+    )
     stage_index = 0
 
     def run_stage(name: str, config_name: str, **values: object) -> object:
@@ -104,6 +114,19 @@ def _run(cfg: DictConfig) -> None:
             dataset=str(cfg.dataset),
             output=actions_h5,
         )
+    if aug_p > 0 and aug_cfg is not None and "cache_aug" not in skip:
+        run_stage(
+            "cache_aug",
+            "tools/cache_agent_aug",
+            wm=str(cfg.wm),
+            dataset=str(cfg.dataset),
+            out=cache_aug,
+            max_episodes=cfg.train_episodes,
+            device=cfg.device,
+            train_res=cfg.train_res,
+            seed=int(aug_cfg.seed),
+            workers=int(aug_cfg.workers),
+        )
     window_frames = cfg.value.get("window_frames")
     window_lag = cfg.value.get("window_lag")
     windowed = window_frames is not None and int(window_frames) > 1
@@ -130,6 +153,8 @@ def _run(cfg: DictConfig) -> None:
             device=cfg.device,
             seed=cfg.seed,
             **{"output.checkpoint": "value_td"},
+            **({"aug_cache": cache_aug} if aug_p > 0 else {}),
+            **aug_forward,
             **value_overrides,
         )
     if "planner" not in skip:
@@ -162,6 +187,8 @@ def _run(cfg: DictConfig) -> None:
             window_lag=window_lag,
             seed=cfg.seed,
             **{"output.planner_checkpoint": "planner.pt", "output.value_checkpoint": "value_ac"},
+            **({"cache_aug": cache_aug} if aug_p > 0 else {}),
+            **aug_forward,
             **planner_overrides,
         )
     logger.success(

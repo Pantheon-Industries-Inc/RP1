@@ -7,6 +7,9 @@ defaults:
 entrypoint: {_target_: rlp.train.lip_ac._run}
 cache: ???
 cache_td: null
+cache_aug: null       # row-aligned agent-displaced fs1 cache (counterfactual critic augmentation)
+aug_p: 0.0            # fraction of critic TD queries swapped for their displaced-agent latent
+aug_transit_scale: 1.0
 h5: ???
 wm: ???
 init_value: null

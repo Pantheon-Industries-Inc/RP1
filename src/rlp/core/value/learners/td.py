@@ -57,9 +57,18 @@ class TDConfig:
     rank_weight: float = 0.0
     rank_margin: float = 0.5
     rank_max_delta: int = 200
+    # counterfactual agent augmentation (PushT): with prob ``aug_p`` the query
+    # state z_t is swapped for its agent-displaced re-render and the label
+    # grows by ``aug_transit_scale * transit`` (steps to walk the agent back)
+    aug_p: float = 0.0
+    aug_transit_scale: float = 1.0
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
+
+# (z_aug, transit): row-aligned agent-displaced latents (already windowed like
+# the training cache) and the per-row free-transit cost in primitive steps
+type AugCache = tuple[torch.Tensor, torch.Tensor]
 
 
 def _expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
@@ -93,9 +102,22 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
     )
 
 
-def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
-    """Train and return a temporal-distance (quasi)metric head."""
+def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu", aug: AugCache | None = None) -> MetricHead:
+    """Train and return a temporal-distance (quasi)metric head.
+
+    ``aug`` enables the counterfactual agent augmentation: ``(z_aug, transit)``
+    row-aligned with ``cache`` (see :mod:`rlp.tools.data.cache_agent_aug`).
+    A fraction ``cfg.aug_p`` of every batch's query states is replaced by the
+    displaced-agent latent; its target is the original label plus the transit
+    cost — the cost of walking the agent back and then following the data.
+    """
     torch.manual_seed(cfg.seed)
+    use_aug = aug is not None and cfg.aug_p > 0
+    if use_aug and aug is not None and (len(aug[0]) != len(cache.z) or len(aug[1]) != len(cache.z)):
+        raise ValueError("aug latents/transit must be row-aligned with the training cache")
+    aug_rng = np.random.default_rng(cfg.seed + 7)
+    if use_aug:
+        logger.info(f"TD counterfactual agent augmentation: p={cfg.aug_p} transit_scale={cfg.aug_transit_scale}")
     value = _make_head(cfg, cache.latent_dim).to(device)
     target = copy.deepcopy(value).to(device)
     for p in target.parameters():
@@ -147,8 +169,18 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
     log_interval = max(1, cfg.steps // 20)
     for step in range(cfg.steps):
         b = sampler.sample(cfg.batch_size)
+        z_t_cpu = b["z_t"]
+        transit = torch.zeros(cfg.batch_size)
+        if use_aug and aug is not None:
+            z_aug, transit_all = aug
+            mask = torch.from_numpy(aug_rng.random(cfg.batch_size) < cfg.aug_p)
+            if bool(mask.any()):
+                t_aug = b["t_idx"][mask]
+                z_t_cpu = z_t_cpu.clone()
+                z_t_cpu[mask] = z_aug[t_aug].float()
+                transit[mask] = transit_all[t_aug].float() * cfg.aug_transit_scale
         z_t, z_tn, z_g = (
-            b["z_t"].to(device),
+            z_t_cpu.to(device),
             b["z_tn"].to(device),
             b["z_g"].to(device),
         )
@@ -157,15 +189,17 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
             b["reached"].to(device),
             b["dist"].to(device),
         )
+        transit = transit.to(device)
         with torch.no_grad():
             d_next = target(z_tn, z_g)
+            ne_total = ne + transit  # displaced queries first walk the agent back
             if g >= 1.0:
-                c, disc = ne, torch.ones_like(ne)
+                c, disc = ne_total, torch.ones_like(ne)
             else:
-                disc = g**ne
+                disc = g**ne_total
                 c = (1.0 - disc) / (1.0 - g)
             boot = c + disc * d_next
-            tgt = reached * dist + (1.0 - reached) * boot
+            tgt = reached * (dist + transit) + (1.0 - reached) * boot
         pred = value(z_t, z_g)
         loss = _expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
         if cfg.rank_weight > 0:
@@ -195,4 +229,4 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
     return value
 
 
-__all__ = ["TDConfig", "fit", "_expectile_loss"]
+__all__ = ["AugCache", "TDConfig", "fit", "_expectile_loss"]

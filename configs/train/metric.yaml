@@ -8,6 +8,9 @@ cache: ???
 cache_mmap: true
 window_frames: 1
 window_lag: 1
+aug_cache: null        # td: row-aligned agent-displaced cache (counterfactual augmentation)
+aug_p: 0.0             # fraction of TD queries swapped for their displaced-agent latent
+aug_transit_scale: 1.0 # label = d + aug_transit_scale * transit steps
 learner: td
 output:
   checkpoint: value
