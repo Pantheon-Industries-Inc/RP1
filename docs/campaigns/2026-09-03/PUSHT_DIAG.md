@@ -481,3 +481,5 @@ ES picked step 2000 (val 68) / final (val 76). Less optimism makes the
 offline teacher a slightly better sampler objective (+3) but the co-critic
 and the refiner worse (-10 on rlp): the expectile-flattening explanation
 does not carry over to the planner. Seed 2 pending.
+
+### E10 arm A complete (3 seeds): rlp 50.0 / 57.3 / 58.0 = median **57.3** (base 68.0 / 64.0 / 64.7, median 64.7); cem_value 69.3 / 64.7 / 68.0 (base 72.7 / 73.3 / 68.0); cem_tdvalue 62.0 / 67.3 / 67.3 (base 67.3 / 68.7 / 72.0). Agent-displacement augmentation: -7 median on the planner, -4 on critic-CEM. CLOSED negative.
