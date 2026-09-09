@@ -566,3 +566,17 @@ lever is not a sharper offline target but the critic's calibration on
 IMAGINED latents near the goal -> imagination-MC term (WM rollouts along the
 data's own actions, exact remaining-steps labels; arms NEAR_IMAG,
 NEAR_IMAG_NOEXP, N5NEAR_IMAG_NOEXP).
+
+### E12 closes: NEAR 3 seeds, E01 3 seeds; W2NEAR seed 0
+
+| arm | rlp s0 / s1 / s2 (base 68.0 / 64.0 / 64.7) | median (base 64.7) | mean (base 65.6) | cem_value mean (base 71.3) | cem_tdvalue mean (base 69.3) |
+|---|---|---|---|---|---|
+| NEAR (near-goal 0.3 at 1..3 steps) | 63.3 / 68.7 / 68.7 | **68.7** | 66.9 | 73.8 | 72.0 |
+| E01 (expectile 0.1 flat) | 56.0 / 57.3 / 54.0 | 56.0 | 55.8 | 68.4 | 72.0 |
+| W2NEAR (2-frame critic + near-goal), s0 | 56.0 | -- | -- | 50.7 | 64.7 |
+
+NEAR: +4.0 median, +1.3 mean -- real but small, and seed 0 moved the other
+way (63.3 vs 68.0), i.e. inside the seed lottery. Its offline teacher is
+consistently sharper as an objective (72.0 vs 69.3) and its co-critic slightly
+(73.8 vs 71.3). E01 closed negative (-8.7 median). W2 critics stay behind w4
+(56.0), matching config B's w4 > w2 finding.
