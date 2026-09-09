@@ -641,3 +641,7 @@ makes the same critic a worse ranking objective on rendered states (the
 teacher/co-critic split has this sign). Consistent with NEAR_IMAG: exact
 labels on imagined states (imagination-MC) give the best deployed critic
 (76.7) AND a refiner at base, where the frozen teacher gives neither.
+
+### W1N5NEAR_FRZ seed 0 (refiner against the FROZEN single-frame n5 + near teacher): rlp 60.0, critic 72.7 / 72.0 (frozen, so value_ac = value_td)
+
+Single-frame frozen teacher: refiner 60.0 (vs 50.7 with the frozen w4 teacher, base mean 65.6) -- the window handicap shows on the refiner side too, but a frozen teacher still loses to co-training. Its n5 teacher scores 72 as an objective, below the n1 W1NEAR teacher's 78.0.
