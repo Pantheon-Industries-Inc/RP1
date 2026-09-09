@@ -672,3 +672,5 @@ Removing value expansion from co-training is neutral on the planner (base
 mean 65.6) and leaves the co-critic at base (70.7 vs 71.3): expansion is not
 what erodes the sharper teacher during co-training -- the plain TD phase on
 the n-step-50 / expectile-annealed recipe already does.
+
+### NEAR_NOEXP seed 0 (co-training without value expansion, near 0.3): rlp 62.0, cem_value 72.0, cem_tdvalue 75.3 (ES val 76). Neutral-to-slightly-negative; with N5NEAR_NOEXP (64.0) it closes the expansion question: expansion is not the erosion mechanism. NEARN5 (job 21302) preempted mid-eval, recovering.
