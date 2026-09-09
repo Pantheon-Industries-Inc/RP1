@@ -467,7 +467,8 @@ def _run(cfg: DictConfig) -> None:
         )
         # td_weight 0 keeps the warm-start teacher's TD fit untouched: the critic then
         # moves only through the imagination terms (pessimistic-only co-training)
-        loss = float(a.get("td_weight", 1.0)) * _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
+        td_weight = float(a.get("td_weight", 1.0))
+        loss = td_weight * _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
         if expand is not None:  # value expansion on planner rollouts
             z0e, traje, zge = expand
             # windowed values receive pre-stacked endpoint windows (2-D);
