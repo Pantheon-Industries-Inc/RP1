@@ -665,3 +665,10 @@ too. Frozen-teacher ledger at seed 0: w4 n5+near 66.0, w4 n5+near+tile 50.7,
 w1 n5+near 60.0, **w1 n1+near 72.0** -- the planner tracks the teacher's
 objective quality (73 / 69 / 72 / 78.7) only once co-training is out of the
 loop, and the n1 single-frame teacher is the one at latent parity.
+
+### N5NEAR_NOEXP seed 0 (co-training WITHOUT value expansion, n5 + near): rlp 64.0, cem_value 70.7, cem_tdvalue 73.3 (ES val 77)
+
+Removing value expansion from co-training is neutral on the planner (base
+mean 65.6) and leaves the co-critic at base (70.7 vs 71.3): expansion is not
+what erodes the sharper teacher during co-training -- the plain TD phase on
+the n-step-50 / expectile-annealed recipe already does.
