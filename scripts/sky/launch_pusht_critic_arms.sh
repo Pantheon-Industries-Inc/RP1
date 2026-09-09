@@ -14,11 +14,13 @@ export PATH="$HOME/.sky/bin:$PATH"
 ARM=${1:?arm E01|NEAR|TOL|NEARTOL}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260909}
-BASE_OVR="value.window_frames=4 value.window_lag=5 planner.ac_weight=0.5 planner.ckpt_every=2000"
+WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
 VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0
 case $ARM in
   TILE)    TILE=1;;                                # deploy-matched tiled goal frames for the window critics
   NEARTILE) NEAR=0.3; TILE=1;;
+  W1NEAR)  WF=1; NEAR=0.3;;                        # single-frame critic + near-goal oversampling (no window handicap)
+  W2NEAR)  WF=2; NEAR=0.3;;                        # two-frame (position + velocity) critic + near-goal oversampling
   E01)     VEXP=0.1; EXTRA="planner.expectile=0.1 planner.expectile_final=0.1";;
   NEAR)    NEAR=${NEAR_FRAC:-0.3};;
   NEAR5)   NEAR=0.5;;                              # dose: half of the goals near
@@ -33,6 +35,7 @@ case $ARM in
   COMBO)   TOL=1; NEAR=${NEAR_FRAC:-0.3}; EXPN=${EXPECTILE_NEAR:-0.5}; VNSTEP=5;;
   *) echo "unknown arm $ARM" >&2; exit 1;;
 esac
+BASE_OVR="value.window_frames=$WF value.window_lag=5 planner.ac_weight=0.5 planner.ckpt_every=2000"
 for S in $SEEDS; do
   TAG="pusht-${ARM,,}-s${S}-${DATE}"
   cmd=(sky jobs launch scripts/sky/counterstrike_pusht.yaml
