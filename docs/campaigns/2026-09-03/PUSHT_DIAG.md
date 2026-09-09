@@ -595,3 +595,32 @@ teacher. Follow-up: refiner trained against this teacher frozen
 ### Cube E01 (expectile 0.1 flat, teacher + co-critic; job rlp-cu-e01, config-B cube recipe, 3 seeds)
 
 h25 87.3 / 88.7 / 89.3 = median **88.7** (base 88.7 / 90.0 / 92.7, median 90.0); h100 84.7 / 84.0 / 87.3 = median **84.7** (base 82.7 / 86.0 / 86.7, median 86.0). Slightly negative on both horizons, same direction as PushT (-8.7). Expectile 0.1 closed negative on both environments. Cube NEAR (job 21172) has been RECOVERING for 7 h waiting for a 4-GPU node.
+
+### E13/E14 batch (2026-09-09 morning). Single-seed arms are compared with the base MEAN 65.6 / median 64.7 (seed 0's 68.0 is the best base seed); base cem_value 71.3, cem_tdvalue 69.3.
+
+| arm | seeds | rlp | cem_value (co-critic) | cem_tdvalue (teacher) |
+|---|---|---|---|---|
+| TOL (success-tolerance relabeling) | s0/s1/s2 | 52.7 / 52.0 / 48.0 = median **52.0** | 66.0 / 64.7 / 68.0 | 70.0 / 72.7 / 70.7 |
+| EXPN (expectile 0.5 below 3 steps) | s0 | 66.7 | 70.7 | 68.0 |
+| NEARM5 (near band 1..5) | s0 | 59.3 | 75.3 | 69.3 |
+| NEARA (+ actor near-goal problems) | s0 | 63.3 | 72.0 | 76.0 |
+| NEAR_IMAG_NOEXP (near + imagination-MC, no expansion) | s0 | 58.0 | 74.7 | 75.3 |
+
+TOL is decisively negative on the planner (-12.7 median at 3 seeds) while
+again improving the teacher as an objective (+2). EXPN is neutral. The
+near-goal variants keep the pattern: co-critic 72-75 (>= base 71.3), teacher
+69-76, planner 58-63 (<= base).
+
+**Campaign-level reading (2026-09-09).** Across 14 arms we have moved the
+critic's quality as a *ranking objective* from 67-71 to 75-78 (W1NEAR teacher
+78.0 = latent parity) by several independent routes, and the refiner has not
+benefited from any of them: the best three-seed planner effect is NEAR's +4
+median, and every sharper critic gives a planner at or below base. The E4
+premise "the critic is the defect" was right about the ranking deficit and
+wrong about where the RLP-vs-CEM gap comes from: with a latent-parity critic
+in hand, the remaining ~14 points are the refiner's optimisation -- E1/E2
+showed the learned K=8 update lowering the critic's energy while lowering
+success, i.e. exploiting critic error along the WM, and that exploitation
+does not disappear when the critic is sharper. Pending: frozen-teacher arms
+(does removing co-training change the refiner?), remaining imagination-MC
+and W1-frozen arms, cube NEAR.
