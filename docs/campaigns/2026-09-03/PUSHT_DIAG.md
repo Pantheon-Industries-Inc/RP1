@@ -631,3 +631,13 @@ The imagination-MC term lifts the CO-TRAINED critic to 76.7 as a sampler
 objective (base 71.3; without expansion 74.7), the closest any deployed
 critic has come to latent L2's 78.9, and the highest ES validation of the
 campaign (73). The refiner with it is at base (64.0 vs 65.6). Same split.
+
+### N5NEARTILE_FRZ seed 0 (refiner trained against the FROZEN n5 + near + tiled-goal teacher, no co-training): rlp **50.7**, cem_value = cem_tdvalue 70.0 / 69.3
+
+Removing co-training costs the refiner ~15 points even with a sharpened
+teacher. Co-training's value expansion on the refiner's own rollouts is what
+makes a critic usable as a gradient field on imagined states, even though it
+makes the same critic a worse ranking objective on rendered states (the
+teacher/co-critic split has this sign). Consistent with NEAR_IMAG: exact
+labels on imagined states (imagination-MC) give the best deployed critic
+(76.7) AND a refiner at base, where the frozen teacher gives neither.
