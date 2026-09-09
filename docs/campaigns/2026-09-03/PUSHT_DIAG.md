@@ -624,3 +624,10 @@ success, i.e. exploiting critic error along the WM, and that exploitation
 does not disappear when the critic is sharper. Pending: frozen-teacher arms
 (does removing co-training change the refiner?), remaining imagination-MC
 and W1-frozen arms, cube NEAR.
+
+### NEAR_IMAG seed 0 (near-goal 0.3 + imagination-MC 1.0, expansion kept): rlp 64.0, **cem_value 76.7**, cem_tdvalue 75.3 (ES step 2000, val 73)
+
+The imagination-MC term lifts the CO-TRAINED critic to 76.7 as a sampler
+objective (base 71.3; without expansion 74.7), the closest any deployed
+critic has come to latent L2's 78.9, and the highest ES validation of the
+campaign (73). The refiner with it is at base (64.0 vs 65.6). Same split.
