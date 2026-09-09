@@ -15,8 +15,13 @@ ARM=${1:?arm E01|NEAR|TOL|NEARTOL}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260909}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
-VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0; EXPAND=1.0
+VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0; EXPAND=1.0; IMAG=0
 case $ARM in
+  # --- imagination-MC (2026-09-09): train the co-critic on WM-imagined latents along the data's actions
+  #     with exact labels -- the critic is read on imagined latents, where E5 showed it optimistic
+  NEAR_IMAG)          NEAR=0.3; IMAG=1.0;;
+  NEAR_IMAG_NOEXP)    NEAR=0.3; IMAG=1.0; EXPAND=0;;
+  N5NEAR_IMAG_NOEXP)  VNSTEP=5; NEAR=0.3; IMAG=1.0; EXPAND=0;;
   # --- teacher-vs-co-critic split (2026-09-09): every arm that sharpened the offline teacher as a CEM
   #     objective (N5 76.7, NEARTILE 76.0, NW 73.3 vs base 67.3) LOST on the planner while the co-critic
   #     got worse -> (a) freeze the critic at the sharpened teacher (no co-training), (b) co-train without
@@ -57,7 +62,7 @@ for S in $SEEDS; do
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env TOL_RELABEL="$TOL" --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
     --env EXPECTILE_NEAR="$EXPN" --env NEAR_STEPS="${NEAR_STEPS:-3}" --env NEAR_WEIGHT="$NW"
-    --env ACTOR_NEAR_FRAC="$ANEAR" --env ACTOR_NEAR_MAX="${ACTOR_NEAR_MAX:-2}" --env GOAL_TILE="$TILE"
+    --env ACTOR_NEAR_FRAC="$ANEAR" --env ACTOR_NEAR_MAX="${ACTOR_NEAR_MAX:-2}" --env GOAL_TILE="$TILE" --env IMAG_MC="$IMAG"
     --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="rlp cem_value cem_tdvalue" --env SMOKE=0
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)

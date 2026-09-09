@@ -542,3 +542,27 @@ and it is the only one that also changed the co-critic's own sampling.
 Follow-ups launched at seed 0: freeze the critic at the sharpened teacher
 (`planner.freeze_critic_frac=0`, arms N5NEARTILE_FRZ / N5NEAR_FRZ) and
 co-train without value expansion (`EXPAND=0`, arms NEAR_NOEXP / N5NEAR_NOEXP).
+
+### Resolution probe over the trained critics (job pusht-resprobe3; same protocol)
+
+| critic | agent slope / AUC | joint slope / AUC | agent curve at 10/20/30/60 px |
+|---|---|---|---|
+| base ac | 0.27 / 0.65 | 0.43 / 0.86 | 0.2 / 0.5 / 1.0 / 3.8 |
+| NEAR s1 ac / s2 ac | 0.28 / 0.64, 0.29 / 0.67 | 0.41 / 0.88, 0.43 / 0.88 | 0.1 / 0.4 / 0.9 / 3.3 |
+| E01 s0 ac / s1 ac | 0.33 / 0.65, 0.34 / 0.69 | 0.42 / 0.85, 0.42 / 0.89 | 0.3 / 0.8 / 1.4 / 4.3 |
+| augA s0 ac | 0.31 / 0.69 | 0.45 / 0.89 | 0.1 / 0.4 / 0.7 / 2.2 |
+| latent L2 | 0.53 / 0.92 | 0.60 / 0.94 | 1.2 / 2.4 / 3.7 / 6.9 |
+
+Two readings. (1) NEAR did not change the static near-goal curves at all
+(agent AUC 0.64-0.67 = base), yet it gained +4-5 on the planner: its effect
+is not "sharper V on rendered near-goal states"; whatever it fixed lives on
+the imagined-rollout side or in the 1-3 step labels along real trajectories.
+(2) The agent flatness is common to EVERY temporal-distance critic and is
+largely the target's semantics: at 8-19 px/step an agent 30 px off IS 1-2
+steps of work, so V rises by ~1 where latent L2 rises by 3.7. Combined with
+E5 (imagined-state optimism gap ~3) that 1-step margin is below the critic's
+own noise on imagined latents -- the refiner cannot see it. Consequence: the
+lever is not a sharper offline target but the critic's calibration on
+IMAGINED latents near the goal -> imagination-MC term (WM rollouts along the
+data's own actions, exact remaining-steps labels; arms NEAR_IMAG,
+NEAR_IMAG_NOEXP, N5NEAR_IMAG_NOEXP).

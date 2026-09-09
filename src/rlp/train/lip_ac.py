@@ -217,6 +217,49 @@ def _run(cfg: DictConfig) -> None:
             torch.from_numpy(np.stack(aref)).to(dev).float(),
         )
 
+    # ------------------------------------------------------------ imagination-MC critic term
+    # The critic is evaluated on WORLD-MODEL latents at plan time but trained on
+    # encoder latents; near the goal its resolution on imagined states is what
+    # the refiner sees (PushT resolution probe / E5, 2026-09-09). This term
+    # rolls the frozen WM along the DATA's own next m action blocks from a real
+    # history and labels the imagined endpoint with the exact remaining
+    # distance to an in-episode goal delta >= m blocks ahead: (delta - m) * fs
+    # primitive steps, 0 when the imagined endpoint is the goal frame. Unlike
+    # value expansion (planner actions, bootstrapped optimistic targets) the
+    # labels are ground truth and the actions are on-manifold.
+    imag_mc_weight = float(a.get("imag_mc_weight", 0.0) or 0.0)
+    imag_mc_batch = int(a.get("imag_mc_batch", 128) or 128)
+    imag_rng = np.random.default_rng(a.seed + 11)
+    if imag_mc_weight > 0:
+        logger.info(f"LIP-AC imagination-MC critic term: weight={imag_mc_weight} batch={imag_mc_batch}")
+
+    def sample_imag(B: int, m: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """(z_hist, a_hist, next m real action blocks, goal latent, label steps) for imagination-MC."""
+        zh_l: list[torch.Tensor] = []
+        ah_l: list[np.ndarray] = []
+        ab_l: list[np.ndarray] = []
+        zg_l: list[torch.Tensor] = []
+        lab: list[float] = []
+        for _ in range(B):
+            e = int(ep_ids[imag_rng.integers(len(ep_ids))])
+            rows = ep_rows[e]
+            L = len(rows)
+            t = int(imag_rng.integers(2, L - 2 - m))  # blocks t..t+m-1 stay full in-episode blocks
+            zh_l.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
+            ah_l.append(np.stack([blocks(e, t - 2), blocks(e, t - 1)]))
+            ab_l.append(np.stack([blocks(e, t + k) for k in range(m)]))
+            hi = min(a.max_delta, L - 1 - t)
+            d = int(imag_rng.integers(m, max(hi, m) + 1))
+            zg_l.append(z[rows[min(t + d, L - 1)]])
+            lab.append(float((d - m) * fs))
+        return (
+            torch.stack(zh_l),
+            torch.from_numpy(np.stack(ah_l)).to(dev),
+            torch.from_numpy(np.stack(ab_l)).to(dev).float(),
+            torch.stack(zg_l),
+            torch.tensor(lab, device=dev),
+        )
+
     # ------------------------------------------------------------ critic (fs1 cache)
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
     # counterfactual agent augmentation: a row-aligned cache of the same frames
@@ -441,6 +484,18 @@ def _run(cfg: DictConfig) -> None:
                     tgt_t = block_cost + block_disc * teacher_fn(traje.reshape(-1, De), zg_rep)
                 loss_e = loss_e + _expectile_loss(critic_fn(src, zg_rep) - tgt_t, tau, a.huber_beta)
             loss = loss + a.expand_weight * loss_e
+        if imag_mc_weight > 0:
+            # imagination-MC: imagined latents along the data's actions, exact labels
+            m_blocks = int(imag_rng.integers(1, a.horizon + 1))
+            zh_i, ah_i, ab_i, zg_i, lab_i = sample_imag(imag_mc_batch, m_blocks)
+            with torch.no_grad():
+                traj_i = rollout_traj(wm, zh_i, ah_i, ab_i)  # (B, m, D) imagined, newest last
+                full_i = torch.cat([zh_i, traj_i], dim=1)
+            if vframes > 1:
+                q_i, g_i = window_pair(full_i, zg_i, vframes)
+            else:
+                q_i, g_i = full_i[:, -1], zg_i
+            loss = loss + imag_mc_weight * _expectile_loss(critic_fn(q_i, g_i) - lab_i, tau, a.huber_beta)
         c_opt.zero_grad(set_to_none=True)
         loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature here.
         c_opt.step()

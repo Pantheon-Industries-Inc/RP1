@@ -89,6 +89,8 @@ envs:
   ACTOR_NEAR_MAX: "2"
   GOAL_TILE: "0"        # 1 = window critics train on the goal FRAME tiled to the window
                         # (deploy-matched) instead of the goal's own motion window
+  IMAG_MC: "0"          # co-critic imagination-MC weight: WM rollouts along the data's actions
+                        # with exact remaining-steps labels (trains the critic where it is read)
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -217,6 +219,9 @@ run: |
   fi
   if [ "${GOAL_TILE:-0}" = 1 ]; then
     AUG_EXTRA="$AUG_EXTRA value.goal_tile=true planner.goal_tile=true"
+  fi
+  if [ "${IMAG_MC:-0}" != 0 ]; then
+    AUG_EXTRA="$AUG_EXTRA planner.imag_mc_weight=$IMAG_MC"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 
