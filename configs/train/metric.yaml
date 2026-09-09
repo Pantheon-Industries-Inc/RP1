@@ -23,6 +23,8 @@ near_max: 3
 expectile_near: null   # td: expectile for targets below near_steps (e.g. 0.5); null = `expectile` everywhere
 near_steps: 3.0
 near_weight: 0.0       # td: per-sample loss weight (1+target)^-near_weight, mean-normalised (0 = off)
+goal_tile: false       # td, window critics: goal = goal FRAME tiled to the window (deploy-matched)
+                       # instead of the goal frame's own motion window
 learner: td
 output:
   checkpoint: value

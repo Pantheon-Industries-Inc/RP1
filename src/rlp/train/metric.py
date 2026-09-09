@@ -37,9 +37,9 @@ def _run(cfg: DictConfig) -> None:
     args.rep_dim = args.representation_dim
 
     device = pick_device(args.device)
-    cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap)).windowed(
-        int(args.window_frames), int(args.window_lag)
-    )
+    base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap))
+    cache = base_cache.windowed(int(args.window_frames), int(args.window_lag))
+    goal_frames = base_cache.z if bool(args.get("goal_tile")) else None
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 
     # counterfactual agent augmentation (td only): a row-aligned cache of the
@@ -127,8 +127,11 @@ def _run(cfg: DictConfig) -> None:
             expectile_near=(None if args.get("expectile_near") is None else float(args.expectile_near)),
             near_steps=float(args.get("near_steps", 3.0) or 3.0),
             near_weight=float(args.get("near_weight", 0.0) or 0.0),
+            goal_tile=bool(args.get("goal_tile")),
         )
-        module = learners.td.fit(cache, td_cfg, device, aug=aug, state=state, tolerance=tolerance)
+        module = learners.td.fit(
+            cache, td_cfg, device, aug=aug, state=state, tolerance=tolerance, goal_frames=goal_frames
+        )
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,

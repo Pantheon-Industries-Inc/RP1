@@ -87,6 +87,8 @@ envs:
   NEAR_WEIGHT: "0"      # near-goal loss weighting exponent (1+d)^-w, teacher + co-critic
   ACTOR_NEAR_FRAC: "0"  # actor-side near-goal problems: fraction of goals 1..ACTOR_NEAR_MAX blocks ahead
   ACTOR_NEAR_MAX: "2"
+  GOAL_TILE: "0"        # 1 = window critics train on the goal FRAME tiled to the window
+                        # (deploy-matched) instead of the goal's own motion window
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -212,6 +214,9 @@ run: |
   fi
   if [ "${ACTOR_NEAR_FRAC:-0}" != 0 ]; then
     AUG_EXTRA="$AUG_EXTRA planner.actor_near_frac=$ACTOR_NEAR_FRAC planner.actor_near_max=${ACTOR_NEAR_MAX:-2}"
+  fi
+  if [ "${GOAL_TILE:-0}" = 1 ]; then
+    AUG_EXTRA="$AUG_EXTRA value.goal_tile=true planner.goal_tile=true"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 
@@ -357,6 +362,15 @@ run: |
           run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
+        cem_l2w4)   # windowed latent-L2 control: 4-frame window vs the tiled goal, same input as the w4 critic
+          if [ ! -d "$D/train_checkpoints/value_l2w4" ]; then
+            pixi run train model=metric learner=l2 cache="$CD/counterstrike_fs1.pt" window_frames=4 window_lag=5 \
+              output.checkpoint=value_l2w4 device=cpu
+            RUNL=$(ls -dt logs/*/* | head -1); mkdir -p "$D/train_checkpoints"
+            cp -r "$RUNL/checkpoints/value_l2w4" "$D/train_checkpoints/"
+          fi
+          run_eval cem_l2w4 $ES core/solver=cem core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_l2w4]";;
         noop) run_eval noop $ES core/policy=no_move;;
       esac
     done

@@ -259,6 +259,9 @@ def _run(cfg: DictConfig) -> None:
         td_state = sc.z.numpy()
         td_tol = cast(dict[str, object], OmegaConf.to_container(a.tol, resolve=True))
         logger.info(f"LIP-AC co-critic success-tolerance relabeling on: {td_tol}")
+    goal_tile = bool(a.get("goal_tile"))
+    if goal_tile:
+        logger.info("LIP-AC co-critic deploy-matched goals: goal frame tiled to the window width")
     td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
     td_near_max = int(a.get("near_max", 3) or 3)
     if td_near_frac > 0:
@@ -375,10 +378,16 @@ def _run(cfg: DictConfig) -> None:
         b = td_sampler.sample(a.td_batch)
         if vframes > 1:
             # window critics: every query is an m-frame stack rebuilt from the
-            # dense cache; the goal side is the sampled goal frame's own window.
+            # dense cache; the goal side is the sampled goal frame's own window,
+            # or (goal_tile) the goal frame tiled as the planner feeds it
             z_t = _window_rows(b["t_idx"]).to(dev)
             z_tn = _window_rows(b["tn_idx"]).to(dev)
-            z_g = _window_rows(b["g_idx"]).to(dev)
+            if goal_tile:
+                if c_td is None:
+                    raise RuntimeError("goal tiling needs the dense TD cache")
+                z_g = c_td.z[b["g_idx"]].float().repeat(1, vframes).to(dev)
+            else:
+                z_g = _window_rows(b["g_idx"]).to(dev)
         else:
             z_t, z_tn, z_g = b["z_t"].to(dev), b["z_tn"].to(dev), b["z_g"].to(dev)
         ne, reached, dist = (

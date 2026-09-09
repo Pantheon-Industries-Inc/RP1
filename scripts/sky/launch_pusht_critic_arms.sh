@@ -15,8 +15,10 @@ ARM=${1:?arm E01|NEAR|TOL|NEARTOL}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260909}
 BASE_OVR="value.window_frames=4 value.window_lag=5 planner.ac_weight=0.5 planner.ckpt_every=2000"
-VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0
+VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0
 case $ARM in
+  TILE)    TILE=1;;                                # deploy-matched tiled goal frames for the window critics
+  NEARTILE) NEAR=0.3; TILE=1;;
   E01)     VEXP=0.1; EXTRA="planner.expectile=0.1 planner.expectile_final=0.1";;
   NEAR)    NEAR=${NEAR_FRAC:-0.3};;
   NEAR5)   NEAR=0.5;;                              # dose: half of the goals near
@@ -44,10 +46,10 @@ for S in $SEEDS; do
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env TOL_RELABEL="$TOL" --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
     --env EXPECTILE_NEAR="$EXPN" --env NEAR_STEPS="${NEAR_STEPS:-3}" --env NEAR_WEIGHT="$NW"
-    --env ACTOR_NEAR_FRAC="$ANEAR" --env ACTOR_NEAR_MAX="${ACTOR_NEAR_MAX:-2}"
+    --env ACTOR_NEAR_FRAC="$ANEAR" --env ACTOR_NEAR_MAX="${ACTOR_NEAR_MAX:-2}" --env GOAL_TILE="$TILE"
     --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="rlp cem_value cem_tdvalue" --env SMOKE=0
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)
   if [ "${DRY:-0}" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; else "${cmd[@]}" 2>&1 | grep -c "Submitted\|Check logs" || true; fi
-  echo "-> $TAG (arm $ARM: value.expectile=$VEXP nstep=$VNSTEP tol=$TOL near=$NEAR/$NMAX expectile_near=${EXPN:-off} near_weight=$NW actor_near=$ANEAR)"
+  echo "-> $TAG (arm $ARM: value.expectile=$VEXP nstep=$VNSTEP tol=$TOL near=$NEAR/$NMAX expectile_near=${EXPN:-off} near_weight=$NW actor_near=$ANEAR goal_tile=$TILE)"
 done

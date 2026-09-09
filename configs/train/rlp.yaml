@@ -53,6 +53,7 @@ value:
   expectile_near: null  # distance-dependent expectile below near_steps
   near_steps: null
   near_weight: null     # near-goal loss weighting exponent
+  goal_tile: null       # window critics: deploy-matched tiled goal frames
 
 # Optional stage 3c — logged-state cache for tolerance relabeling
 # (tools/cache_state), built when value.tol_relabel or planner.tol_relabel.
@@ -102,3 +103,4 @@ planner:
   near_weight: null     # co-critic near-goal loss weighting exponent
   actor_near_frac: null # actor near-goal problems (fraction of goals 1..actor_near_max blocks ahead)
   actor_near_max: null
+  goal_tile: null       # co-critic: deploy-matched tiled goal frames

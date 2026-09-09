@@ -74,6 +74,10 @@ class TDConfig:
     # near-goal loss weighting: per-sample weight (1 + target)^-near_weight,
     # normalised to mean 1 over the batch (0 = off)
     near_weight: float = 0.0
+    # deploy-matched goals for window critics: the goal is the goal FRAME tiled
+    # to the window width (what LIPSolver / MetricCost feed at plan time),
+    # not the goal frame's own motion window from the cache
+    goal_tile: bool = False
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
@@ -151,6 +155,7 @@ def fit(
     aug: AugCache | None = None,
     state: np.ndarray | None = None,
     tolerance: dict[str, object] | None = None,
+    goal_frames: torch.Tensor | None = None,
 ) -> MetricHead:
     """Train and return a temporal-distance (quasi)metric head.
 
@@ -162,8 +167,21 @@ def fit(
 
     ``state`` + ``tolerance`` switch on success-tolerance relabeling of the
     Monte-Carlo targets (see :class:`NStepGoalSampler`).
+
+    ``goal_frames`` (``(N, D)`` single-frame latents row-aligned with the
+    windowed ``cache``) + ``cfg.goal_tile`` replace every goal input by the
+    goal frame tiled to the window width, matching what the planner feeds a
+    window critic at plan time.
     """
     torch.manual_seed(cfg.seed)
+    tile_frames = 0
+    if cfg.goal_tile:
+        if goal_frames is None:
+            raise ValueError("goal_tile=True requires goal_frames (the unwindowed cache latents)")
+        if cache.latent_dim % goal_frames.shape[1]:
+            raise ValueError("window width is not a multiple of the goal frame width")
+        tile_frames = cache.latent_dim // goal_frames.shape[1]
+        logger.info(f"TD deploy-matched goals: goal frame tiled x{tile_frames}")
     use_aug = aug is not None and cfg.aug_p > 0
     if use_aug and aug is not None and (len(aug[0]) != len(cache.z) or len(aug[1]) != len(cache.z)):
         raise ValueError("aug latents/transit must be row-aligned with the training cache")
@@ -245,10 +263,13 @@ def fit(
                 z_t_cpu = z_t_cpu.clone()
                 z_t_cpu[mask] = z_aug[t_aug].float()
                 transit[mask] = transit_all[t_aug].float() * cfg.aug_transit_scale
+        z_g_cpu = b["z_g"]
+        if tile_frames > 1 and goal_frames is not None:
+            z_g_cpu = goal_frames[b["g_idx"]].float().repeat(1, tile_frames)
         z_t, z_tn, z_g = (
             z_t_cpu.to(device),
             b["z_tn"].to(device),
-            b["z_g"].to(device),
+            z_g_cpu.to(device),
         )
         ne, reached, dist = (
             b["n_eff"].to(device),

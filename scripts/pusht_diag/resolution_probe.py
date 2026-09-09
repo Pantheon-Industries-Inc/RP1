@@ -9,8 +9,16 @@ relative slope inside 30 px and the AUC separating "inside the 20 px / 20 deg
 success tolerance" from "near miss" (20-40 px / 20-40 deg). A sharp critic has a
 steep curve inside 30 px and AUC -> 1.
 
+Deploy-matched inputs (2026-09-09): a window critic is queried with a REAL
+4-frame history window -- the goal row's own preceding frames (lag 5), each
+re-rendered with the same perturbation applied, so the window carries the
+expert's motion just as imagined rollouts do -- and with the goal frame TILED
+to the window width, exactly as LIPSolver / MetricCost feed it. Two latent
+baselines are reported: the single-frame terminal L2 the WM cost uses
+(`latent`) and the 4-frame window L2 against the tiled goal (`latent_w4`).
+
 Env: H5, WM, OUT, DRAW (42), NT (50), CRITICS ("label=<value dir> ..."; default
-base_ac / base_td from $ACTOR/train_checkpoints), GOAL_SRC (render|jpeg).
+base_ac / base_td from $ACTOR/train_checkpoints).
 """
 from __future__ import annotations
 
@@ -57,6 +65,14 @@ with h5py.File(H5, "r") as h:
     rows = np.sort(np.random.default_rng(DRAW).choice(valid, size=n, replace=False))[:NT]
     states = np.asarray(h["state"][:], dtype=np.float64); s_goal = states[rows + OFF]
     goal_jpeg = [to_frame(h["pixels"][int(r) + OFF]) for r in rows]
+    # real history of the goal row: rows g-15, g-10, g-5, g (lag 5), clamped to the episode start
+    WIN = 4; LAG = 5
+    hist_rows = []
+    for r in rows:
+        g_row = int(r) + OFF; g_step = int(stp[g_row])
+        hist_rows.append([g_row - min(k * LAG, g_step) for k in range(WIN - 1, -1, -1)])
+    hist_rows = np.asarray(hist_rows)  # (NT, WIN), oldest first, last == goal row
+    s_hist = states[hist_rows]  # (NT, WIN, 7)
 
 from rlp.core.value import load_metric  # noqa: E402
 from rlp.core.world_model import load_pretrained  # noqa: E402
@@ -84,9 +100,11 @@ for spec in CRITICS:
 
 
 @torch.no_grad()
-def V(label, z, zg):
+def V(label, zwin, zg):
+    """zwin: (B, WIN, D) real history windows (oldest first); zg: (1, D) goal frame, tiled to the critic width."""
     m, W = critics[label]
-    return m(z.repeat(1, W), zg.expand(len(z), -1).repeat(1, W)).reshape(-1).cpu().numpy()
+    q = zwin[:, -W:, :].reshape(len(zwin), -1) if W > 1 else zwin[:, -1, :]
+    return m(q, zg.expand(len(zwin), -1).repeat(1, W)).reshape(-1).cpu().numpy()
 
 
 env = gym.make("swm/PushT-v1", render_mode="rgb_array", resolution=224).unwrapped; env.reset(seed=0)
@@ -99,35 +117,51 @@ def render(st):
 rng = np.random.default_rng(DRAW + 1000)
 TYPES = ["block", "agent", "joint", "angle"]
 # curves[label][type] -> (NT, len(R)) of V(pert) - V(0); latent likewise
-curves = {lab: {t: [] for t in TYPES} for lab in list(critics) + ["latent"]}
+LATS = ["latent", "latent_w4"]
+curves = {lab: {t: [] for t in TYPES} for lab in list(critics) + LATS}
 curves_jpeg = {lab: {t: [] for t in TYPES} for lab in list(critics)}
+
+
+def perturb(s, t, r, u):
+    s = s.copy()
+    if t == "block": s[2:4] += r * u
+    elif t == "agent": s[0:2] += r * u
+    elif t == "joint": s[0:2] += r * u / np.sqrt(2); s[2:4] += r * u / np.sqrt(2)
+    else: s[4] = s[4] + np.radians(r)
+    s[0:2] = np.clip(s[0:2], 20, 492); s[2:4] = np.clip(s[2:4], 40, 472)
+    return s
+
+
 for e in range(len(rows)):
-    g = s_goal[e]
+    g = s_goal[e]; hist = s_hist[e]  # (WIN, 7), last row == goal state
     u = rng.normal(size=2); u /= np.linalg.norm(u)
-    frames, index = [], []
-    for r in RADII:
-        for t in ("block", "agent", "joint"):
-            s = g.copy()
-            if t == "block": s[2:4] += r * u
-            elif t == "agent": s[0:2] += r * u
-            else: s[0:2] += r * u / np.sqrt(2); s[2:4] += r * u / np.sqrt(2)
-            s[0:2] = np.clip(s[0:2], 20, 492); s[2:4] = np.clip(s[2:4], 40, 472)
-            frames.append(render(s)); index.append((t, r))
+    frames, index = [], []  # frames: WIN renders per perturbation (the whole history window displaced alike)
+    for t in ("block", "agent", "joint"):
+        for r in RADII:
+            for k in range(WIN):
+                frames.append(render(perturb(hist[k], t, r, u)))
+            index.append((t, r))
     for a in ANGLES:
-        s = g.copy(); s[4] = g[4] + np.radians(a); frames.append(render(s)); index.append(("angle", a))
-    z = encode(frames); zg_render = encode([render(g)]); zg_jpeg = encode([goal_jpeg[e]])
-    lat = (z - zg_render).norm(dim=-1).cpu().numpy()
+        for k in range(WIN):
+            frames.append(render(perturb(hist[k], "angle", a, u)))
+        index.append(("angle", a))
+    z = encode(frames).reshape(len(index), WIN, -1)  # (P, WIN, D)
+    zg_render = encode([render(g)]); zg_jpeg = encode([goal_jpeg[e]])
+    lat = (z[:, -1, :] - zg_render).norm(dim=-1).cpu().numpy()                      # single-frame terminal L2 (the WM cost)
+    lat_w4 = (z - zg_render[None]).norm(dim=-1).sum(dim=-1).cpu().numpy()          # 4-frame window L2 vs the tiled goal
     vals = {lab: V(lab, z, zg_render) for lab in critics}
     vals_j = {lab: V(lab, z, zg_jpeg) for lab in critics}
     for t in TYPES:
         sel = [i for i, (tt, _) in enumerate(index) if tt == t]
         base = [i for i, (tt, r) in enumerate(index) if tt == t and r == 0][0]
         curves["latent"][t].append(lat[sel] - lat[base])
+        curves["latent_w4"][t].append(lat_w4[sel] - lat_w4[base])
         for lab in critics:
             curves[lab][t].append(vals[lab][sel] - vals[lab][base])
             curves_jpeg[lab][t].append(vals_j[lab][sel] - vals_j[lab][base])
     if e % 10 == 0:
-        print(f"[res] task {e}: " + " ".join(f"{lab}: joint30={vals[lab][[i for i,(tt,r) in enumerate(index) if tt=='joint' and r==30][0]] - vals[lab][[i for i,(tt,r) in enumerate(index) if tt=='joint' and r==0][0]]:.2f}" for lab in critics), flush=True)
+        j30 = [i for i, (tt, r) in enumerate(index) if tt == "joint" and r == 30][0]; j0 = [i for i, (tt, r) in enumerate(index) if tt == "joint" and r == 0][0]
+        print(f"[res] task {e}: " + " ".join(f"{lab}: joint30={vals[lab][j30] - vals[lab][j0]:.2f}" for lab in critics) + f" latent: {lat[j30]-lat[j0]:.2f} latent_w4: {lat_w4[j30]-lat_w4[j0]:.2f}", flush=True)
 
 
 def auc(inside, outside):
@@ -157,10 +191,10 @@ def summarize(curve_dict):
     return out
 
 
-res = {"draw": DRAW, "n_tasks": len(rows), "goal_src": "render", "critics": list(critics), "summary": summarize(curves),
-       "summary_goal_jpeg": summarize(curves_jpeg)}
+res = {"draw": DRAW, "n_tasks": len(rows), "goal_src": "render", "query": "real 4-frame history window, tiled goal",
+       "critics": list(critics), "summary": summarize(curves), "summary_goal_jpeg": summarize(curves_jpeg)}
 (OUT / "resolution_probe.json").write_text(json.dumps(res, indent=1))
-print("[res] SUMMARY (goal = re-rendered goal config; rel_slope = fraction of the 60px/40deg rise reached at 30px/20deg)")
+print("[res] SUMMARY (query = real history window, goal = re-rendered goal frame tiled; rel_slope = fraction of the 60px/40deg rise reached at 30px/20deg)")
 for lab in res["summary"]:
     print("[res] " + lab + " | " + " | ".join(f"{t}: slope {res['summary'][lab][t]['rel_slope_inside']:.2f} auc {res['summary'][lab][t]['auc_inside_vs_nearmiss']:.2f}" for t in TYPES), flush=True)
 
