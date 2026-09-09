@@ -496,3 +496,28 @@ ES: final (val 75) / step 4000 (val 76) -- validation 12 points above the
 E10 arms. First positive signal of the campaign: +4.7 / +4.0 on the planner
 and the co-trained critic up as a CEM objective on both seeds. Resolution
 probe (job 21233) still waiting for a CPU node.
+
+### Resolution probe (job pusht-resprobe2, base s0 critics, draw 42, 50 goal configs; query = real 4-frame history window with the perturbation applied to every frame, goal = goal frame tiled as at deployment)
+
+`rel slope` = fraction of the 60 px / 40 deg rise already reached at 30 px / 20 deg (higher = sharper near the goal); AUC = P(V inside the 20 px / 20 deg tolerance < V at a 25-40 px / 25-40 deg near miss).
+
+| objective | block slope / AUC | agent slope / AUC | joint slope / AUC | angle slope / AUC | joint curve at 10/20/30/60 px |
+|---|---|---|---|---|---|
+| co-trained critic | 0.46 / 0.95 | 0.27 / 0.65 | 0.43 / 0.86 | 0.47 / 0.93 | 0.6 / 2.0 / 3.8 / 8.9 |
+| offline teacher | 0.49 / 0.95 | 0.31 / 0.71 | 0.42 / 0.88 | 0.48 / 0.91 | 0.3 / 1.0 / 1.8 / 4.4 |
+| latent L2, single frame (the WM cost) | 0.63 / 0.95 | 0.53 / 0.92 | 0.60 / 0.94 | 0.66 / 0.91 | 2.5 / 4.8 / 6.9 / 11.5 |
+| latent L2, 4-frame window vs tiled goal | 0.56 / 0.94 | 0.43 / 0.76 | 0.52 / 0.89 | 0.59 / 0.92 | 3.7 / 8.4 / 13.2 / 25.5 |
+
+The granularity reading is confirmed and localised: the critic's curve is convex
+(7 % of its 60 px rise inside 10 px vs 22 % for latent L2), and the deficit
+is almost entirely the AGENT term -- an agent 30 px off the goal moves V by
+1.0 (out of 8.9 at 60 px) and the inside-vs-near-miss AUC is 0.65, where
+latent L2 gives 0.92. Block position and angle are resolved as sharply as
+latent L2 (AUC 0.95 / 0.93). Since success needs the agent inside the joint
+20 px too, this is the precision the refiner lacks. JPEG vs re-rendered goal
+frame: identical numbers (no artifact confound). Figure
+docs/figures/pusht_diag/resolution_probe_base.png.
+
+### Windowed latent-L2 control (job rlp-pusht-l2w4ctrl, actor-independent, draws 42-44)
+
+`cem_l2w4` (4-frame window L2 vs tiled goal, the w4 critic's exact input) = 68 / 78 / 66 = **70.7**, vs single-frame latent L2 78.9 and the w4 co-trained critic 71.3 on the same draws. Like-for-like, the critic ties a windowed L2; the 8-point gap to the WM cost is the WINDOW at the objective, not the learned function: summing four frames' distances to a static tiled goal rewards arriving early and dwelling, which a 25-step task with a 5-block plan cannot do. Two consequences: (i) the w4 input that helped the refiner (+8.7 over w1 under config B) carries a deploy-side handicap of the same size, so w1/w2 critics with near-goal training deserve a retest; (ii) the tiled-goal train/deploy mismatch (TILE arms, running) sits exactly here.
