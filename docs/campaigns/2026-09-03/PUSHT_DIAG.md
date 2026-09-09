@@ -645,3 +645,14 @@ labels on imagined states (imagination-MC) give the best deployed critic
 ### W1N5NEAR_FRZ seed 0 (refiner against the FROZEN single-frame n5 + near teacher): rlp 60.0, critic 72.7 / 72.0 (frozen, so value_ac = value_td)
 
 Single-frame frozen teacher: refiner 60.0 (vs 50.7 with the frozen w4 teacher, base mean 65.6) -- the window handicap shows on the refiner side too, but a frozen teacher still loses to co-training. Its n5 teacher scores 72 as an objective, below the n1 W1NEAR teacher's 78.0.
+
+### W1NEAR_FRZ seed 0 -- the first arm where the planner moves WITH the critic
+
+Refiner trained against the FROZEN single-frame near-goal teacher (w1,
+n-step 1, near 0.3; no co-training): **rlp 72 / 84 / 60 = 72.0** (base s0
+68.0, base mean 65.6, best previous single-draw 80), deployed critic 78.7 as
+a CEM objective (latent 78.9). Contrast: the same teacher co-trained (W1NEAR)
+gave 61.3, and its n-step-5 frozen sibling 60.0 -- the n1 teacher's 78.0 is
+what carries it. Single seed; replication at seeds 1/2 launched
+(pusht-w1near_frz-s{1,2}-20260909). Also landed: N5NEAR_IMAG_NOEXP s0 rlp
+54.0 (critics 74.0 / 74.0), negative.
