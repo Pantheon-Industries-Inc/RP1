@@ -106,3 +106,8 @@ planner:
   goal_tile: null       # co-critic: deploy-matched tiled goal frames
   imag_mc_weight: null  # co-critic imagination-MC term (WM rollouts along logged actions, exact labels)
   imag_mc_batch: null
+  smooth_samples: null  # actor randomized smoothing (M noisy plan copies in the loss)
+  smooth_action_std: null
+  smooth_latent_std: null
+  expand_mode: null     # optimistic | pessimistic value expansion
+  td_weight: null       # co-critic TD loss weight (0 = imagination terms only)

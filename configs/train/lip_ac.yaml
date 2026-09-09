@@ -28,6 +28,12 @@ goal_tile: false      # co-critic, window critics: goal = goal FRAME tiled to th
 imag_mc_weight: 0.0   # co-critic imagination-MC term: WM rollouts along the data's next m action
                       # blocks, exact remaining-steps labels (0 = off)
 imag_mc_batch: 128
+smooth_samples: 0     # actor randomized smoothing: M noisy copies of the final plan averaged in the loss (0 = off)
+smooth_action_std: 0.1  # plan noise std in z-scored action units
+smooth_latent_std: 0.0  # optional history-latent noise std
+expand_mode: optimistic # value expansion target: optimistic (bootstrap, recipe) | pessimistic (triangle-bound hinge
+                        # on the refiner's imagined terminals; never lowers V on planner-visited states)
+td_weight: 1.0        # weight of the co-critic's TD loss (0 = critic moves only through the imagination terms)
 h5: ???
 wm: ???
 init_value: null

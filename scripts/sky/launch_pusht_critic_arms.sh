@@ -16,7 +16,14 @@ SEEDS=${*:-0}
 DATE=${DATE:-20260909}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
 VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0; EXPAND=1.0; IMAG=0
+SMOOTH=0; SMOOTH_STD=0.1; EXPAND_MODE=""; TD_WEIGHT=""
 case $ARM in
+  # --- refiner anti-exploitation (2026-09-09), on the frozen single-frame near-goal teacher (W1NEAR_FRZ 72.0 / 70.7)
+  W1NEAR_FRZ_SM)   WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0"; SMOOTH=4; SMOOTH_STD=0.1;;
+  W1NEAR_FRZ_SM3)  WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0"; SMOOTH=4; SMOOTH_STD=0.3;;
+  # --- pessimistic imagination for the co-critic (w1 near teacher, co-training kept)
+  W1NEAR_PESS)     WF=1; NEAR=0.3; EXPAND_MODE=pessimistic;;
+  W1NEAR_PESSONLY) WF=1; NEAR=0.3; EXPAND_MODE=pessimistic; TD_WEIGHT=0;;
   # --- imagination-MC (2026-09-09): train the co-critic on WM-imagined latents along the data's actions
   #     with exact labels -- the critic is read on imagined latents, where E5 showed it optimistic
   NEAR_IMAG)          NEAR=0.3; IMAG=1.0;;
@@ -67,9 +74,10 @@ for S in $SEEDS; do
     --env TOL_RELABEL="$TOL" --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
     --env EXPECTILE_NEAR="$EXPN" --env NEAR_STEPS="${NEAR_STEPS:-3}" --env NEAR_WEIGHT="$NW"
     --env ACTOR_NEAR_FRAC="$ANEAR" --env ACTOR_NEAR_MAX="${ACTOR_NEAR_MAX:-2}" --env GOAL_TILE="$TILE" --env IMAG_MC="$IMAG"
+    --env SMOOTH="$SMOOTH" --env SMOOTH_STD="$SMOOTH_STD" --env EXPAND_MODE="$EXPAND_MODE" --env TD_WEIGHT="$TD_WEIGHT"
     --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="rlp cem_value cem_tdvalue" --env SMOKE=0
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)
   if [ "${DRY:-0}" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; else "${cmd[@]}" 2>&1 | grep -c "Submitted\|Check logs" || true; fi
-  echo "-> $TAG (arm $ARM: value.expectile=$VEXP nstep=$VNSTEP tol=$TOL near=$NEAR/$NMAX expectile_near=${EXPN:-off} near_weight=$NW actor_near=$ANEAR goal_tile=$TILE expand=$EXPAND extra='$EXTRA')"
+  echo "-> $TAG (arm $ARM: wf=$WF nstep=$VNSTEP near=$NEAR/$NMAX smooth=$SMOOTH/$SMOOTH_STD expand=$EXPAND/${EXPAND_MODE:-opt} td_w=${TD_WEIGHT:-1} extra='$EXTRA')"
 done

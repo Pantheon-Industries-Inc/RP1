@@ -91,6 +91,10 @@ envs:
                         # (deploy-matched) instead of the goal's own motion window
   IMAG_MC: "0"          # co-critic imagination-MC weight: WM rollouts along the data's actions
                         # with exact remaining-steps labels (trains the critic where it is read)
+  SMOOTH: "0"           # actor randomized smoothing: M noisy plan copies averaged in the loss (0 = off)
+  SMOOTH_STD: "0.1"     # plan noise std (z-scored action units)
+  EXPAND_MODE: ""       # "pessimistic" = triangle-bound hinge on the refiner's imagined terminals
+  TD_WEIGHT: ""         # co-critic TD loss weight override (0 = imagination terms only)
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -223,6 +227,11 @@ run: |
   if [ "${IMAG_MC:-0}" != 0 ]; then
     AUG_EXTRA="$AUG_EXTRA planner.imag_mc_weight=$IMAG_MC"
   fi
+  if [ "${SMOOTH:-0}" != 0 ]; then
+    AUG_EXTRA="$AUG_EXTRA planner.smooth_samples=$SMOOTH planner.smooth_action_std=${SMOOTH_STD:-0.1}"
+  fi
+  [ -n "${EXPAND_MODE:-}" ] && AUG_EXTRA="$AUG_EXTRA planner.expand_mode=$EXPAND_MODE"
+  [ -n "${TD_WEIGHT:-}" ] && AUG_EXTRA="$AUG_EXTRA planner.td_weight=$TD_WEIGHT"
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 
   TRAIN_EXTRA=""

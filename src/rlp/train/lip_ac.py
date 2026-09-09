@@ -465,15 +465,30 @@ def _run(cfg: DictConfig) -> None:
             float(a.get("near_steps", 3.0) or 3.0),
             float(a.get("near_weight", 0.0) or 0.0),
         )
-        loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
+        # td_weight 0 keeps the warm-start teacher's TD fit untouched: the critic then
+        # moves only through the imagination terms (pessimistic-only co-training)
+        loss = float(a.get("td_weight", 1.0)) * _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
         if expand is not None:  # value expansion on planner rollouts
             z0e, traje, zge = expand
-            with torch.no_grad():
-                # windowed values receive pre-stacked endpoint windows (2-D);
-                # single-frame values the full trajectory (endpoint = last frame)
-                endpoint = traje if vframes > 1 else traje[:, -1]
-                tgt_e = plan_cost + plan_disc * teacher_fn(endpoint, zge)
-            loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
+            # windowed values receive pre-stacked endpoint windows (2-D);
+            # single-frame values the full trajectory (endpoint = last frame)
+            endpoint = traje if vframes > 1 else traje[:, -1]
+            if str(a.get("expand_mode", "optimistic")) == "pessimistic":
+                # pessimistic imagination (2026-09-09): the refiner's imagined terminal
+                # may not be rated closer to the goal than the quasimetric triangle
+                # bound allows, d(zT, g) >= (d(z0, g) - c(n)) / gamma^n, with d(z0, g)
+                # the data-anchored start value from the EMA teacher. One-sided hinge:
+                # imagination can only make the critic MORE conservative on the
+                # refiner's own states, never certify "impossible progress" (the
+                # optimistic expansion target is what the K-step update exploits).
+                with torch.no_grad():
+                    bound = ((teacher_fn(z0e, zge) - plan_cost) / plan_disc).clamp_min(0.0)
+                gap = torch.relu(bound - critic_fn(endpoint, zge))
+                loss_e = torch.nn.functional.smooth_l1_loss(gap, torch.zeros_like(gap), beta=a.huber_beta)
+            else:
+                with torch.no_grad():
+                    tgt_e = plan_cost + plan_disc * teacher_fn(endpoint, zge)
+                loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
             if a.expand_traj:
                 # single-block backups along the reused refinement rollout:
                 # consecutive imagined latents are one fs-step block apart
@@ -654,7 +669,28 @@ def _run(cfg: DictConfig) -> None:
                 raise RuntimeError("actor produced no rollout trajectory")
             replay_buf["zh"] = tr[:, -3:].detach()
             replay_buf["zg"] = zg.detach()
-        loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
+        smooth_m = int(a.get("smooth_samples", 0) or 0)
+        if smooth_m > 0:
+            # randomized smoothing (2026-09-09): the final plan's energy averaged over M
+            # noisy copies -- plan noise in z-scored action units, optional history-latent
+            # noise. Exploits of critic/WM error are sharp minima of the energy landscape
+            # and average away; real progress toward the goal does not. Deployment is
+            # unchanged (one deterministic K=8 pass).
+            s_act = float(a.get("smooth_action_std", 0.1) or 0.0)
+            s_lat = float(a.get("smooth_latent_std", 0.0) or 0.0)
+            A_s = A.repeat(smooth_m, 1, 1) + s_act * torch.randn(smooth_m * a.batch, a.horizon, a_dim, device=dev)
+            A_s = A_s.clamp(-a.amax, a.amax)
+            zh_s, ah_s, zg_s = zh.repeat(smooth_m, 1, 1), ah.repeat(smooth_m, 1, 1), zg.repeat(smooth_m, 1)
+            if s_lat > 0:
+                zh_s = zh_s + s_lat * torch.randn_like(zh_s)
+            tr_s = rollout_traj(wm, zh_s, ah_s, A_s)
+            if vframes > 1:
+                e_s = windowed_trajectory_value(teacher_fn, tr_s, zg_s, zh_s, vframes, a.temporal_objective)
+            else:
+                e_s = trajectory_value(teacher_fn, tr_s, zg_s, zh_s[:, -1], a.temporal_objective)
+            loss = e_s.mean() + a.mean_weight * torch.stack(e_path).mean()
+        else:
+            loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
         if a.get("ac_weight", 0.0) > 0:
             # anti-constancy: penalize batch-level constancy of net plan
             # displacement, ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0,1].
