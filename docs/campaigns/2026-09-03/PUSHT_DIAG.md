@@ -678,3 +678,10 @@ the n-step-50 / expectile-annealed recipe already does.
 ### W1NEAR_FRZ seed 1: rlp 76 / 72 / 64 = **70.7** (base s1 64.0), critic 76.7 / 77.3 (ES: final, val 70)
 
 Two seeds: 72.0 / 70.7 vs base 68.0 / 64.0 (+4.0 / +6.7). Seed 2 pending.
+
+### W1NEAR_FRZ_SM seed 0 (frozen w1 near teacher + randomized smoothing, M=4, sigma 0.1): rlp 66 / 78 / 52 = **65.3**, critic 78.0 / 76.7 (ES step 4000, val 68)
+
+Same teacher as W1NEAR_FRZ (72.0 at this seed), smoothing in the actor loss
+only: -6.7. Draw 44 collapses (52 vs 60); draws 42/43 hold (66/78 vs 72/84).
+Not the smoothing scale we want, or smoothing trades sharpness for robustness
+the refiner did not need at sigma 0.1; sigma 0.3 pending.
