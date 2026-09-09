@@ -589,3 +589,9 @@ well as the WM's own cost. Its co-trained successor drops to 68.7 and the
 refiner to 61.3 -- the same split as every other arm, now at the strongest
 teacher. Follow-up: refiner trained against this teacher frozen
 (W1NEAR_FRZ, W1N5NEAR_FRZ).
+
+### NEAR5 seed 0 (near-goal fraction 0.5): rlp 63.3 (base 68.0), cem_value 73.3, cem_tdvalue 72.0 -- no gain over 0.3 at seed 0.
+
+### Cube E01 (expectile 0.1 flat, teacher + co-critic; job rlp-cu-e01, config-B cube recipe, 3 seeds)
+
+h25 87.3 / 88.7 / 89.3 = median **88.7** (base 88.7 / 90.0 / 92.7, median 90.0); h100 84.7 / 84.0 / 87.3 = median **84.7** (base 82.7 / 86.0 / 86.7, median 86.0). Slightly negative on both horizons, same direction as PushT (-8.7). Expectile 0.1 closed negative on both environments. Cube NEAR (job 21172) has been RECOVERING for 7 h waiting for a 4-GPU node.
