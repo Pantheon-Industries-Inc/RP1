@@ -656,3 +656,12 @@ gave 61.3, and its n-step-5 frozen sibling 60.0 -- the n1 teacher's 78.0 is
 what carries it. Single seed; replication at seeds 1/2 launched
 (pusht-w1near_frz-s{1,2}-20260909). Also landed: N5NEAR_IMAG_NOEXP s0 rlp
 54.0 (critics 74.0 / 74.0), negative.
+
+### N5NEAR_FRZ seed 0 (frozen w4 n5 + near teacher, no co-training): rlp 66.0, critic 73.3 (ES val 76)
+
+Neutral on the planner (base mean 65.6) with a 73.3 frozen critic; the tiled
+variant of the same teacher gave 50.7, so tiled goals hurt the frozen route
+too. Frozen-teacher ledger at seed 0: w4 n5+near 66.0, w4 n5+near+tile 50.7,
+w1 n5+near 60.0, **w1 n1+near 72.0** -- the planner tracks the teacher's
+objective quality (73 / 69 / 72 / 78.7) only once co-training is out of the
+loop, and the n1 single-frame teacher is the one at latent parity.
