@@ -521,3 +521,24 @@ docs/figures/pusht_diag/resolution_probe_base.png.
 ### Windowed latent-L2 control (job rlp-pusht-l2w4ctrl, actor-independent, draws 42-44)
 
 `cem_l2w4` (4-frame window L2 vs tiled goal, the w4 critic's exact input) = 68 / 78 / 66 = **70.7**, vs single-frame latent L2 78.9 and the w4 co-trained critic 71.3 on the same draws. Like-for-like, the critic ties a windowed L2; the 8-point gap to the WM cost is the WINDOW at the objective, not the learned function: summing four frames' distances to a static tiled goal rewards arriving early and dwelling, which a 25-step task with a 5-block plan cannot do. Two consequences: (i) the w4 input that helped the refiner (+8.7 over w1 under config B) carries a deploy-side handicap of the same size, so w1/w2 critics with near-goal training deserve a retest; (ii) the tiled-goal train/deploy mismatch (TILE arms, running) sits exactly here.
+
+### E13 seed-0 arms landed (base s0: rlp 68.0 / cem_value 72.7 / cem_tdvalue 67.3)
+
+| arm | change | rlp | cem_value (co-critic) | cem_tdvalue (offline teacher) | ES val |
+|---|---|---|---|---|---|
+| TILE | tiled goal frames, teacher + co-critic | 58.0 | 56.7 | 72.7 | 65 |
+| NEARTILE | tiled goals + near-goal 0.3 | 56.7 | 64.0 | **76.0** | 56 |
+| N5 | teacher n-step 5 | 62.7 | 70.7 | **76.7** | -- |
+| NW | near-goal loss weight (1+d)^-1 | 66.0 | 71.3 | 73.3 | -- |
+
+**The teacher/co-critic split.** Every one of these changes made the OFFLINE
+teacher a sharper sampler objective (+5 to +9, N5 and NEARTILE within 3 of
+latent L2's 78.9) and none of it reached the planner: the co-trained critic
+came out WORSE than base in all four (56.7-71.3 vs 72.7) and the refiner with
+it. The co-training stage -- 3,000 steps at n-step 50, expectile 0.1 -> 0.03,
+plus value expansion on the refiner's imagined rollouts -- erodes the sharpness
+the teacher brings in. NEAR (seeds 1/2) is the one arm where cem_value rose,
+and it is the only one that also changed the co-critic's own sampling.
+Follow-ups launched at seed 0: freeze the critic at the sharpened teacher
+(`planner.freeze_critic_frac=0`, arms N5NEARTILE_FRZ / N5NEAR_FRZ) and
+co-train without value expansion (`EXPAND=0`, arms NEAR_NOEXP / N5NEAR_NOEXP).

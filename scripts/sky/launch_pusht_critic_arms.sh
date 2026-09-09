@@ -15,8 +15,16 @@ ARM=${1:?arm E01|NEAR|TOL|NEARTOL}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260909}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
-VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0
+VEXP=0.03; EXTRA=""; TOL=0; NEAR=0; VNSTEP=1; EXPN=""; NW=0; NMAX=${NEAR_MAX:-3}; ANEAR=0; TILE=0; EXPAND=1.0
 case $ARM in
+  # --- teacher-vs-co-critic split (2026-09-09): every arm that sharpened the offline teacher as a CEM
+  #     objective (N5 76.7, NEARTILE 76.0, NW 73.3 vs base 67.3) LOST on the planner while the co-critic
+  #     got worse -> (a) freeze the critic at the sharpened teacher (no co-training), (b) co-train without
+  #     value expansion on imagined rollouts
+  N5NEARTILE_FRZ) VNSTEP=5; NEAR=0.3; TILE=1; EXTRA="planner.freeze_critic_frac=0";;
+  N5NEAR_FRZ)     VNSTEP=5; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0";;
+  NEAR_NOEXP)     NEAR=0.3; EXPAND=0;;
+  N5NEAR_NOEXP)   VNSTEP=5; NEAR=0.3; EXPAND=0;;
   TILE)    TILE=1;;                                # deploy-matched tiled goal frames for the window critics
   NEARTILE) NEAR=0.3; TILE=1;;
   W1NEAR)  WF=1; NEAR=0.3;;                        # single-frame critic + near-goal oversampling (no window handicap)
@@ -41,7 +49,7 @@ for S in $SEEDS; do
   cmd=(sky jobs launch scripts/sky/counterstrike_pusht.yaml
     -n "rlp-$TAG" --priority p1 -y --async
     --env EXPERIMENT_TAG="$TAG"
-    --env CACHE_TAG=counterstrike --env WAIT_CACHE_MIN=0
+    --env CACHE_TAG=counterstrike --env WAIT_CACHE_MIN=0 --env EXPAND="$EXPAND"
     --env SEED="$S" --env TD_MODE=cube --env ITERS=8
     --env VALUE_GAMMA=0.98 --env VALUE_NSTEP="$VNSTEP" --env VALUE_EXPECTILE="$VEXP"
     --env MAX_DELTA=20 --env MEAN_WEIGHT=0.1 --env AMAX=2.5
@@ -54,5 +62,5 @@ for S in $SEEDS; do
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)
   if [ "${DRY:-0}" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; else "${cmd[@]}" 2>&1 | grep -c "Submitted\|Check logs" || true; fi
-  echo "-> $TAG (arm $ARM: value.expectile=$VEXP nstep=$VNSTEP tol=$TOL near=$NEAR/$NMAX expectile_near=${EXPN:-off} near_weight=$NW actor_near=$ANEAR goal_tile=$TILE)"
+  echo "-> $TAG (arm $ARM: value.expectile=$VEXP nstep=$VNSTEP tol=$TOL near=$NEAR/$NMAX expectile_near=${EXPN:-off} near_weight=$NW actor_near=$ANEAR goal_tile=$TILE expand=$EXPAND extra='$EXTRA')"
 done
