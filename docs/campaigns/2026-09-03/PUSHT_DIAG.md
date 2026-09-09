@@ -483,3 +483,16 @@ and the refiner worse (-10 on rlp): the expectile-flattening explanation
 does not carry over to the planner. Seed 2 pending.
 
 ### E10 arm A complete (3 seeds): rlp 50.0 / 57.3 / 58.0 = median **57.3** (base 68.0 / 64.0 / 64.7, median 64.7); cem_value 69.3 / 64.7 / 68.0 (base 72.7 / 73.3 / 68.0); cem_tdvalue 62.0 / 67.3 / 67.3 (base 67.3 / 68.7 / 72.0). Agent-displacement augmentation: -7 median on the planner, -4 on critic-CEM. CLOSED negative.
+
+### E12 arm NEAR (near-goal oversampling 0.3 at 1..3 steps, teacher + co-critic), seeds 1 / 2 (seed 0 pending)
+
+| condition | s1 (base s1) | s2 (base s2) |
+|---|---|---|
+| rlp | 68.7 (64.0) | 68.7 (64.7) |
+| cem_value | 74.7 (73.3) | 75.3 (68.0) |
+| cem_tdvalue | 70.0 (68.7) | 70.7 (72.0) |
+
+ES: final (val 75) / step 4000 (val 76) -- validation 12 points above the
+E10 arms. First positive signal of the campaign: +4.7 / +4.0 on the planner
+and the co-trained critic up as a CEM objective on both seeds. Resolution
+probe (job 21233) still waiting for a CPU node.
