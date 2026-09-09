@@ -85,6 +85,8 @@ envs:
                         # (e.g. 0.5), teacher + co-critic; empty = off
   NEAR_STEPS: "3"
   NEAR_WEIGHT: "0"      # near-goal loss weighting exponent (1+d)^-w, teacher + co-critic
+  ACTOR_NEAR_FRAC: "0"  # actor-side near-goal problems: fraction of goals 1..ACTOR_NEAR_MAX blocks ahead
+  ACTOR_NEAR_MAX: "2"
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -207,6 +209,9 @@ run: |
   fi
   if [ "${NEAR_WEIGHT:-0}" != 0 ]; then
     AUG_EXTRA="$AUG_EXTRA value.near_weight=$NEAR_WEIGHT planner.near_weight=$NEAR_WEIGHT"
+  fi
+  if [ "${ACTOR_NEAR_FRAC:-0}" != 0 ]; then
+    AUG_EXTRA="$AUG_EXTRA planner.actor_near_frac=$ACTOR_NEAR_FRAC planner.actor_near_max=${ACTOR_NEAR_MAX:-2}"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 

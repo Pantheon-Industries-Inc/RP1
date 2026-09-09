@@ -166,6 +166,11 @@ def _run(cfg: DictConfig) -> None:
     fs = 5  # primitive steps per action block
     a_dim = act.shape[-1] * fs
 
+    actor_near_frac = float(a.get("actor_near_frac", 0.0) or 0.0)
+    actor_near_max = int(a.get("actor_near_max", 2) or 2)
+    if actor_near_frac > 0:
+        logger.info(f"LIP-AC actor near-goal oversampling: frac={actor_near_frac} within 1..{actor_near_max} blocks")
+
     def blocks(e: int, t: int) -> np.ndarray:
         offset = fs * t
         if ep_len_h5 is not None:
@@ -198,7 +203,12 @@ def _run(cfg: DictConfig) -> None:
                 r2 = ep_rows[e2]
                 zg.append(z[r2[rng.integers(len(r2))]])
             else:
-                d = int(rng.integers(1, a.max_delta + 1))
+                if actor_near_frac > 0 and rng.random() < actor_near_frac:
+                    # near-goal problems for the refiner: the goal 1..actor_near_max
+                    # blocks ahead, the situation at every episode's last replans
+                    d = int(rng.integers(1, actor_near_max + 1))
+                else:
+                    d = int(rng.integers(1, a.max_delta + 1))
                 zg.append(z[rows[min(t + d, L - 1)]])
         return (
             torch.stack(zh),
