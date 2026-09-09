@@ -580,3 +580,12 @@ way (63.3 vs 68.0), i.e. inside the seed lottery. Its offline teacher is
 consistently sharper as an objective (72.0 vs 69.3) and its co-critic slightly
 (73.8 vs 71.3). E01 closed negative (-8.7 median). W2 critics stay behind w4
 (56.0), matching config B's w4 > w2 finding.
+
+### W1NEAR seed 0 (single-frame critic + near-goal 0.3): rlp 61.3, cem_value 68.7, **cem_tdvalue 78.0**
+
+The first learned objective at parity with latent L2 (78.9 on these draws): a
+single-frame offline teacher with near-goal oversampling ranks CEM samples as
+well as the WM's own cost. Its co-trained successor drops to 68.7 and the
+refiner to 61.3 -- the same split as every other arm, now at the strongest
+teacher. Follow-up: refiner trained against this teacher frozen
+(W1NEAR_FRZ, W1N5NEAR_FRZ).

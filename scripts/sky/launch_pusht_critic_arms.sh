@@ -34,6 +34,10 @@ case $ARM in
   NEARTILE) NEAR=0.3; TILE=1;;
   W1NEAR)  WF=1; NEAR=0.3;;                        # single-frame critic + near-goal oversampling (no window handicap)
   W2NEAR)  WF=2; NEAR=0.3;;                        # two-frame (position + velocity) critic + near-goal oversampling
+  # W1NEAR's offline teacher reached 78.0 as a CEM objective (= latent L2 78.9) while its co-trained
+  # critic fell to 68.7 and the planner to 61.3 -> train the refiner against that teacher, frozen
+  W1NEAR_FRZ)   WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0";;
+  W1N5NEAR_FRZ) WF=1; NEAR=0.3; VNSTEP=5; EXTRA="planner.freeze_critic_frac=0";;
   E01)     VEXP=0.1; EXTRA="planner.expectile=0.1 planner.expectile_final=0.1";;
   NEAR)    NEAR=${NEAR_FRAC:-0.3};;
   NEAR5)   NEAR=0.5;;                              # dose: half of the goals near
