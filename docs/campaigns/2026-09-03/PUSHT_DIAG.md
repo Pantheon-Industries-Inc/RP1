@@ -674,3 +674,7 @@ what erodes the sharper teacher during co-training -- the plain TD phase on
 the n-step-50 / expectile-annealed recipe already does.
 
 ### NEAR_NOEXP seed 0 (co-training without value expansion, near 0.3): rlp 62.0, cem_value 72.0, cem_tdvalue 75.3 (ES val 76). Neutral-to-slightly-negative; with N5NEAR_NOEXP (64.0) it closes the expansion question: expansion is not the erosion mechanism. NEARN5 (job 21302) preempted mid-eval, recovering.
+
+### W1NEAR_FRZ seed 1: rlp 76 / 72 / 64 = **70.7** (base s1 64.0), critic 76.7 / 77.3 (ES: final, val 70)
+
+Two seeds: 72.0 / 70.7 vs base 68.0 / 64.0 (+4.0 / +6.7). Seed 2 pending.
