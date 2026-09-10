@@ -726,3 +726,51 @@ is the draw where cem_value is weakest (76 in the training job, 74 here).
 Recordings for all three conditions are on
 `/newcheckpoints/.../pusht-ivr-pessonly-s0-20260909` for the imagined-vs-real
 analysis (`scripts/pusht_diag/imagined_vs_real.py`).
+
+## E16 -- imagined vs real: the residual gap is WORLD-MODEL exploitation, not critic ranking (2026-09-10)
+
+Setup: one actor (pessimistic-only critic, seed 0), draw 42, all three
+planners recorded; every executed 25-step plan re-imagined through the frozen
+WM from the real history; a ridge probe latent -> state (held-out R2: agent
+0.95, block 0.97, angle 0.91; median error agent 21 px, block 11 px) decodes
+both the imagined and the real latents. `scripts/pusht_diag/imagined_vs_real.py`,
+summary `docs/figures/pusht_diag/imagined_vs_real_pessonly_s0_d42.json`.
+
+First plan, FAILED tasks (the class that decides the gap):
+
+| planner | critic V imagined -> real (final block) | optimism gap | WM latent divergence (final) | decoded BLOCK error to goal, imagined / real | decoded AGENT error, imagined / real |
+|---|---|---|---|---|---|
+| rlp (refiner) | 3.6 / 8.5 | **+4.97** | **9.75** | **22.8 px / 73.5 px** | 63.1 / 62.7 px |
+| cem_value (same critic) | 3.5 / 7.4 | +3.96 | 8.61 | 35.3 px / 66.7 px | 47.7 / 46.9 px |
+| cem_latent (WM cost) | 5.3 / 6.6 | +1.21 | 6.86 | **56.3 px / 61.7 px** | 35.1 / 36.9 px |
+
+Successful tasks are calibrated for all three (optimism gap 0.0-0.7,
+divergence 4.3-4.5, imagined and real block error within 3 px).
+
+**Mechanism.** On failures the imagined AGENT trajectory is accurate (imagined
+vs real agent error within 1 px for every planner) while the imagined BLOCK is
+fiction: the refiner's plans imagine the block arriving at 22.8 px from the
+goal when it really ends 73.5 px away -- a 51 px hallucination. The WM
+invents block motion for near-miss pushes, and the critic then correctly
+scores a state that never happens (V falls 10.2 -> 3.6 in imagination,
+10.4 -> 8.5 in reality). The hallucination is ordered exactly like success:
+latent-CEM 5 px < critic-CEM 31 px < refiner 51 px, as is the divergence
+(6.9 < 8.6 < 9.8) and the optimism gap (1.2 < 4.0 < 5.0).
+
+**Why latent L2 wins despite being a worse ranking objective.** Its low-cost
+set is tight -- to fake it the WM would have to render a latent nearly
+identical to the goal frame's -- whereas a learned V has a broad low-V basin
+that hallucinated latents can enter. Optimizer strength then makes things
+worse, not better: the gradient refiner finds those basins more effectively
+than 9,000 CEM samples do. This is why 14 arms of critic sharpening (67 -> 82
+as a ranking objective) never moved the planner, and why E1 (refining a CEM
+plan makes it worse while lowering energy) and E2 (K=64 diverges) were the
+same phenomenon all along.
+
+**Consequence for the fix.** The lever is the imagined trajectory's
+trustworthiness, not the critic. The probe that produced this table is itself
+the cheapest candidate: it decodes block xy from a latent at R2 0.97, so a
+plan-time penalty on imagined block displacement that no agent contact
+supports is computable from the imagined latents alone (no second WM, fully
+offline), differentiable, and usable both in the refiner's training loss and
+as an eval-time cost term.

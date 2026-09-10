@@ -1,0 +1,308 @@
+{
+ "draw": 42,
+ "critic": "/newcheckpoints/armin@pantheon.inc/pusht-ivr-pessonly-s0-20260909/train_checkpoints/value_ac",
+ "ridge_r2": [
+  0.9518,
+  0.9453,
+  0.9709,
+  0.9707,
+  0.911,
+  0.8739
+ ],
+ "aggregates": {
+  "rlp": {
+   "ok": {
+    "n": 20,
+    "v0_mean": 10.027109074592591,
+    "v_imag_by_block": [
+     9.26,
+     8.14,
+     6.68,
+     4.27,
+     2.51
+    ],
+    "v_real_by_block": [
+     9.26,
+     8.31,
+     6.99,
+     4.79,
+     2.87
+    ],
+    "optimism_gap_final(real-imag)": 0.3624116748571396,
+    "latent_imag_by_block": [
+     15.13,
+     14.0,
+     12.06,
+     8.13,
+     4.7
+    ],
+    "latent_real_by_block": [
+     15.2,
+     14.29,
+     12.51,
+     8.84,
+     5.2
+    ],
+    "divergence_by_block": [
+     1.19,
+     1.89,
+     2.37,
+     3.14,
+     4.31
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     39.019988824361135,
+     39.4179662458468
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     18.199046372156257,
+     17.91045406017901
+    ]
+   },
+   "fail": {
+    "n": 15,
+    "v0_mean": 11.09047139485677,
+    "v_imag_by_block": [
+     10.17,
+     8.72,
+     7.08,
+     4.7,
+     3.57
+    ],
+    "v_real_by_block": [
+     10.35,
+     9.12,
+     8.74,
+     8.76,
+     8.54
+    ],
+    "optimism_gap_final(real-imag)": 4.96864599386851,
+    "latent_imag_by_block": [
+     14.92,
+     13.72,
+     11.3,
+     7.47,
+     6.05
+    ],
+    "latent_real_by_block": [
+     15.12,
+     13.89,
+     12.86,
+     12.7,
+     12.53
+    ],
+    "divergence_by_block": [
+     1.64,
+     3.76,
+     6.62,
+     8.76,
+     9.75
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     63.11243966992067,
+     62.720944979190776
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     22.75427509720127,
+     73.52887910378824
+    ]
+   }
+  },
+  "cem_value": {
+   "ok": {
+    "n": 12,
+    "v0_mean": 9.394593954086304,
+    "v_imag_by_block": [
+     8.33,
+     6.96,
+     5.73,
+     4.07,
+     2.37
+    ],
+    "v_real_by_block": [
+     8.25,
+     6.9,
+     5.77,
+     3.94,
+     2.37
+    ],
+    "optimism_gap_final(real-imag)": 0.004271348317464192,
+    "latent_imag_by_block": [
+     12.78,
+     11.1,
+     9.72,
+     6.91,
+     3.78
+    ],
+    "latent_real_by_block": [
+     12.96,
+     11.16,
+     9.75,
+     6.95,
+     4.09
+    ],
+    "divergence_by_block": [
+     2.14,
+     2.67,
+     3.22,
+     3.84,
+     4.54
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     24.54930512591795,
+     26.955343432750755
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     20.26869966073262,
+     14.367250607737128
+    ]
+   },
+   "fail": {
+    "n": 13,
+    "v0_mean": 10.17104225892287,
+    "v_imag_by_block": [
+     8.73,
+     7.44,
+     6.07,
+     4.37,
+     3.47
+    ],
+    "v_real_by_block": [
+     9.11,
+     8.02,
+     7.27,
+     7.08,
+     7.43
+    ],
+    "optimism_gap_final(real-imag)": 3.96138452566587,
+    "latent_imag_by_block": [
+     13.95,
+     12.34,
+     9.98,
+     6.71,
+     5.14
+    ],
+    "latent_real_by_block": [
+     14.45,
+     13.19,
+     11.73,
+     10.56,
+     10.69
+    ],
+    "divergence_by_block": [
+     1.93,
+     3.36,
+     5.87,
+     7.52,
+     8.61
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     47.73359072716799,
+     46.870172502368966
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     35.26061279441932,
+     66.71541477558381
+    ]
+   }
+  },
+  "cem_latent": {
+   "ok": {
+    "n": 11,
+    "v0_mean": 9.797210584987294,
+    "v_imag_by_block": [
+     8.18,
+     6.99,
+     5.86,
+     4.44,
+     2.32
+    ],
+    "v_real_by_block": [
+     8.5,
+     7.6,
+     6.51,
+     5.2,
+     3.06
+    ],
+    "optimism_gap_final(real-imag)": 0.7340625849637118,
+    "latent_imag_by_block": [
+     13.0,
+     11.63,
+     9.84,
+     7.19,
+     3.44
+    ],
+    "latent_real_by_block": [
+     13.32,
+     12.24,
+     10.64,
+     8.27,
+     4.68
+    ],
+    "divergence_by_block": [
+     2.02,
+     2.56,
+     3.06,
+     3.79,
+     4.42
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     23.47705043732695,
+     23.562668001866903
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     22.56347625118476,
+     19.964877771451633
+    ]
+   },
+   "fail": {
+    "n": 11,
+    "v0_mean": 10.799926280975342,
+    "v_imag_by_block": [
+     9.55,
+     8.27,
+     7.19,
+     5.81,
+     5.33
+    ],
+    "v_real_by_block": [
+     9.61,
+     8.35,
+     7.63,
+     6.98,
+     6.55
+    ],
+    "optimism_gap_final(real-imag)": 1.2110230814326892,
+    "latent_imag_by_block": [
+     14.46,
+     12.97,
+     10.98,
+     8.18,
+     6.71
+    ],
+    "latent_real_by_block": [
+     14.55,
+     13.07,
+     11.22,
+     9.42,
+     8.48
+    ],
+    "divergence_by_block": [
+     1.44,
+     3.08,
+     5.35,
+     6.43,
+     6.86
+    ],
+    "decoded_agent_err_final_imag/real_px": [
+     35.11565190075002,
+     36.853036593639175
+    ],
+    "decoded_block_err_final_imag/real_px": [
+     56.287875141080775,
+     61.720598018656055
+    ]
+   }
+  }
+ }
+}
