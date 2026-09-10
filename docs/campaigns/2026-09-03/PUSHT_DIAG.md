@@ -803,3 +803,38 @@ latent L2, decoded agent and block error vs plan step; imagined dashed vs real
 solid, successes green vs failures red, one row per planner) and
 `ivr_plans_pessonly_s0_d42.png` (arena: imagined vs real agent and block paths
 for the four mode-A tasks 2, 3, 24, 29 and two both-success tasks 0, 4).
+
+## E17 -- contact-consistency penalty (2026-09-10)
+
+Term: `mean_t relu(move_t - move_eps) * clamp((gap_t - gap_eps)/gap_norm, 0, 1)`
+over the imagined rollout, where `move` is the decoded block pose change (px,
+rotation at 40 px/rad) and `gap` is the decoded agent-block centre distance
+minus a contact radius. Reads as pixels of unsupported block motion; the
+weight converts px into energy units. Differentiable, so the refiner descends
+the constrained energy (added inside `LIPSolver._score`, which feeds both the
+gradient and the plan selection) and every sampler gets it through
+`MetricCost` (the latent cost is wrapped for this purpose alone).
+Code `src/rlp/core/value/contact.py`, probe `tools/fit_state_probe`,
+conditions `rlp_contact` / `cem_latent_contact` / `cem_value_contact`.
+
+Probe on the PushT training cache: held-out R2 agent 0.95 / 0.95, block 0.97 /
+0.97, angle 0.91 / 0.87; median error agent 21 px, block 11 px (p90 28), angle
+4.3 deg. **Contact calibration over 13,913 expert transitions that move the
+block: agent-block separation median 55.6, p95 93.6, p99 134.9, max 140.1 px.**
+
+### First run used a WRONG radius (60 px placeholder in the config, not the calibration)
+
+| condition | d42 / d43 / d44 | mean |
+|---|---|---|
+| rlp (frozen-teacher actor s0) | 74 / 84 / 60 | 72.7 |
+| rlp + contact, w 0.15, radius 60 | 70 / 80 / 60 | 70.0 |
+| cem_latent | 78 / 82 / 76 | 78.7 |
+| cem_latent + contact, w 0.15, radius 60 | 74 / 78 / 80 | 77.3 |
+
+At radius 60 the penalty fires on HALF of all legitimate expert pushes (their
+median separation is 55.6 px), so it taxed real contact rather than
+hallucination -- a mild loss for both planners, as expected of a mis-specified
+constraint. `contact_radius` now defaults to null, which adopts the p99
+(134.9 px), so the term can only fire beyond a separation at which the data
+never moves the block. Reruns: `pusht-cal-w{015,100}-frz` and
+`pusht-cal-w050-base` (weights 0.15 / 1.0 / 0.5).
