@@ -1142,3 +1142,38 @@ failures sit within 8 px of the threshold. That points at the
 success-indicator head (a sharp boundary at the graded set) rather than the
 best-point objective, and it is consistent with everything the resolution
 probe already said.
+
+## E22 -- per-episode attribution, draw 43 (2026-09-10)
+
+`scripts/pusht_diag/attribution.py` (job rlp-pusht-attr43), frozen-teacher
+actor. Truth = the env's recorded poses; belief = the deployed critic; promise
+= the executed plan re-imagined through the frozen WM. Rule, applied in order:
+**3 planner** a sampler on the same critic and WM solved it; **2 critic** the
+critic calls the endpoint nearly solved (V < 4) at a true error outside
+tolerance; **1 world model** the imagined terminal was rated > 3 better than
+the state reality delivered; **0** none of the above.
+
+| task | label | true min / final px | V at endpoint | imagination gap | samplers | needed |
+|---|---|---|---|---|---|---|
+| 0 | **3 planner** | 21.7 / 21.7 | 3.42 | 5.41 | both ok (min 15.6) | 31 px + 65 deg |
+| 8 | **3 planner** | 20.1 / 61.3 | 9.70 | 4.94 | both ok (17.6) | 148 px + 68 deg |
+| 9 | **3 planner** | 27.4 / 27.4 | 1.41 | 0.28 | both ok (15.7) | 78 px |
+| 15 | **3 planner** | 20.9 / 24.6 | 2.20 | 0.42 | both ok (17.1) | 58 px |
+| 25 | **3 planner** | 29.8 / 38.2 | 4.39 | 2.07 | both ok (18.0) | 40 px |
+| 3 | **1 world model** | 53.0 / 84.0 | 12.10 | **9.22** | both fail (35.5) | 9 px |
+| 31 | **2 critic** | 49.3 / 49.3 | **2.80** | 1.83 | both fail (54.8) | -- |
+| 43 | **2 critic** | 38.7 / 50.4 | **3.70** | 1.70 | both fail (22.3) | -- |
+
+**Counts: planner 5, critic 2, world model 1.**
+
+Reading. The refiner-specific failures are all planner-attributed by
+construction, and four of the five end within 8 px of the 20 px threshold
+(0, 9, 15 at 21.7 / 27.4 / 20.9-24.6) while the samplers clear the same tasks
+at 15.6-18.0 px: a terminal-precision gap, not a wrong objective. Tasks 31
+and 43 are the first CLEAN critic failures found in the campaign: V says 2.8
+and 3.7 (i.e. "3 steps to go") at 49 and 50 px of true error, on tasks every
+planner fails. Note E18 measured V as monotone along the EXPERT path for the
+mode-A five; 31 and 43 were not in that set, and they show the complementary
+defect -- V is wrong on states the planner actually reaches. Task 3 is the
+one clean WM failure, with the imagined terminal rated 9.2 better than
+reality, on a task whose block only needs to move 9 px.
