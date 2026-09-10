@@ -32,6 +32,9 @@ import h5py
 import numpy as np
 import torch
 
+with __import__("contextlib").suppress(ImportError):
+    import hdf5plugin  # noqa: F401  (registers the HDF5 filters the PushT h5 pixels use)
+
 D = Path(os.environ["D"])
 H5 = os.environ["H5"]
 CD = Path(os.environ.get("CD", "/checkpoints/armin@pantheon.inc/counterstrike/caches"))
