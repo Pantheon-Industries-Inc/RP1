@@ -1045,3 +1045,48 @@ only ever touched the actor's reach. E19 closed negative: the fabricated
 pushes happen at ordinary action magnitudes, so a magnitude constraint removes
 the legitimate long transports (draw 44 falls hardest in every arm) before it
 removes the exploitation.
+
+## E20 -- the last two critic arms, both negative (2026-09-10)
+
+### Two-sided pessimism (hinge + anchored TD at weight 0.2), 3 seeds
+
+| seed | rlp | cem_value (deployed critic) | cem_tdvalue (its frozen teacher) |
+|---|---|---|---|
+| 0 | 10.7 | 25.3 | 77.3 |
+| 1 | 9.3 | 23.3 | 77.3 |
+| 2 | 12.0 | 27.3 | 76.7 |
+
+Worse than the one-sided version, and now consistently: the deployed critic
+collapses to 23-27 on all three seeds while its own teacher stays at 77. So
+the instability of PESSONLY was not a missing scale anchor -- keeping the TD
+term at 0.2 makes the collapse reliable rather than curing it. The mechanism
+is the hinge itself: it is applied to the refiner's own imagined terminals
+every step, the refiner keeps visiting the region the hinge is inflating, and
+the pair runs away. Pessimistic imagination on planner-visited states is
+closed negative in every form tried (optimistic expansion 24.7, hinge only
+70.0/12.0/69.3, hinge + TD 10.7/9.3/12.0).
+
+### Depth 3 on the frozen teacher, 3 seeds
+
+| seed | rlp (depth 3) | rlp (depth 2 baseline) | critic depth 3 | critic depth 2 |
+|---|---|---|---|---|
+| 0 | 69.3 | 72.0 | 76.0 | 78.7 |
+| 1 | 62.7 | 70.7 | 74.0 | 76.7 |
+| 2 | 68.7 | 67.3 | 73.3 | 76.7 |
+| median | **68.7** | **70.7** | 74.0 | 76.7 |
+
+-2.0 on the median, and the critic's own ranking quality drops 2-3 points on
+every seed. Freezing the teacher does soften the historical penalty (-26 to
+-39 under co-training) but does not flip its sign: depth 2 remains right for
+PushT, on the critic as well as the actor.
+
+**Campaign state.** The best recipe stays W1NEAR_FRZ: a frozen single-frame
+near-goal-oversampled teacher, no co-training, one K=8 pass -- median 70.7 vs
+base 64.7. Closed negatives now cover the target (E10 augmentation, E13
+tolerance relabeling, E12 expectile), the sampling dose/band/actor-side
+variants, the window, capacity (E20), the optimiser's trust region (E19),
+randomized smoothing, pessimistic imagination (E20), and hand-specified
+contact physics (E17). The unexplored levers are all on the world-model side:
+ensemble disagreement, a learned real-vs-imagined discriminator, and the
+replan frequency (RH=5 today; RH=1 corrects a fabricated push after 5
+primitive steps instead of 25, at 5x the decisions per episode).
