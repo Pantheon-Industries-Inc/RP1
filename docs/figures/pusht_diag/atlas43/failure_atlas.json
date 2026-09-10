@@ -1,0 +1,791 @@
+{
+ "draw": 43,
+ "critic": "/newcheckpoints/armin@pantheon.inc/pusht-atlas43-20260910/train_checkpoints/value_ac",
+ "window": 1,
+ "tasks": {
+  "0": {
+   "class": "modeA",
+   "block_move_required_px": 31.4,
+   "block_rot_required_deg": 64.7,
+   "agent_move_required_px": 188.0,
+   "V_expert_path": [
+    14.63,
+    12.69,
+    9.34,
+    6.71,
+    3.18,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    47.4,
+    43.5,
+    31.5,
+    19.2,
+    10.4,
+    12.1
+   ],
+   "spearman_V_agentsweep_vs_bfs": 0.613,
+   "V_agent_sweep_range": 7.51,
+   "V_block_sweep_range": 9.76,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 14.55,
+     "V_real_first_plan": [
+      13.97,
+      13.02,
+      11.45,
+      7.19,
+      6.51
+     ],
+     "V_imag_first_plan": [
+      13.86,
+      12.68,
+      10.82,
+      6.96,
+      1.1
+     ],
+     "V_real_final": 3.42,
+     "block_err_real_first_plan": [
+      45.7,
+      44.0,
+      36.9,
+      28.4,
+      17.1
+     ],
+     "block_err_imag_first_plan": [
+      46.0,
+      46.3,
+      40.7,
+      29.6,
+      14.2
+     ],
+     "block_err_real_final": 11.0,
+     "agent_err_real_final": 13.3
+    },
+    "cem_value": {
+     "ok": true,
+     "steps": 36,
+     "V_start": 14.39,
+     "V_real_first_plan": [
+      13.42,
+      12.89,
+      10.31,
+      7.01,
+      5.49
+     ],
+     "V_imag_first_plan": [
+      13.44,
+      12.51,
+      9.69,
+      6.53,
+      1.71
+     ],
+     "V_real_final": 2.09,
+     "block_err_real_first_plan": [
+      45.7,
+      41.7,
+      35.6,
+      25.7,
+      10.6
+     ],
+     "block_err_imag_first_plan": [
+      46.8,
+      45.9,
+      38.1,
+      29.3,
+      19.6
+     ],
+     "block_err_real_final": 12.1,
+     "agent_err_real_final": 12.9
+    },
+    "cem_latent": {
+     "ok": true,
+     "steps": 24,
+     "V_start": 14.61,
+     "V_real_first_plan": [
+      13.0,
+      10.61,
+      8.24,
+      6.46
+     ],
+     "V_imag_first_plan": [
+      13.09,
+      10.61,
+      8.15,
+      6.2
+     ],
+     "V_real_final": 5.08,
+     "block_err_real_first_plan": [
+      43.7,
+      33.4,
+      27.2,
+      15.1
+     ],
+     "block_err_imag_first_plan": [
+      49.3,
+      40.3,
+      33.0,
+      20.1
+     ],
+     "block_err_real_final": 10.6,
+     "agent_err_real_final": 40.1
+    }
+   }
+  },
+  "8": {
+   "class": "modeA",
+   "block_move_required_px": 148.2,
+   "block_rot_required_deg": 67.6,
+   "agent_move_required_px": 197.3,
+   "V_expert_path": [
+    14.51,
+    13.54,
+    10.82,
+    7.76,
+    4.14,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    97.0,
+    99.0,
+    87.4,
+    67.2,
+    24.8,
+    15.9
+   ],
+   "spearman_V_agentsweep_vs_bfs": 0.343,
+   "V_agent_sweep_range": 5.6,
+   "V_block_sweep_range": 8.22,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 14.48,
+     "V_real_first_plan": [
+      14.01,
+      13.37,
+      10.91,
+      9.12,
+      9.97
+     ],
+     "V_imag_first_plan": [
+      14.22,
+      13.05,
+      10.38,
+      6.42,
+      5.02
+     ],
+     "V_real_final": 9.7,
+     "block_err_real_first_plan": [
+      96.4,
+      97.3,
+      83.2,
+      23.5,
+      12.8
+     ],
+     "block_err_imag_first_plan": [
+      98.2,
+      99.1,
+      82.0,
+      24.9,
+      16.8
+     ],
+     "block_err_real_final": 60.0,
+     "agent_err_real_final": 63.7
+    },
+    "cem_value": {
+     "ok": true,
+     "steps": 25,
+     "V_start": 14.43,
+     "V_real_first_plan": [
+      13.55,
+      10.89,
+      9.32,
+      6.04
+     ],
+     "V_imag_first_plan": [
+      13.64,
+      10.94,
+      9.38,
+      6.14
+     ],
+     "V_real_final": 5.5,
+     "block_err_real_first_plan": [
+      97.0,
+      90.1,
+      77.9,
+      28.4
+     ],
+     "block_err_imag_first_plan": [
+      101.9,
+      86.3,
+      67.2,
+      23.9
+     ],
+     "block_err_real_final": 13.1,
+     "agent_err_real_final": 19.9
+    },
+    "cem_latent": {
+     "ok": true,
+     "steps": 24,
+     "V_start": 14.44,
+     "V_real_first_plan": [
+      13.41,
+      10.88,
+      8.39,
+      3.68
+     ],
+     "V_imag_first_plan": [
+      13.29,
+      10.63,
+      8.35,
+      3.07
+     ],
+     "V_real_final": 3.65,
+     "block_err_real_first_plan": [
+      97.1,
+      86.9,
+      66.5,
+      10.6
+     ],
+     "block_err_imag_first_plan": [
+      100.3,
+      82.9,
+      59.6,
+      7.6
+     ],
+     "block_err_real_final": 7.5,
+     "agent_err_real_final": 29.8
+    }
+   }
+  },
+  "9": {
+   "class": "modeA",
+   "block_move_required_px": 78.2,
+   "block_rot_required_deg": 2.2,
+   "agent_move_required_px": 60.4,
+   "V_expert_path": [
+    12.14,
+    10.37,
+    7.78,
+    4.79,
+    3.3,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    78.0,
+    64.7,
+    39.9,
+    9.9,
+    4.4,
+    6.6
+   ],
+   "spearman_V_agentsweep_vs_bfs": -0.359,
+   "V_agent_sweep_range": 5.14,
+   "V_block_sweep_range": 18.21,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 12.14,
+     "V_real_first_plan": [
+      10.92,
+      10.21,
+      7.23,
+      5.29,
+      3.73
+     ],
+     "V_imag_first_plan": [
+      10.66,
+      9.76,
+      6.98,
+      4.86,
+      3.55
+     ],
+     "V_real_final": 1.41,
+     "block_err_real_first_plan": [
+      71.1,
+      63.3,
+      33.7,
+      5.8,
+      7.0
+     ],
+     "block_err_imag_first_plan": [
+      67.1,
+      57.5,
+      23.7,
+      0.9,
+      7.0
+     ],
+     "block_err_real_final": 1.1,
+     "agent_err_real_final": 41.7
+    },
+    "cem_value": {
+     "ok": true,
+     "steps": 26,
+     "V_start": 11.56,
+     "V_real_first_plan": [
+      9.18,
+      6.63,
+      4.96,
+      2.55,
+      1.19
+     ],
+     "V_imag_first_plan": [
+      9.15,
+      6.43,
+      4.56,
+      2.45,
+      1.81
+     ],
+     "V_real_final": 1.19,
+     "block_err_real_first_plan": [
+      55.4,
+      31.1,
+      2.1,
+      10.6,
+      7.3
+     ],
+     "block_err_imag_first_plan": [
+      50.5,
+      23.7,
+      6.5,
+      15.3,
+      19.4
+     ],
+     "block_err_real_final": 7.3,
+     "agent_err_real_final": 16.0
+    },
+    "cem_latent": {
+     "ok": true,
+     "steps": 25,
+     "V_start": 11.65,
+     "V_real_first_plan": [
+      10.01,
+      7.26,
+      4.96,
+      3.22
+     ],
+     "V_imag_first_plan": [
+      10.1,
+      7.16,
+      4.65,
+      2.94
+     ],
+     "V_real_final": 1.93,
+     "block_err_real_first_plan": [
+      61.4,
+      34.4,
+      8.7,
+      12.8
+     ],
+     "block_err_imag_first_plan": [
+      58.4,
+      30.2,
+      11.8,
+      14.6
+     ],
+     "block_err_real_final": 8.3,
+     "agent_err_real_final": 11.9
+    }
+   }
+  },
+  "15": {
+   "class": "modeA",
+   "block_move_required_px": 58.1,
+   "block_rot_required_deg": 3.9,
+   "agent_move_required_px": 142.2,
+   "V_expert_path": [
+    9.9,
+    7.52,
+    6.51,
+    4.97,
+    2.75,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    50.8,
+    55.5,
+    63.2,
+    57.1,
+    32.5,
+    7.9
+   ],
+   "spearman_V_agentsweep_vs_bfs": -0.011,
+   "V_agent_sweep_range": 10.68,
+   "V_block_sweep_range": 11.55,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 9.65,
+     "V_real_first_plan": [
+      9.21,
+      8.43,
+      6.69,
+      5.26,
+      2.97
+     ],
+     "V_imag_first_plan": [
+      9.05,
+      8.14,
+      6.02,
+      3.77,
+      2.59
+     ],
+     "V_real_final": 2.2,
+     "block_err_real_first_plan": [
+      53.2,
+      53.7,
+      53.1,
+      45.6,
+      23.8
+     ],
+     "block_err_imag_first_plan": [
+      54.2,
+      55.3,
+      50.6,
+      31.8,
+      8.8
+     ],
+     "block_err_real_final": 19.6,
+     "agent_err_real_final": 22.5
+    },
+    "cem_value": {
+     "ok": true,
+     "steps": 25,
+     "V_start": 9.56,
+     "V_real_first_plan": [
+      8.51,
+      7.06,
+      6.2,
+      4.96
+     ],
+     "V_imag_first_plan": [
+      8.67,
+      7.11,
+      5.93,
+      5.47
+     ],
+     "V_real_final": 2.02,
+     "block_err_real_first_plan": [
+      54.4,
+      47.9,
+      53.3,
+      61.9
+     ],
+     "block_err_imag_first_plan": [
+      54.6,
+      51.0,
+      54.9,
+      55.4
+     ],
+     "block_err_real_final": 26.7,
+     "agent_err_real_final": 17.7
+    },
+    "cem_latent": {
+     "ok": true,
+     "steps": 25,
+     "V_start": 9.6,
+     "V_real_first_plan": [
+      8.29,
+      6.79,
+      6.16,
+      4.9
+     ],
+     "V_imag_first_plan": [
+      8.35,
+      6.57,
+      5.51,
+      4.44
+     ],
+     "V_real_final": 2.04,
+     "block_err_real_first_plan": [
+      53.0,
+      48.3,
+      52.9,
+      58.9
+     ],
+     "block_err_imag_first_plan": [
+      54.3,
+      50.1,
+      53.7,
+      48.2
+     ],
+     "block_err_real_final": 19.6,
+     "agent_err_real_final": 24.8
+    }
+   }
+  },
+  "25": {
+   "class": "modeA",
+   "block_move_required_px": 40.1,
+   "block_rot_required_deg": 1.1,
+   "agent_move_required_px": 144.6,
+   "V_expert_path": [
+    10.95,
+    8.52,
+    7.06,
+    5.63,
+    2.73,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    40.8,
+    39.0,
+    42.6,
+    40.1,
+    23.7,
+    10.5
+   ],
+   "spearman_V_agentsweep_vs_bfs": 0.676,
+   "V_agent_sweep_range": 10.96,
+   "V_block_sweep_range": 14.03,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 10.35,
+     "V_real_first_plan": [
+      9.41,
+      6.67,
+      4.99,
+      3.83,
+      5.28
+     ],
+     "V_imag_first_plan": [
+      8.35,
+      6.59,
+      5.05,
+      4.05,
+      3.08
+     ],
+     "V_real_final": 4.42,
+     "block_err_real_first_plan": [
+      25.3,
+      12.3,
+      20.7,
+      19.1,
+      32.3
+     ],
+     "block_err_imag_first_plan": [
+      33.4,
+      23.0,
+      20.7,
+      19.8,
+      12.6
+     ],
+     "block_err_real_final": 30.1,
+     "agent_err_real_final": 82.6
+    },
+    "cem_value": {
+     "ok": true,
+     "steps": 23,
+     "V_start": 10.39,
+     "V_real_first_plan": [
+      8.03,
+      6.44,
+      3.86,
+      2.22
+     ],
+     "V_imag_first_plan": [
+      8.1,
+      6.7,
+      5.49,
+      3.6
+     ],
+     "V_real_final": 1.05,
+     "block_err_real_first_plan": [
+      34.8,
+      38.7,
+      30.3,
+      18.6
+     ],
+     "block_err_imag_first_plan": [
+      34.9,
+      35.7,
+      33.9,
+      23.2
+     ],
+     "block_err_real_final": 11.8,
+     "agent_err_real_final": 39.1
+    },
+    "cem_latent": {
+     "ok": true,
+     "steps": 23,
+     "V_start": 10.01,
+     "V_real_first_plan": [
+      7.39,
+      6.03,
+      3.22,
+      1.55
+     ],
+     "V_imag_first_plan": [
+      7.68,
+      6.31,
+      5.14,
+      3.24
+     ],
+     "V_real_final": 1.34,
+     "block_err_real_first_plan": [
+      32.3,
+      37.7,
+      24.5,
+      14.9
+     ],
+     "block_err_imag_first_plan": [
+      34.8,
+      35.9,
+      31.6,
+      21.8
+     ],
+     "block_err_real_final": 16.6,
+     "agent_err_real_final": 35.8
+    }
+   }
+  },
+  "3": {
+   "class": "both_fail",
+   "block_move_required_px": 9.3,
+   "block_rot_required_deg": 2.1,
+   "agent_move_required_px": 159.7,
+   "V_expert_path": [
+    12.15,
+    10.73,
+    8.08,
+    5.38,
+    2.85,
+    0.0
+   ],
+   "V_expert_monotone_fraction": 1.0,
+   "block_err_expert_path": [
+    38.4,
+    46.1,
+    40.0,
+    26.9,
+    25.1,
+    14.2
+   ],
+   "spearman_V_agentsweep_vs_bfs": 0.59,
+   "V_agent_sweep_range": 11.79,
+   "V_block_sweep_range": 13.92,
+   "planners": {
+    "rlp": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 12.04,
+     "V_real_first_plan": [
+      11.61,
+      10.49,
+      8.92,
+      7.89,
+      12.07
+     ],
+     "V_imag_first_plan": [
+      11.8,
+      10.86,
+      8.29,
+      5.29,
+      2.84
+     ],
+     "V_real_final": 12.1,
+     "block_err_real_first_plan": [
+      44.4,
+      46.9,
+      44.8,
+      26.9,
+      55.9
+     ],
+     "block_err_imag_first_plan": [
+      48.1,
+      53.3,
+      53.4,
+      38.0,
+      16.0
+     ],
+     "block_err_real_final": 56.2,
+     "agent_err_real_final": 45.2
+    },
+    "cem_value": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 12.04,
+     "V_real_first_plan": [
+      11.35,
+      10.14,
+      8.57,
+      7.94,
+      11.35
+     ],
+     "V_imag_first_plan": [
+      11.55,
+      10.28,
+      7.9,
+      4.45,
+      1.59
+     ],
+     "V_real_final": 7.36,
+     "block_err_real_first_plan": [
+      44.9,
+      47.8,
+      44.2,
+      13.9,
+      45.0
+     ],
+     "block_err_imag_first_plan": [
+      44.5,
+      47.2,
+      45.7,
+      28.4,
+      20.2
+     ],
+     "block_err_real_final": 39.2,
+     "agent_err_real_final": 26.9
+    },
+    "cem_latent": {
+     "ok": false,
+     "steps": 50,
+     "V_start": 12.16,
+     "V_real_first_plan": [
+      12.12,
+      10.99,
+      9.46,
+      6.39,
+      2.82
+     ],
+     "V_imag_first_plan": [
+      12.1,
+      11.12,
+      9.81,
+      6.65,
+      4.51
+     ],
+     "V_real_final": 2.82,
+     "block_err_real_first_plan": [
+      36.7,
+      33.7,
+      23.6,
+      33.5,
+      43.8
+     ],
+     "block_err_imag_first_plan": [
+      45.5,
+      48.8,
+      45.7,
+      50.5,
+      63.4
+     ],
+     "block_err_real_final": 49.7,
+     "agent_err_real_final": 45.6
+    }
+   }
+  }
+ }
+}

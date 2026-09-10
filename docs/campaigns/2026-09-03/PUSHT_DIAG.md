@@ -909,3 +909,82 @@ mean** (72.0/70.7/67.3 = 70.0 vs 65.6), and every seed is at or above its base
 counterpart. Still 8-9 points short of latent-CEM (78.9) at 1/1000 the
 compute; the residual is E16's world-model exploitation, which E17 showed
 cannot be removed by contact geometry.
+
+## E18 -- draw-43 failure atlas (2026-09-10)
+
+Actor `pusht-w1near_frz-s0` (frozen single-frame near-goal teacher, W=1 so the
+heatmaps are exactly what the planner queries). Draw 43: all three planners
+score 84.0 here; the refiner fails 8 tasks, 5 of them mode A (the samplers
+succeed): tasks 0, 8, 9, 15, 25. Figures
+`docs/figures/pusht_diag/atlas43/atlas_task{00,03,08,09,15,25}.png`, per-task
+numbers `failure_atlas.json`.
+
+### The critic is NOT the cause on any of the five
+
+V along the expert's own continuation (which reaches the goal by construction)
+falls monotonically on **every** task, 100 % of steps, from 10-15 down to 0:
+
+| task | V along expert path | block move required | rho(V agent-sweep, BFS geodesic) |
+|---|---|---|---|
+| 0 | 14.6 / 12.7 / 9.3 / 6.7 / 3.2 / 0.0 | 31 px + 65 deg | 0.61 |
+| 8 | 14.5 / 13.5 / 10.8 / 7.8 / 4.1 / 0.0 | 148 px + 68 deg | 0.34 |
+| 9 | 12.1 / 10.4 / 7.8 / 4.8 / 3.3 / 0.0 | 78 px | **-0.36** |
+| 15 | 9.9 / 7.5 / 6.5 / 5.0 / 2.7 / 0.0 | 58 px | -0.01 |
+| 25 | 11.0 / 8.5 / 7.1 / 5.6 / 2.7 / 0.0 | 40 px | 0.68 |
+
+So the objective ranks the true solution path correctly on all of them. The
+agent-space BFS geodesic correlation is a red herring: it is near zero or
+negative exactly on the tasks that need real block transport (9, 15), because
+the critic's agent-space landscape SHOULD track "where do I have to stand to
+push", not "how far to walk to the expert's final agent spot". The block-sweep
+panels show the critic's minimum sitting on the block's goal pose, which is
+correct.
+
+### What actually fails, per task
+
+**Task 8 (block must travel 148 px).** The refiner gets the block from 96 px
+to 23 px of error by step 20 -- then loses it: real V rises 9.12 -> 9.97 and
+the final block error is 60 px. The imagined plan claims 5.0 while reality is
+10.0. Both samplers finish the same task in 24-25 steps. This is the
+E16 mechanism: the last replan's imagined push is fabricated, the block slips
+off, and there is no budget left to recover.
+
+**Task 25 (40 px).** The refiner is AHEAD at step 10 (block error 12 px vs the
+samplers' 38 px) and then destroys it: block error 12 -> 32 px, V 3.83 -> 5.28,
+and the agent ends 83 px from its goal spot. The heatmap shows why it is
+tempted: V over agent xy has a broad low basin toward the bottom-right, away
+from the block, so once the block is nearly placed the cheapest direction in
+the critic's landscape is to leave.
+
+**Task 9 (78 px, no rotation).** The refiner actually SOLVES the block, final
+block error 1.1 px, but ends 41.7 px from the required agent position, so the
+joint 20 px test fails. The samplers end at 16.0 and 11.9 px. Pure
+agent-placement miss with the block perfect.
+
+**Task 15 (58 px).** Nobody moves the block usefully: real block error ends
+19.6-26.7 px for all three, and the refiner is the closest of the three. It
+fails the joint test by a whisker; this is a lottery cell, not a mechanism.
+
+**Task 0 (31 px + 65 deg rotation).** The refiner reaches 17.1 px block error
+at step 25 and 11.0 px at the end, with the agent at 13.3 px -- both inside
+tolerance -- yet the recorded episode ran the full 50 steps and is scored a
+failure, so the success must have been missed at the *graded* step. Worth a
+separate check of first-hit scoring on rotation-heavy tasks.
+
+**Task 3 (both fail, block barely needs to move).** Every planner drives the
+block AWAY: real block error 44 -> 56 px (rlp), 45 -> 39 (cem_value), 37 -> 50
+(cem_latent), while the imagined paths all claim 16-20 px. Unanimous
+world-model exploitation on a task whose block starts 38 px from its goal.
+
+### Reading
+
+Three of the five mode-A failures are late-plan world-model exploitation
+(8, 25, 3) and two are terminal-precision misses (9 agent, 15 joint). None is
+a critic-ranking failure: V is monotone along the true path in every case, and
+V's minimum in block space sits on the block goal. The refiner's specific
+disadvantage is that it re-optimises its own imagined future every replan and
+therefore keeps re-entering the fabricated-push basin, where a sampler that
+never leaves the data-like action neighbourhood does not. Combined with E17
+(contact geometry cannot detect the fabrication) the remaining levers are
+world-model disagreement, a learned real-vs-imagined discriminator, or simply
+executing fewer blocks per replan so a fabricated push is corrected sooner.
