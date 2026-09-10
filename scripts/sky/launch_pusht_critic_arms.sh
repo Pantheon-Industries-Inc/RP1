@@ -68,7 +68,7 @@ for S in $SEEDS; do
     --env CACHE_TAG=counterstrike --env WAIT_CACHE_MIN=0 --env EXPAND="$EXPAND"
     --env SEED="$S" --env TD_MODE=cube --env ITERS=8
     --env VALUE_GAMMA=0.98 --env VALUE_NSTEP="$VNSTEP" --env VALUE_EXPECTILE="$VEXP"
-    --env MAX_DELTA=20 --env MEAN_WEIGHT=0.1 --env AMAX=2.5
+    --env MAX_DELTA=20 --env MEAN_WEIGHT=0.1 --env AMAX="${AMAX_OVERRIDE:-2.5}"
     --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="50 51"
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env TOL_RELABEL="$TOL" --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
