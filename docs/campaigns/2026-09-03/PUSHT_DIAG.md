@@ -685,3 +685,22 @@ Same teacher as W1NEAR_FRZ (72.0 at this seed), smoothing in the actor loss
 only: -6.7. Draw 44 collapses (52 vs 60); draws 42/43 hold (66/78 vs 72/84).
 Not the smoothing scale we want, or smoothing trades sharpness for robustness
 the refiner did not need at sigma 0.1; sigma 0.3 pending.
+
+### E15 -- refiner anti-exploitation arms on the frozen single-frame near-goal teacher (seed 0; reference W1NEAR_FRZ s0: rlp 72.0, critic 78.7)
+
+| arm | rlp | cem_value (deployed critic) | cem_tdvalue (teacher) | ES val |
+|---|---|---|---|---|
+| randomized smoothing, M=4, sigma 0.1 | 65.3 | 78.0 | 76.7 | 68 |
+| randomized smoothing, M=4, sigma 0.3 | 64.0 | 78.0 | 78.0 | 62 |
+| pessimistic imagination, TD phase kept | 24.7 | 46.0 | 78.7 | 27 |
+| **pessimistic imagination only** (td_weight 0: hinge is the critic's only co-training signal) | **70.0** | **82.0** | 78.0 | 66 |
+
+Smoothing is negative at both scales (-7 / -8 vs the unsmoothed twin) with
+the critic unchanged: the refiner's exploits are not sharp minima that noise
+removes. Pessimistic imagination with the TD phase collapses (the n-step-50
+TD pull and the hinge push fight; the co-critic ends at 46). **Pessimistic
+imagination alone gives the first deployed critic ABOVE latent L2 as a
+sampler objective: 82.0 (76 / 88 / 82) vs 78.9**, with the refiner at 70.0
+(70 / 84 / 56), the same level as the frozen teacher (72.0). So the critic
+side is now beyond CEM's own objective; the refiner still converts ~70 of it.
+Replication of PESSONLY at seeds 1/2 launched.
