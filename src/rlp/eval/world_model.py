@@ -179,6 +179,20 @@ def _run(cfg: DictConfig) -> None:
             raise TypeError("planning cost must also be a torch module")
         cost_model: nn.Module = planning_cost
         metric_paths = list(cfg.core.value.checkpoints)
+        # contact-consistency penalty on the imagined rollout (PushT E16/E17):
+        # available to every sampler, including the pure latent cost, which
+        # needs the MetricCost wrapper only to reach `predicted_emb`
+        contact_cfg = cfg.core.value.get("contact")
+        contact_raw = OmegaConf.to_container(contact_cfg, resolve=True) if contact_cfg is not None else None
+        contact_conf = cast(dict[str, Any] | None, contact_raw)
+        from rlp.core.value import ContactPenalty
+
+        contact = ContactPenalty.from_config(contact_conf, device=device)
+        if cfg.core.value.kind != "metric" and contact is not None:
+            from rlp.core.value import MetricCost
+
+            cost_model = MetricCost(cost_model, None, "latent", contact=contact)
+            logger.info("Latent planning cost wrapped for the contact-consistency penalty")
         if cfg.core.value.kind == "metric":
             from rlp.core.value import load_metric
 
@@ -194,6 +208,7 @@ def _run(cfg: DictConfig) -> None:
                 lam=float(cfg.core.value.blend_weight),
                 metrics=loaded_metrics,
                 deadline_mode=str(cfg.core.value.deadline_mode),
+                contact=contact,
             )
             logger.info(f"Plan-score metrics={metric_paths} mode={cfg.core.value.mode}")
 

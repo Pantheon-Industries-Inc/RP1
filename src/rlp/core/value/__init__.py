@@ -17,12 +17,15 @@ Public surface:
 """
 
 from . import diagnostics, learners, oracle, samplers
+from .contact import ContactPenalty, StateProbe
 from .cost import MetricCost
 from .head import IQEHead, L2WindowCost, PairwiseMetricHead, QuasimetricHead, pair_features
 from .io import build_metric, load_metric, save_metric
 from .stable_worldmodel import LatentGoalCost, as_planning_cost
 
 __all__ = [
+    "ContactPenalty",
+    "StateProbe",
     "PairwiseMetricHead",
     "QuasimetricHead",
     "IQEHead",

@@ -4,3 +4,13 @@ checkpoints: ???
 mode: replacement
 blend_weight: 1.0
 deadline_mode: terminal
+# Contact-consistency penalty on the imagined rollout (PushT; see
+# rlp.core.value.contact and PUSHT_DIAG E16/E17). weight 0 = off.
+contact:
+  weight: 0.0
+  probe: null        # tools/fit_state_probe artifact
+  move_eps: 15.0     # block pose change treated as no motion (px)
+  gap_eps: 0.0       # agent-block gap treated as possible contact (px)
+  contact_radius: 60.0
+  angle_scale: 40.0
+  gap_norm: 50.0

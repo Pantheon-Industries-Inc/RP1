@@ -25,6 +25,7 @@ from typing import Any, cast
 import torch
 from torch import nn
 
+from .contact import ContactPenalty
 from .protocols import TensorInfo, ValueMetric
 from .stable_worldmodel import as_planning_cost
 
@@ -51,6 +52,7 @@ class MetricCost(nn.Module):
         lam: float = 1.0,
         metrics: Sequence[nn.Module] | None = None,
         deadline_mode: str = "terminal",
+        contact: ContactPenalty | None = None,
     ) -> None:
         super().__init__()
         assert mode in {"latent", "replacement", "hybrid", "shuffled"}, mode
@@ -64,7 +66,21 @@ class MetricCost(nn.Module):
         if deadline_mode not in {"terminal", "deadline"}:
             raise ValueError(f"unsupported deadline mode: {deadline_mode}")
         self.deadline_mode = deadline_mode
+        self.contact = contact
         self._align_remaining: tuple[int, ...] | None = None
+
+    def _contact_penalty(self, info_dict: TensorInfo) -> torch.Tensor | float:
+        """Contact-consistency penalty over the cached imagined rollout.
+
+        ``predicted_emb`` is (B, C, T, D) with C the candidate axis, so the
+        penalty is computed per candidate and returned in the cost's shape.
+        """
+        if self.contact is None:
+            return 0.0
+        predicted = info_dict["predicted_emb"]
+        b, c = predicted.shape[0], predicted.shape[1]
+        flat = predicted.reshape(b * c, predicted.shape[-2], predicted.shape[-1])
+        return self.contact(flat.float()).view(b, c)
 
     def set_align_remaining(self, remaining_chunks: Sequence[int] | None) -> None:
         """Publish per-environment chunks remaining until the graded step."""
@@ -157,13 +173,14 @@ class MetricCost(nn.Module):
     def get_cost(self, info_dict: TensorInfo, action_candidates: torch.Tensor) -> torch.Tensor:
         # base.get_cost computes c_lat AND populates predicted_emb / goal_emb.
         c_lat = self.base.get_cost(info_dict, action_candidates)
+        contact = self._contact_penalty(info_dict)
         if self.mode == "latent":
-            return c_lat
+            return c_lat + contact
         m = self._metric_terminal_cost(info_dict, action_candidates)
         if self.mode in ("replacement", "shuffled"):
-            return m
+            return m + contact
         # hybrid
-        return self._standardize(c_lat) + self.lam * self._standardize(m)
+        return self._standardize(c_lat) + self.lam * self._standardize(m) + contact
 
     # criterion mirrors the Costable protocol (used by some solvers/diagnostics)
     def criterion(self, info_dict: TensorInfo) -> torch.Tensor:
@@ -175,4 +192,4 @@ class MetricCost(nn.Module):
         return self._standardize(self.base.criterion(info_dict)) + self.lam * self._standardize(m)
 
 
-__all__ = ["MetricCost"]
+__all__ = ["ContactPenalty", "MetricCost"]

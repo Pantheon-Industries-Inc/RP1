@@ -163,6 +163,7 @@ class LIPSolver(CEMSolver):
         graphed: bool | str = False,
         record_probes: bool = False,
         probe_directory: str | None = None,
+        contact: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -210,6 +211,13 @@ class LIPSolver(CEMSolver):
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
             self.probe_directory.mkdir(parents=True, exist_ok=True)
+        # contact-consistency penalty: added to the refinement objective, so the
+        # learned update descends the CONSTRAINED energy (see rlp.core.value.contact)
+        from rlp.core.value import ContactPenalty
+
+        self.contact = ContactPenalty.from_config(contact, device=self.device)
+        if self.contact is not None and self.graphed:
+            raise ValueError("graphed refinement captures the unconstrained energy; disable graphed with a contact penalty")
 
         raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw_checkpoint, dict):
@@ -343,12 +351,21 @@ class LIPSolver(CEMSolver):
 
     def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
         """Trajectory score; stacks the last ``vframes`` imagined frames and
-        duplicates the observed goal frame when the value is windowed."""
+        duplicates the observed goal frame when the value is windowed.
+
+        With a contact penalty configured the score is the critic energy PLUS
+        the penalty, so the refiner descends both: the gradient it follows is
+        the gradient of the constrained objective.
+        """
         if self.vframes > 1:
-            return windowed_trajectory_value(
+            energy = windowed_trajectory_value(
                 self.lip_value, trajectory, goal, history, self.vframes, self.temporal_objective
             )
-        return trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        else:
+            energy = trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        if self.contact is not None:
+            energy = energy + self.contact(trajectory, start=history[:, -1])
+        return energy
 
     def _value_init(
         self,
@@ -390,6 +407,17 @@ class LIPSolver(CEMSolver):
                     cand.reshape(B * C, H, adim),
                 )
                 E = self.lip_value(*window_pair(trajectory.float(), zg_c, self.vframes)).view(B, C)
+                if self.contact is not None:
+                    E = E + self.contact(trajectory.float()).view(B, C)
+            elif self.contact is not None:
+                # the penalty needs the whole imagined path, not just its terminal
+                trajectory = rollout_traj(
+                    wm,
+                    z_hist.repeat_interleave(C, dim=0),
+                    a_hist.repeat_interleave(C, dim=0),
+                    cand.reshape(B * C, H, adim),
+                )
+                E = (self.lip_value(trajectory[:, -1].float(), zg_c) + self.contact(trajectory.float())).view(B, C)
             else:
                 term = rollout_terminal(
                     wm,

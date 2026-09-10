@@ -91,6 +91,9 @@ envs:
                         # (deploy-matched) instead of the goal's own motion window
   IMAG_MC: "0"          # co-critic imagination-MC weight: WM rollouts along the data's actions
                         # with exact remaining-steps labels (trains the critic where it is read)
+  CONTACT_W: "0.15"     # contact-consistency penalty weight for the *_contact eval conditions
+                        # (energy units per px of unsupported block motion; E17)
+  CONTACT_MOVE_EPS: ""  # override the block-motion threshold (px; default 15)
   SMOOTH: "0"           # actor randomized smoothing: M noisy plan copies averaged in the loss (0 = off)
   SMOOTH_STD: "0.1"     # plan noise std (z-scored action units)
   EXPAND_MODE: ""       # "pessimistic" = triangle-bound hinge on the refiner's imagined terminals
@@ -311,6 +314,25 @@ run: |
     fi
   fi
 
+  # ---- contact-consistency probe (E17): a linear latent->state decoder plus the
+  # expert-calibrated contact radius, needed by every *_contact condition.
+  PROBE_FILE=$AUGCD/counterstrike_probe.pt
+  STATE_FILE=$AUGCD/counterstrike_state.pt
+  case " $EVAL_CONDS " in
+    *_contact*)
+      if [ ! -f "$PROBE_FILE" ]; then
+        [ -f "$STATE_FILE" ] || pixi run tool tool=cache_state dataset="$H5" out="$STATE_FILE" max_episodes=$TRAIN_EPISODES
+        pixi run tool tool=fit_state_probe cache="$CD/counterstrike_fs1.pt" state_cache="$STATE_FILE" out="$PROBE_FILE"
+      fi
+      CONTACT_OVR="core.solver.contact.weight=$CONTACT_W core.solver.contact.probe=$PROBE_FILE"
+      CONTACT_VAL="core.value.contact.weight=$CONTACT_W core.value.contact.probe=$PROBE_FILE"
+      if [ -n "${CONTACT_MOVE_EPS:-}" ]; then
+        CONTACT_OVR="$CONTACT_OVR core.solver.contact.move_eps=$CONTACT_MOVE_EPS"
+        CONTACT_VAL="$CONTACT_VAL core.value.contact.move_eps=$CONTACT_MOVE_EPS"
+      fi
+      echo "[contact] probe $PROBE_FILE weight $CONTACT_W";;
+  esac
+
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
     echo "===== EVAL $label seed=$seed ====="
@@ -381,6 +403,14 @@ run: |
           run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
+        rlp_contact)  # E17: the refiner descends critic energy PLUS the contact penalty
+          run_eval rlp_contact $ES core/solver=lip \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt" $CONTACT_OVR;;
+        cem_latent_contact)
+          run_eval cem_latent_contact $ES core/solver=cem $CONTACT_VAL;;
+        cem_value_contact)
+          run_eval cem_value_contact $ES core/solver=cem core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_ac]" $CONTACT_VAL;;
         cem_l2w4)   # windowed latent-L2 control: 4-frame window vs the tiled goal, same input as the w4 critic
           if [ ! -d "$D/train_checkpoints/value_l2w4" ]; then
             pixi run train model=metric learner=l2 cache="$CD/counterstrike_fs1.pt" window_frames=4 window_lag=5 \
