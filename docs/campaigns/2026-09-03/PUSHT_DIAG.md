@@ -1090,3 +1090,55 @@ contact physics (E17). The unexplored levers are all on the world-model side:
 ensemble disagreement, a learned real-vs-imagined discriminator, and the
 replan frequency (RH=5 today; RH=1 corrects a fabricated push after 5
 primitive steps instead of 25, at 5x the decisions per episode).
+
+## E21 -- the "drift out of the goal" story is FALSE (2026-09-10)
+
+The E18 atlas decoded poses from latents, but the probe's median agent error
+(21 px) exceeds the success tolerance (20 px on the JOINT agent+block
+distance), so it could not decide whether a rollout entered the success set.
+The recorder now stores PushT's own `pos_agent` / `block_pose`
+(`src/rlp/environment/world.py`), and `scripts/pusht_diag/drift_analysis.py`
+evaluates the env's exact test at every step (job rlp-pusht-drift43, draw 43,
+frozen-teacher actor).
+
+**No failing rollout ever entered the success set** -- neither planner, on any
+of its 8 failures:
+
+| task | rlp min joint distance (step) | rlp final | angle at min | cem_latent min (outcome) |
+|---|---|---|---|---|
+| 0 | 21.7 @ 49 | 21.7 | 5.4 deg | 15.6 (ok) |
+| 3 | 53.0 @ 22 | 84.0 | 8.6 deg | 35.5 (fail) |
+| 8 | 20.1 @ 25 | 61.3 | **317.8 deg** | 17.6 (ok) |
+| 9 | 27.4 @ 49 | 27.4 | 0.2 deg | 15.7 (ok) |
+| 15 | 20.9 @ 24 | 24.6 | 6.7 deg | 17.1 (ok) |
+| 25 | 29.8 @ 31 | 38.2 | 7.9 deg | 18.0 (ok) |
+| 31 | 49.3 @ 49 | 49.3 | 20.6 deg | 54.8 (fail) |
+| 43 | 38.7 @ 24 | 50.4 | 0.7 deg | 22.3 (fail) |
+
+Corrections this forces:
+
+1. **The min-over-plan objective is NOT supported.** Only 3 of 8 failures grow
+   by >10 px after their minimum (3, 8, 43), and none of them was ever inside
+   the success set, so a "keep the best point" objective would have kept a
+   point that still fails. My E18 reading -- "passes through the goal and
+   drifts out" -- was an artifact of quoting decoded BLOCK-only error against
+   a joint agent+block criterion.
+2. **Four of the eight are near misses, not exploitation:** tasks 0, 9, 15
+   end at 21.7 / 27.4 / 20.9-24.6 px against a 20 px threshold, with angle
+   error under 7 deg. The samplers clear the same tasks at 15.6-17.1 px. The
+   gap is a few pixels of terminal precision, which is exactly the
+   agent-resolution deficit the resolution probe measured (inside-vs-near-miss
+   AUC 0.65 for the agent term vs 0.92 for latent L2).
+3. **Task 8 is an angle failure, not a position failure:** 317.8 deg of error
+   at its best position. `PushT.eval_state` compares RAW angles, so the block
+   was rotated the "long way" and the unwrapped difference can never satisfy
+   |dtheta| < 20 deg. Worth checking how many tasks across draws carry an
+   unwrappable angle target.
+4. Only tasks 3 and 31 are genuine gross failures (min 53 and 49 px), and
+   cem_latent also fails both.
+
+**Revised priority.** Terminal precision, not objective mismatch: 4 of 8
+failures sit within 8 px of the threshold. That points at the
+success-indicator head (a sharp boundary at the graded set) rather than the
+best-point objective, and it is consistent with everything the resolution
+probe already said.
