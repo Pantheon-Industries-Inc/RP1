@@ -704,3 +704,15 @@ sampler objective: 82.0 (76 / 88 / 82) vs 78.9**, with the refiner at 70.0
 (70 / 84 / 56), the same level as the frozen teacher (72.0). So the critic
 side is now beyond CEM's own objective; the refiner still converts ~70 of it.
 Replication of PESSONLY at seeds 1/2 launched.
+
+### Cube NEAR arm blocked (2026-09-09 evening)
+
+Both `rlp-cu-near03` attempts after the first preemption (jobs 21172
+recovery, 22026) died in setup: `git clone` of the private
+`Value_Metric_LeWM` repo fails with "Invalid username or token" -- the
+`GIT_TOKEN` fine-grained PAT that the unigamma yaml pulls from the SkyPilot
+secrets manager has expired/been revoked since the cube E01 job (which cloned
+fine ~24 h earlier). The PushT yaml does not clone that repo and is
+unaffected. Needs a refreshed GIT_TOKEN secret before any cube/unigamma job
+can run; the near-goal cube arm is otherwise ready (CACHE_VERSION
+cu-v2-n1s2-near03-v1, NEAR_FRAC=0.3).
