@@ -899,3 +899,13 @@ three eval arms (all within noise, draw-identical at weight 1.0). Any fix has
 to come from a signal that knows the WM is wrong -- disagreement between two
 world models, or a learned discriminator on real-vs-imagined transitions --
 not from hand-specified physics on one model's output.
+
+### W1NEAR_FRZ three seeds complete: rlp **72.0 / 70.7 / 67.3**, median 70.7 (base 68.0 / 64.0 / 64.7, median 64.7)
+
+Critic as a sampler objective 78.7 / 76.7 / 76.7 (latent L2 78.9). The best
+PushT recipe of the campaign: a frozen single-frame near-goal-oversampled TD
+teacher, no co-training, one K=8 pass. **+6.0 on the median, +3.9 on the
+mean** (72.0/70.7/67.3 = 70.0 vs 65.6), and every seed is at or above its base
+counterpart. Still 8-9 points short of latent-CEM (78.9) at 1/1000 the
+compute; the residual is E16's world-model exploitation, which E17 showed
+cannot be removed by contact geometry.
