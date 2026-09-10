@@ -1024,3 +1024,24 @@ sits 4 points below the untightened recipe, and the transport-heavy draw 44 is
 again the casualty (54 vs 60). The critic is unaffected (78.0 / 76.7 ~ the
 frozen teacher's 78.7), confirming the clip acts purely on the actor's reach.
 amax 1.6 (job 22216) pending.
+
+### E19 closed: the trust region is negative on PushT, both ways
+
+| clip | how applied | rlp (seed 0) | critic as CEM objective |
+|---|---|---|---|
+| 2.5 | trained (baseline) | **72.0** | 78.7 |
+| 2.0 | deploy rewrite | 70.7 | -- |
+| 1.6 | deploy rewrite | 68.0 | -- |
+| 1.6 | trained | 62.0 | 78.0 |
+| 1.2 | deploy rewrite | 66.7 | -- |
+| 1.0 | trained | 68.0 | 78.0 |
+| 0.8 | deploy rewrite | 57.3 | -- |
+
+Nothing beats the untightened recipe, trained or truncated, and the trained
+arms are not even monotone in the clip (1.6 -> 62.0 is worse than 1.0 -> 68.0,
+and ES picked step 2000 there on val 70, so it is partly a training-noise
+draw). The critic is identical across all of them (78.0-78.7), so the clip
+only ever touched the actor's reach. E19 closed negative: the fabricated
+pushes happen at ordinary action magnitudes, so a magnitude constraint removes
+the legitimate long transports (draw 44 falls hardest in every arm) before it
+removes the exploitation.
