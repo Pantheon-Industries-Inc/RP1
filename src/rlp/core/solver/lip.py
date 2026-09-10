@@ -217,7 +217,9 @@ class LIPSolver(CEMSolver):
 
         self.contact = ContactPenalty.from_config(contact, device=self.device)
         if self.contact is not None and self.graphed:
-            raise ValueError("graphed refinement captures the unconstrained energy; disable graphed with a contact penalty")
+            raise ValueError(
+                "graphed refinement captures the unconstrained energy; disable graphed with a contact penalty"
+            )
 
         raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw_checkpoint, dict):
