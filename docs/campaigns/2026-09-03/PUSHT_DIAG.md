@@ -838,3 +838,25 @@ constraint. `contact_radius` now defaults to null, which adopts the p99
 (134.9 px), so the term can only fire beyond a separation at which the data
 never moves the block. Reruns: `pusht-cal-w{015,100}-frz` and
 `pusht-cal-w050-base` (weights 0.15 / 1.0 / 0.5).
+
+### E17 with the calibrated radius (134.9 px): the rule is a no-op where it matters
+
+| actor / weight | rlp | rlp + contact | cem_latent | cem_latent + contact |
+|---|---|---|---|---|
+| frozen-teacher s0, w 1.0 | 72.7 | **72.7** (74/84/60, draw-for-draw identical) | 78.7 | 76.7 |
+| base config-B s0, w 0.5 | 68.0 | 67.3 | 77.3 | 77.3 |
+
+At weight 1.0 the refiner's per-draw results are IDENTICAL to the
+unconstrained ones, which can only mean the penalty never fired: the refiner's
+imagined rollouts keep the agent within 135 px of the block even while
+fabricating its motion. So the two radii bracket a hole rather than a
+solution -- 60 px taxes half of all legitimate expert pushes, 135 px catches
+nothing the refiner does. Separation alone may simply not discriminate,
+because the world model hallucinates at plausible separations.
+
+Rather than guess a third radius, `scripts/pusht_diag/contact_discriminator.py`
+(job rlp-pusht-contactdisc) measures it on the E16 recordings: per imagined
+step it labels hallucination as "the WM moved the block much more than reality
+did" and scores agent-block separation, push alignment (cos angle between the
+agent's displacement and the imagined block displacement), approach speed and
+agent step size, plus the catch-vs-tax curve of every gap threshold.
