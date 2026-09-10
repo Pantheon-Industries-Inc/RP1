@@ -371,8 +371,15 @@ if picks:
     fig.suptitle("solid = real path (decoded from real frames), dashed = imagined path (decoded from WM latents of the executed plan); blue agent, red block", fontsize=9)
     fig.tight_layout(); fig.savefig(OUT / "ivr_plans.png", dpi=100)
 
+CHUNK = 3000  # very long single lines get dropped from the job log; emit indexed chunks
 for name in ("ivr_summary.json", "ivr_distance_curves.png", "ivr_plans.png"):
     p = OUT / name
-    if p.exists():
-        print(f"[ivr-b64] {name} {base64.b64encode(p.read_bytes()).decode()}", flush=True)
+    if not p.exists():
+        log(f"MISSING output {name}")
+        continue
+    b = base64.b64encode(p.read_bytes()).decode()
+    parts = [b[i : i + CHUNK] for i in range(0, len(b), CHUNK)]
+    log(f"emitting {name}: {p.stat().st_size} bytes, {len(parts)} chunks")
+    for k, part in enumerate(parts):
+        print(f"[ivr-b64] {name} {k} {len(parts)} {part}", flush=True)
 log("DONE")
