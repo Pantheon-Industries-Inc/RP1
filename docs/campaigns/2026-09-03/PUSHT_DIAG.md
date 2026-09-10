@@ -794,3 +794,12 @@ L2's 78.9); seed 1 collapses. Median rlp 69.3 vs base median 64.7, but the
 variance is a disqualifier: the one-sided hinge has no scale anchor, so the
 recipe is not deployable as implemented. If revisited, pair the hinge with the
 data-anchored TD loss at low weight (`td_weight` 0.1-0.3) rather than 0.
+
+### NEARN5 seed 0 (near-goal 0.3 + teacher n-step 5): rlp 66 / 86 / 54 = 68.7, critics 73.3 / 73.3 (ES val 78). Neutral-to-positive at one seed; draw 43 hits 86.
+
+### E16 figures
+`docs/figures/pusht_diag/ivr_distance_curves_pessonly_s0_d42.png` (critic V,
+latent L2, decoded agent and block error vs plan step; imagined dashed vs real
+solid, successes green vs failures red, one row per planner) and
+`ivr_plans_pessonly_s0_d42.png` (arena: imagined vs real agent and block paths
+for the four mode-A tasks 2, 3, 24, 29 and two both-success tasks 0, 4).
