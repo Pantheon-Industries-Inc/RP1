@@ -774,3 +774,14 @@ plan-time penalty on imagined block displacement that no agent contact
 supports is computable from the imagined latents alone (no second WM, fully
 offline), differentiable, and usable both in the refiner's training loss and
 as an eval-time cost term.
+
+### W1NEAR_PESSONLY seed 1: rlp **12.0** (16/16/4), cem_value 45.3, cem_tdvalue 76.0 (ES val 17)
+
+The seed-0 result (critic 82.0, refiner 70.0) does NOT replicate: with the
+hinge as the critic's only signal the seed-1 critic collapses to 45.3 while
+its frozen teacher stays at 76.0. Expected in hindsight -- the hinge is
+one-sided (it can only raise V on planner-visited states) so nothing anchors
+the scale once the TD term is off; seed 0 was a lottery win. Pessimistic-only
+is therefore NOT a usable recipe as implemented; a two-sided version (hinge +
+the data-anchored TD loss at low weight) is the only form worth retrying, and
+the E16 finding says the priority is elsewhere. Seed 2 pending.
