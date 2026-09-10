@@ -21,6 +21,15 @@ case $ARM in
   # --- refiner anti-exploitation (2026-09-09), on the frozen single-frame near-goal teacher (W1NEAR_FRZ 72.0 / 70.7)
   W1NEAR_FRZ_SM)   WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0"; SMOOTH=4; SMOOTH_STD=0.1;;
   W1NEAR_FRZ_SM3)  WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0"; SMOOTH=4; SMOOTH_STD=0.3;;
+  # --- two-sided pessimism (2026-09-10): the one-sided hinge reached a critic at 82.0 but
+  #     collapsed at seed 1 (12.0) because nothing anchors the value SCALE once the TD term is
+  #     off; keep the data-anchored TD loss at low weight so the hinge only adds conservatism
+  W1NEAR_PESS2)  WF=1; NEAR=0.3; EXPAND_MODE=pessimistic; TD_WEIGHT=0.2;;
+  # --- capacity on the FROZEN teacher (2026-09-10): depth 3 was -26/-39 on PushT, but only ever
+  #     inside the co-trained stack where the co-critic eroded the teacher anyway. With the
+  #     teacher frozen its ranking quality transfers, and the resolution probe blames
+  #     fine-grained AGENT resolution near the goal -- plausibly a capacity limit.
+  W1NEAR_FRZ_D3) WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0 value.depth=3";;
   # --- pessimistic imagination for the co-critic (w1 near teacher, co-training kept)
   W1NEAR_PESS)     WF=1; NEAR=0.3; EXPAND_MODE=pessimistic;;
   W1NEAR_PESSONLY) WF=1; NEAR=0.3; EXPAND_MODE=pessimistic; TD_WEIGHT=0;;
