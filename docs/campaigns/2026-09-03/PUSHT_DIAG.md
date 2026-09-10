@@ -1014,3 +1014,13 @@ it just cannot get there, and it also loses the legitimate long pushes (draw
 finding that deploy-amax {1.6, 2.0} was null-to-negative, now on the new recipe
 and with the full curve. Trained-inside-the-clip arms (amax 1.6 and 1.0,
 jobs 22216 / 22218) are the honest test and still running.
+
+### E19b -- trained INSIDE a tighter clip, amax 1.0 (job 22218, seed 0)
+
+rlp 68 / 82 / 54 = **68.0** (frozen-teacher baseline at amax 2.5, seed 0:
+72.0), cem_value 78.0, cem_tdvalue 76.7, ES val 67. Training inside the clip
+recovers most of what deploy-time truncation to 1.2 lost (66.7) but still
+sits 4 points below the untightened recipe, and the transport-heavy draw 44 is
+again the casualty (54 vs 60). The critic is unaffected (78.0 / 76.7 ~ the
+frozen teacher's 78.7), confirming the clip acts purely on the actor's reach.
+amax 1.6 (job 22216) pending.
