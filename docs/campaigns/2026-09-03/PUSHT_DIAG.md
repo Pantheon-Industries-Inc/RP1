@@ -988,3 +988,29 @@ never leaves the data-like action neighbourhood does not. Combined with E17
 (contact geometry cannot detect the fabrication) the remaining levers are
 world-model disagreement, a learned real-vs-imagined discriminator, or simply
 executing fewer blocks per replan so a fabricated push is corrected sooner.
+
+## E19 -- trust region on the plan (tighter action clip), 2026-09-10
+
+Motivation: E18's mode-A failures are late-plan excursions (task 25 ends with
+the agent 83 px off, task 8 loses a nearly-placed block at the last replan),
+so a smaller per-block displacement should keep the imagined rollout inside
+the action magnitudes the WM models accurately.
+
+### Deploy-time clip rewrite on the frozen-teacher actor (job rlp-pusht-damax-frz, 3 draws)
+
+| deploy amax | d42 / d43 / d44 | mean |
+|---|---|---|
+| 2.5 (trained value) | 74 / 86 / 60 | **73.3** |
+| 2.0 | 74 / 84 / 54 | 70.7 |
+| 1.6 | 72 / 82 / 50 | 68.0 |
+| 1.2 | 68 / 76 / 56 | 66.7 |
+| 0.8 | 60 / 70 / 42 | 57.3 |
+
+Monotone degradation, -16 points from 2.5 to 0.8, and no local optimum in
+between. Truncating an actor trained at 2.5 removes reach without removing
+the exploitation: the refiner still walks toward the fabricated-push basin,
+it just cannot get there, and it also loses the legitimate long pushes (draw
+44, the transport-heavy draw, falls hardest: 60 -> 42). Reproduces the config-B
+finding that deploy-amax {1.6, 2.0} was null-to-negative, now on the new recipe
+and with the full curve. Trained-inside-the-clip arms (amax 1.6 and 1.0,
+jobs 22216 / 22218) are the honest test and still running.
