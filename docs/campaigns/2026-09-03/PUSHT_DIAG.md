@@ -785,3 +785,12 @@ the scale once the TD term is off; seed 0 was a lottery win. Pessimistic-only
 is therefore NOT a usable recipe as implemented; a two-sided version (hinge +
 the data-anchored TD loss at low weight) is the only form worth retrying, and
 the E16 finding says the priority is elsewhere. Seed 2 pending.
+
+### W1NEAR_PESSONLY seed 2: rlp 74 / 78 / 56 = **69.3**, cem_value **77.3**, cem_tdvalue 74.7 (ES val 73)
+
+Three seeds of pessimistic-only: rlp 70.0 / **12.0** / 69.3, cem_value 82.0 /
+45.3 / 77.3. Two seeds land at ~70 with a critic at 77-82 (at or above latent
+L2's 78.9); seed 1 collapses. Median rlp 69.3 vs base median 64.7, but the
+variance is a disqualifier: the one-sided hinge has no scale anchor, so the
+recipe is not deployable as implemented. If revisited, pair the hinge with the
+data-anchored TD loss at low weight (`td_weight` 0.1-0.3) rather than 0.
