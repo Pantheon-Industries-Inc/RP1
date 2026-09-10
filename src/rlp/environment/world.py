@@ -118,7 +118,10 @@ class World(_World):
                 raise KeyError(f"first-hit scoring needs {missing} in the evaluation state")
             logger.info(f"First-hit scoring on |{self.success_key} - goal| < {self.success_threshold}")
         record_path = self.record_path
-        record_cols = ("pixels", "action", "qpos", "qvel")
+        # pos_agent/block_pose are PushT's exact pose fields: recording them lets an
+        # analysis evaluate the env's own success test along a rollout instead of
+        # decoding poses from latents (a probe's error exceeds the 20 px tolerance)
+        record_cols = ("pixels", "action", "qpos", "qvel", "pos_agent", "block_pose")
         record_buffers: list[defaultdict[str, list[np.ndarray]]] | None = (
             [defaultdict(list) for _ in range(n)] if record_path else None
         )
