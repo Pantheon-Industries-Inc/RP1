@@ -716,3 +716,13 @@ fine ~24 h earlier). The PushT yaml does not clone that repo and is
 unaffected. Needs a refreshed GIT_TOKEN secret before any cube/unigamma job
 can run; the near-goal cube arm is otherwise ready (CACHE_VERSION
 cu-v2-n1s2-near03-v1, NEAR_FRAC=0.3).
+
+### Head-to-head on the pessimistic-only actor (draw 42, one actor, three planners, recordings kept)
+
+`rlp` 70.0 | `cem_value` (its own critic) 74.0 | `cem_latent` (WM cost) 78.0.
+So on this draw the ordering RLP < critic-CEM < latent-CEM persists even with
+the critic that beats latent L2 on the 3-draw mean (82.0 vs 78.9) -- draw 42
+is the draw where cem_value is weakest (76 in the training job, 74 here).
+Recordings for all three conditions are on
+`/newcheckpoints/.../pusht-ivr-pessonly-s0-20260909` for the imagined-vs-real
+analysis (`scripts/pusht_diag/imagined_vs_real.py`).
