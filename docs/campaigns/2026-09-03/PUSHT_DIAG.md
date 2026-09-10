@@ -860,3 +860,42 @@ step it labels hallucination as "the WM moved the block much more than reality
 did" and scores agent-block separation, push alignment (cos angle between the
 agent's displacement and the imagined block displacement), approach speed and
 agent step size, plus the catch-vs-tax curve of every gap threshold.
+
+### E17 closed: agent-block separation cannot discriminate (job rlp-pusht-contactdisc)
+
+908 imagined steps over three planners on draw 42: 43 hallucinated (the WM
+moved the block >20 px more than reality) and 274 legitimate (reality moved
+the block).
+
+| feature | AUC hallucinated vs legitimate | hallucinated p10/p50/p90 | legitimate p10/p50/p90 |
+|---|---|---|---|
+| agent-block gap (px) | 0.68 | 69 / 79 / 94 | 32 / 66 / 100 |
+| separation at step start | 0.67 | 73 / 85 / 111 | 39 / 74 / 118 |
+| push alignment (cos) | 0.48 | 0.5 / 0.8 / 1.0 | -0.2 / 0.8 / 1.0 |
+| approach toward block | 0.21 | 17 / 54 / 79 | -12 / 24 / 54 |
+| agent step size (px) | 0.64 | 30 / 61 / 88 | 26 / 47 / 78 |
+
+| gap threshold | hallucination caught | real pushes taxed |
+|---|---|---|
+| 60 px | 90.7 % | 58.0 % |
+| 80 px | 48.8 % | 29.6 % |
+| 100 px | 7.0 % | 10.2 % |
+| 135 px (p99 calibration) | 0.0 % | 1.5 % |
+
+**The distributions overlap almost completely.** Hallucinated steps sit at a
+median gap of 79 px, legitimate pushes at 66 px, and every threshold either
+taxes more real pushes than it catches hallucination (100 px and above, where
+the tax exceeds the catch) or is a blunt tax on both (60 px catches 91 % but
+taxes 58 %). Push alignment is at chance, 0.48: the WM hallucinates block
+motion *in the direction the agent is travelling*, which is exactly what makes
+it plausible. Approach is inverted (0.21), i.e. hallucination happens while
+the agent moves TOWARD the block -- near-miss pushes, as E16's arena plots
+showed.
+
+So the world model's error is not geometrically naive; it is a plausible
+near-miss physics error, and no threshold on decoded contact geometry
+separates it from real contact. E17 is closed negative, consistent with the
+three eval arms (all within noise, draw-identical at weight 1.0). Any fix has
+to come from a signal that knows the WM is wrong -- disagreement between two
+world models, or a learned discriminator on real-vs-imagined transitions --
+not from hand-specified physics on one model's output.
