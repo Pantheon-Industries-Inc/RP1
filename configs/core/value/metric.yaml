@@ -11,6 +11,6 @@ contact:
   probe: null        # tools/fit_state_probe artifact
   move_eps: 15.0     # block pose change treated as no motion (px)
   gap_eps: 0.0       # agent-block gap treated as possible contact (px)
-  contact_radius: 60.0
+  contact_radius: null   # null = the probe's expert-calibrated separation (p99)
   angle_scale: 40.0
   gap_norm: 50.0

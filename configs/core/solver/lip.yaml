@@ -39,6 +39,6 @@ contact:
   probe: null
   move_eps: 15.0
   gap_eps: 0.0
-  contact_radius: 60.0
+  contact_radius: null
   angle_scale: 40.0
   gap_norm: 50.0
