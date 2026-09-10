@@ -166,8 +166,12 @@ run: |
   # World model: official release weights, converted once to this stack's
   # vit_hf (transformers-5 q_proj) key naming. Durable on /checkpoints.
   WM=$D/lewm_pusht_official
-  if [ ! -f "$WM/weights.pt" ] && [ -n "${ACTOR_TAG:-}" ] && [ -f /checkpoints/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official/weights.pt ]; then
-    cp -r /checkpoints/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official "$WM"; echo "[wm] copied from $ACTOR_TAG"
+  if [ ! -f "$WM/weights.pt" ] && [ -n "${ACTOR_TAG:-}" ]; then
+    for ROOT in /checkpoints ${OUT_ROOT:-/checkpoints}; do
+      if [ -f $ROOT/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official/weights.pt ]; then
+        cp -r $ROOT/$PANTHEON_USER/$ACTOR_TAG/lewm_pusht_official "$WM"; echo "[wm] copied from $ROOT/$ACTOR_TAG"; break
+      fi
+    done
   fi
   if [ ! -f "$WM/weights.pt" ] || [ ! -f "$WM/config.json" ]; then
     mkdir -p "$WM"
@@ -260,6 +264,7 @@ run: |
 
   if [ -n "${ACTOR_TAG:-}" ] && [ ! -f "$D/train_checkpoints/planner.pt" ]; then
     SRC=/checkpoints/$PANTHEON_USER/$ACTOR_TAG/train_checkpoints
+    [ -f "$SRC/planner.pt" ] || SRC=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$ACTOR_TAG/train_checkpoints  # actors trained since 2026-09-08 live on the new volume
     [ -f "$SRC/planner.pt" ] || { echo "ACTOR_TAG has no planner.pt: $SRC" >&2; exit 1; }
     cp -r "$SRC" "$D/train_checkpoints"; echo "[actor-import] $ACTOR_TAG -> $D/train_checkpoints"
   fi
