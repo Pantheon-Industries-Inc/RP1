@@ -235,3 +235,124 @@ depth-2 baseline's occasional mild weak seed).
   tested bracket it with no qualitative change.
 - Executed-path collision dynamics use the real env; frames are rendered without
   the target dot, exactly as the existing tworoom_rlp figure pipeline does.
+
+---
+
+# h200 failure mode
+
+Follow-up probe: why does LIPv4 reportedly score ~0 at goal-offset 200 (budget
+400)? Leading hypothesis to test: with gamma 0.98 (n-step 50), V saturates
+beyond ~50–100 primitive steps, so the h200 start sits on a V plateau,
+grad_A V ≈ 0, refinement emits near-zero plans, the agent never moves.
+
+**Verdict: the saturation/no-move hypothesis is falsified on all four
+measurements, and healthy seeds are *perfect* at h200 under the faithful
+protocol replica — the ~0 cannot be a planner/critic capability failure. The
+only surviving mechanism is h200 *instance availability*: (start, start+200)
+pairs require ≥201-step episodes, which the TwoRoom data pipeline barely or
+never produces.**
+
+Setup: 20 fresh noisy-expert routes of 200 primitive steps (same policy as the
+dataset), goals taken at offsets {100,125,150,175,200} of the *same* routes
+(controlled sweep). Note the room bounds net task difficulty: even at offset
+200 the start→goal geodesic is 45–233 px (mean 138, i.e. ≤ ~47 primitive
+steps) because the noisy expert converges to its target and jitters there —
+offset raises the *label*, not the geometric distance, beyond ~offset 125.
+
+## 1. No V plateau (`h200_vcurve.png`)
+
+Healthy critics (PLDM s5, LeWM s5) on all free lattice cells × 6 h200 goals:
+V rises monotonically to ~46 at 330 px geodesic. Local slope: 0.21 V/px near
+the goal, 0.05–0.11 V/px at 150–330 px — a ~3× flattening but **never below
+the 0.02 V/px plateau criterion anywhere in the reachable room** (max in-room
+geodesic ~420 px). The curve is well described by discounted steps-to-go with
+tortuosity ~2.2 data-policy steps per geodesic step: V ≈ 50(1−0.98^(2.2·n_geo)).
+The theoretical plateau exists but sits *outside the room*.
+
+## 2. Gradients do not vanish with offset (`h200_grad_by_offset.png`)
+
+rms grad_A V at A=0, first replan, same 20 routes, offsets 25→200:
+
+| offset | 25 | 50 | 75 | 100 | 125 | 150 | 175 | 200 |
+|---|---|---|---|---|---|---|---|---|
+| PLDM s5 grad rms | 1.00 | 1.14 | 1.02 | 1.09 | 1.05 | 1.03 | 1.04 | 1.04 |
+| LeWM s5 grad rms | 0.80 | 0.76 | 0.60 | 0.59 | 0.59 | 0.51 | 0.57 | 0.57 |
+| PLDM s5 E0 | 11.0 | 18.5 | 22.7 | 24.4 | 25.9 | 26.4 | 26.3 | 26.3 |
+| PLDM s5 plan rms after K | 0.93 | 1.13 | 1.27 | 1.39 | 1.47 | 1.47 | 1.48 | 1.48 |
+
+h200 gradients equal h25 gradients (not orders of magnitude lower). E0
+saturates at ~26–28 beyond offset ~125 (the E input stops discriminating
+offsets — a real but non-fatal band effect), and the refined plans get *more*
+aggressive with offset, not weaker. There is no "no-move" family: plan rms
+after K=10 is 1.48 at h200.
+
+## 3–4. No collapse at any offset (`h200_offset_sweep.png`)
+
+Closed-loop (deploy protocol: replan every 25 primitive steps, A=0 init, K=10,
+budget 2× offset), 20 tasks per offset:
+
+- PLDM s5: **100% at every offset 100/125/150/175/200** (h200 = budget 400).
+- LeWM s5: **100% at h200**.
+- Budget controls at h200: budget 200 (unscaled) → **100%**; budget 100
+  (half of h100's budget) → **90%**.
+
+There are no failures to taxonomize: no-move fraction 0, wrong-way 0; every
+task trivially "enters the active range" because the start already is in it
+(E0 ≈ 26 is mid-range of a V scale that stays informative through 330 px).
+
+## Where the ~0 must come from
+
+- No h200 eval exists anywhere in this repo (all campaign YAMLs stop at
+  `goal_offset_steps=100 budget=200`) and W&B project RLP has **zero** runs
+  with `evaluation.goal_offset_steps=200` — the ~0 has no logged provenance
+  to inspect.
+- The eval requires `episode_len − goal_offset − 1 ≥ 0` valid starts:
+  h200 needs **≥201-step episodes**. The TwoRoom collection tool
+  (`configs/tools/collect_tworoom_mixed.yaml`) caps `max_steps: 100`; the
+  locally cached pools confirm the hard cap (tworoom_mixed.lance: 600 episodes,
+  len min/med/max = 1/100/100 → **0 valid h200 starts, 0 valid h100 starts**).
+  The shipped h100 numbers ran on the authors' `tworoom.h5`, whose episodes
+  must be ≥101 steps; whether *any* reach 201 is doubtful for a task whose
+  expert terminates at the target and whose collection caps episode length.
+- With zero valid starts the eval raises
+  `ValueError("Need 50 valid evaluation starts; found 0")` — a crashed cell
+  that downstream aggregation can silently read as ~0. With a handful of valid
+  starts, the 50 instances collapse onto a degenerate residue of marathon
+  episodes (`replace=False` choice would also raise for <50 starts).
+
+**Recommendation:** before attributing any h200 number to the planner, pull the
+eval log line `Found N valid evaluation starting points` and the episode-length
+histogram of the eval h5; if N < 50 the cell is an availability artifact, not a
+planning result. If a genuine ≥201-step eval pool is wanted, recollect with
+`max_steps ≥ 250` (and non-terminating or re-targeted expert episodes).
+
+## h200 probe artifacts
+
+- Figures: `h200_vcurve.png`, `h200_grad_by_offset.png`, `h200_offset_sweep.png` (this dir).
+- Scripts/intermediates (session scratchpad `tworoom_diag/`): `s9_h200tasks.py`,
+  `s10_vcurve.py`, `s11_gradbyoffset.py`, `s12_sweepcl.py`, `f6_h200.py`,
+  `f6c_sweep.py`; data under `data/tasks_sweep.npz`, `data/vcurve.pkl`,
+  `data/gradbyoffset.pkl`, `data/sweep_*_off*.pkl`.
+
+## "Full-episode / single-shot 0%" note
+
+A recollection to check was "at full episodes we get 0% success". TwoRoom
+episodes are exactly 100 steps, so a goal at episode end IS h100 — where the
+closed-loop protocol above scores 90–100% on healthy seeds. The 0% comes from
+the *no-replan* protocol, not the horizon. Single-shot control (ONE refined
+25-step plan executed open-loop, healthy seeds, same 26 h100 routes):
+
+| protocol | PLDM s5 | LeWM s5 | mean covered vs goal-dist |
+|---|---|---|---|
+| h100, closed-loop (replan every 25) | 96% | 100% | — |
+| h100, single-shot, hold at plan end | **8%** | **12%** | 52 / 77 px covered vs 125 px needed |
+| h100, single-shot, then zero-actions | 8% | 15% | 59 / 77 px vs 125 px |
+| h25, single-shot (plan-horizon-matched) | **85%** | **100%** | 35 / 38 px vs 45 px |
+
+The single 25-step plan is coverage-bound at h100 (mean end-distance 92 / 60 px,
+never near the 16 px tolerance except when the draw is short) and the
+hold-vs-zero tail makes no difference. At the plan-horizon-matched h25 the same
+single-shot protocol is 85–100% — the planner is fine; one plan simply cannot
+cover four plan-horizons. Summary of the three regimes: goal-at-episode-end
+WITH replanning = 90–100%; single-shot no-replan = ~10% (coverage-bound,
+expected); h200 = no valid (start, start+200) pairs exist in 100-step episodes.
