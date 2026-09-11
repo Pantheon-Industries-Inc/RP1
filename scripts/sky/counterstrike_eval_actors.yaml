@@ -1,21 +1,18 @@
 # Counterstrike actor re-evaluation — eval only, no training.
 #
-#   sky jobs launch scripts/sky/counterstrike_eval_actors.yaml -n cs-r8 \
-#       --priority p2 --env ACTOR_TAGS="cs-swp-20260815-cs-a16-m05-l3e4 ..." \
-#       --env RESTARTS=8 --env EXPERIMENT_TAG=cs-r8-20260816 -y
+#   sky jobs launch scripts/sky/counterstrike_eval_actors.yaml -n cs-eval \
+#       --priority p1 --env ACTOR_TAGS="cs-swp-20260815-cs-a16-m05-l3e4 ..." \
+#       --env EXPERIMENT_TAG=cs-eval-20260911 -y
 #
 # Loads trained planner.pt checkpoints from the sweep cells' durable dirs
 # (/checkpoints/<user>/<tag>/train_checkpoints/planner.pt) and evaluates the
-# LIP solver with R noisy restarts + argmin-V selection — the 2026-07 PushT
-# campaign's inference fix (one-shot 66.7 -> +8 restarts 84.7, ~= its TD+CEM
-# teacher at ~70x less compute than CEM). Serialized evals on one node.
+# LIP solver under the shipped protocol: one K=8 refinement pass per decision,
+# no deploy-time restarts (2026-09-04 directive). Serialized evals on one node.
 
 name: cs-eval-actors
 
 envs:
   ACTOR_TAGS: ""           # space-separated EXPERIMENT_TAGs holding train_checkpoints/planner.pt
-  RESTARTS: "8"            # space-separated restart counts, all evaluated serially
-  RESTART_NOISE: "0.5"
   EVAL_SEEDS: "50 51"      # selection by default; switch to "42 43 44" for the report pass
   NUM_EPISODES: "50"
   PANTHEON_USER: armin@pantheon.inc
@@ -74,19 +71,16 @@ run: |
     if [ ! -f "$ACTOR" ]; then
       echo "SKIP $TAG: no planner.pt at $ACTOR"; continue
     fi
-    for R in $RESTARTS; do
-      for ES in $EVAL_SEEDS; do
-        echo "===== EVAL $TAG restarts=$R noise=$RESTART_NOISE seed=$ES ====="
-        pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
-          core/solver=lip core.solver.actor_path="$ACTOR" \
-          core.solver.restarts=$R core.solver.restart_noise=$RESTART_NOISE \
-          runtime.seed=$ES evaluation.num_episodes=$NUM_EPISODES
-        RUN=$(ls -dt logs/*/* | head -1)
-        OUT="$D/results_${TAG}_r${R}_n${RESTART_NOISE}_s${ES}.txt"
-        find "$RUN" -name '*results*.txt' -exec cp {} "$OUT" \;
-        echo "----- RESULT $TAG r$R n$RESTART_NOISE seed=$ES -----"
-        cat "$OUT"
-      done
+    for ES in $EVAL_SEEDS; do
+      echo "===== EVAL $TAG seed=$ES ====="
+      pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+        core/solver=lip core.solver.actor_path="$ACTOR" \
+        runtime.seed=$ES evaluation.num_episodes=$NUM_EPISODES
+      RUN=$(ls -dt logs/*/* | head -1)
+      OUT="$D/results_${TAG}_s${ES}.txt"
+      find "$RUN" -name '*results*.txt' -exec cp {} "$OUT" \;
+      echo "----- RESULT $TAG seed=$ES -----"
+      cat "$OUT"
     done
   done
   echo "CS_EVAL_ACTORS_DONE tag=$EXPERIMENT_TAG"

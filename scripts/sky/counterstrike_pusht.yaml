@@ -40,8 +40,6 @@ envs:
   ITERS: ""             # planner.iterations (refinement steps K; empty = the
                         # LIPv4 default 8). Trained unrolled — eval reads K
                         # from the checkpoint, so no eval-side change.
-  BC: ""                # planner.bc_weight (empty = trainer default 0);
-                        # BC anchor toward the expert dataset's actions
   REPLAY: ""            # planner.replay_prob override (empty = recipe 0.5)
   STEPS: ""             # planner.steps override (empty = recipe 6000)
   VALUE_GAMMA: "1.0"
@@ -67,37 +65,9 @@ envs:
   TRAIN_OVERRIDES: ""   # extra hydra overrides for the model=rlp train call,
                         # e.g. "planner.ac_weight=0.2 core.planner.transformer_layers=3
                         # core.value.depth=3" (deepcap + anti-constancy)
-  AGENT_AUG: "0"        # critic counterfactual augmentation (2026-09-08, PUSHT_DIAG E9):
-                        # fraction of critic TD queries re-rendered with the agent
-                        # displaced, label d + AUG_TRANSIT * walk-back steps. 0 = off.
-                        # Builds <AUG_CACHE>/counterstrike_fs1_agentaug.pt once (~1 h).
-  AUG_TRANSIT: "1.0"    # transit-cost scale on augmented labels (0 = label-preserving)
-  AUG_CACHE_TAG: ""     # tag under $OUT_ROOT whose caches/ holds the aug cache
-                        # (default: own tag; seeds 1/2 point at the seed-0 tag)
-  TOL_RELABEL: "0"      # 1 = success-tolerance relabeling of the TD teacher's and the
-                        # co-critic's MC targets (zero set = the env's success set;
-                        # PushT E12, 2026-09-09). Builds a row-aligned state cache
-                        # (seconds) next to the aug cache on the writable volume.
   NEAR_FRAC: "0"        # fraction of in-episode hindsight goals drawn 1..NEAR_MAX steps
                         # ahead, teacher + co-critic (0 = balanced buckets only)
   NEAR_MAX: "3"
-  EXPECTILE_NEAR: ""    # distance-dependent expectile: value for targets below NEAR_STEPS
-                        # (e.g. 0.5), teacher + co-critic; empty = off
-  NEAR_STEPS: "3"
-  NEAR_WEIGHT: "0"      # near-goal loss weighting exponent (1+d)^-w, teacher + co-critic
-  ACTOR_NEAR_FRAC: "0"  # actor-side near-goal problems: fraction of goals 1..ACTOR_NEAR_MAX blocks ahead
-  ACTOR_NEAR_MAX: "2"
-  GOAL_TILE: "0"        # 1 = window critics train on the goal FRAME tiled to the window
-                        # (deploy-matched) instead of the goal's own motion window
-  IMAG_MC: "0"          # co-critic imagination-MC weight: WM rollouts along the data's actions
-                        # with exact remaining-steps labels (trains the critic where it is read)
-  CONTACT_W: "0.15"     # contact-consistency penalty weight for the *_contact eval conditions
-                        # (energy units per px of unsupported block motion; E17)
-  CONTACT_MOVE_EPS: ""  # override the block-motion threshold (px; default 15)
-  SMOOTH: "0"           # actor randomized smoothing: M noisy plan copies averaged in the loss (0 = off)
-  SMOOTH_STD: "0.1"     # plan noise std (z-scored action units)
-  EXPAND_MODE: ""       # "pessimistic" = triangle-bound hinge on the refiner's imagined terminals
-  TD_WEIGHT: ""         # co-critic TD loss weight override (0 = imagination terms only)
   DEPLOY_AMAX: ""       # space-separated deploy clips: each value gets a
                         # rewritten-checkpoint eval (top-level ck['amax'];
                         # train_args untouched) alongside the native rlp eval
@@ -159,9 +129,6 @@ run: |
   D=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$EXPERIMENT_TAG
   mkdir -p "$D" && chmod 777 "$D"
   CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
-  # agent-aug cache lives on the writable volume (the legacy PVC is quota-exhausted)
-  AUGCD=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/${AUG_CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$AUGCD"
-  AUG_FILE=$AUGCD/counterstrike_fs1_agentaug.pt
 
   pixi run tool tool=fetch_dataset dataset=pusht
   H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
@@ -191,8 +158,7 @@ run: |
   if [ "$WAIT_CACHE_MIN" != 0 ] && [ -n "$CACHE_TAG" ]; then
     WAITED=0
     until [ -f "$CD/counterstrike_fs1.pt" ] && [ -f "$CD/counterstrike_fs5.pt" ] \
-        && [ -f "$CD/counterstrike_actions.h5" ] \
-        && { [ "${AGENT_AUG:-0}" = 0 ] || [ -z "${AUG_CACHE_TAG:-}" ] || [ -f "$AUG_FILE" ]; }; do
+        && [ -f "$CD/counterstrike_actions.h5" ]; do
       if [ "$WAITED" -ge "$WAIT_CACHE_MIN" ]; then
         echo "cache wait timed out after ${WAITED}m; building locally"
         break
@@ -207,38 +173,9 @@ run: |
   [ -f "$CD/counterstrike_fs5.pt" ] && SKIP="$SKIP,subsample"
   [ -f "$CD/counterstrike_actions.h5" ] && SKIP="$SKIP,actions"
   AUG_EXTRA=""
-  if [ "${AGENT_AUG:-0}" != 0 ]; then
-    [ -f "$AUG_FILE" ] && SKIP="$SKIP,cache_aug"
-    AUG_EXTRA="agent_aug.p=$AGENT_AUG agent_aug.transit_scale=${AUG_TRANSIT:-1.0} agent_aug.cache=$AUG_FILE agent_aug.workers=16"
-  fi
-  STATE_FILE=$AUGCD/counterstrike_state.pt
-  if [ "${TOL_RELABEL:-0}" = 1 ]; then
-    [ -f "$STATE_FILE" ] && SKIP="$SKIP,state"
-    AUG_EXTRA="$AUG_EXTRA value.tol_relabel=true planner.tol_relabel=true tol_state_cache=$STATE_FILE"
-  fi
   if [ "${NEAR_FRAC:-0}" != 0 ]; then
-    AUG_EXTRA="$AUG_EXTRA value.near_frac=$NEAR_FRAC planner.near_frac=$NEAR_FRAC value.near_max=${NEAR_MAX:-3} planner.near_max=${NEAR_MAX:-3}"
+    AUG_EXTRA="value.near_frac=$NEAR_FRAC planner.near_frac=$NEAR_FRAC value.near_max=${NEAR_MAX:-3} planner.near_max=${NEAR_MAX:-3}"
   fi
-  if [ -n "${EXPECTILE_NEAR:-}" ]; then
-    AUG_EXTRA="$AUG_EXTRA value.expectile_near=$EXPECTILE_NEAR planner.expectile_near=$EXPECTILE_NEAR value.near_steps=${NEAR_STEPS:-3} planner.near_steps=${NEAR_STEPS:-3}"
-  fi
-  if [ "${NEAR_WEIGHT:-0}" != 0 ]; then
-    AUG_EXTRA="$AUG_EXTRA value.near_weight=$NEAR_WEIGHT planner.near_weight=$NEAR_WEIGHT"
-  fi
-  if [ "${ACTOR_NEAR_FRAC:-0}" != 0 ]; then
-    AUG_EXTRA="$AUG_EXTRA planner.actor_near_frac=$ACTOR_NEAR_FRAC planner.actor_near_max=${ACTOR_NEAR_MAX:-2}"
-  fi
-  if [ "${GOAL_TILE:-0}" = 1 ]; then
-    AUG_EXTRA="$AUG_EXTRA value.goal_tile=true planner.goal_tile=true"
-  fi
-  if [ "${IMAG_MC:-0}" != 0 ]; then
-    AUG_EXTRA="$AUG_EXTRA planner.imag_mc_weight=$IMAG_MC"
-  fi
-  if [ "${SMOOTH:-0}" != 0 ]; then
-    AUG_EXTRA="$AUG_EXTRA planner.smooth_samples=$SMOOTH planner.smooth_action_std=${SMOOTH_STD:-0.1}"
-  fi
-  [ -n "${EXPAND_MODE:-}" ] && AUG_EXTRA="$AUG_EXTRA planner.expand_mode=$EXPAND_MODE"
-  [ -n "${TD_WEIGHT:-}" ] && AUG_EXTRA="$AUG_EXTRA planner.td_weight=$TD_WEIGHT"
   SKIP=$(echo "$SKIP" | sed 's/^,//')
 
   TRAIN_EXTRA=""
@@ -254,7 +191,6 @@ run: |
   ACTOR_LR_FINAL=$(awk -v lr="$ACTOR_LR" 'BEGIN { printf "%.0e", lr / 10 }')
   ITER_EXTRA=""
   [ -n "$ITERS" ] && ITER_EXTRA="planner.iterations=$ITERS"
-  [ -n "$BC" ] && ITER_EXTRA="$ITER_EXTRA planner.bc_weight=$BC"
   [ -n "$REPLAY" ] && ITER_EXTRA="$ITER_EXTRA planner.replay_prob=$REPLAY"
   [ -n "$STEPS" ] && ITER_EXTRA="$ITER_EXTRA planner.steps=$STEPS"
   [ -n "$PLANNER_GAMMA" ] && ITER_EXTRA="$ITER_EXTRA planner.gamma=$PLANNER_GAMMA"
@@ -313,25 +249,6 @@ run: |
       echo "[ckpt-select] final wins (val $BESTV)"
     fi
   fi
-
-  # ---- contact-consistency probe (E17): a linear latent->state decoder plus the
-  # expert-calibrated contact radius, needed by every *_contact condition.
-  PROBE_FILE=$AUGCD/counterstrike_probe.pt
-  STATE_FILE=$AUGCD/counterstrike_state.pt
-  case " $EVAL_CONDS " in
-    *_contact*)
-      if [ ! -f "$PROBE_FILE" ]; then
-        [ -f "$STATE_FILE" ] || pixi run tool tool=cache_state dataset="$H5" out="$STATE_FILE" max_episodes=$TRAIN_EPISODES
-        pixi run tool tool=fit_state_probe cache="$CD/counterstrike_fs1.pt" state_cache="$STATE_FILE" out="$PROBE_FILE"
-      fi
-      CONTACT_OVR="core.solver.contact.weight=$CONTACT_W core.solver.contact.probe=$PROBE_FILE"
-      CONTACT_VAL="core.value.contact.weight=$CONTACT_W core.value.contact.probe=$PROBE_FILE"
-      if [ -n "${CONTACT_MOVE_EPS:-}" ]; then
-        CONTACT_OVR="$CONTACT_OVR core.solver.contact.move_eps=$CONTACT_MOVE_EPS"
-        CONTACT_VAL="$CONTACT_VAL core.value.contact.move_eps=$CONTACT_MOVE_EPS"
-      fi
-      echo "[contact] probe $PROBE_FILE weight $CONTACT_W";;
-  esac
 
   run_eval () {  # run_eval <label> <seed> <overrides...>
     local label=$1 seed=$2; shift 2
@@ -403,14 +320,6 @@ run: |
           run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
-        rlp_contact)  # E17: the refiner descends critic energy PLUS the contact penalty
-          run_eval rlp_contact $ES core/solver=lip \
-            core.solver.actor_path="$D/train_checkpoints/planner.pt" $CONTACT_OVR;;
-        cem_latent_contact)
-          run_eval cem_latent_contact $ES core/solver=cem $CONTACT_VAL;;
-        cem_value_contact)
-          run_eval cem_value_contact $ES core/solver=cem core/value=metric core.value.mode=replacement \
-            "core.value.checkpoints=[$D/train_checkpoints/value_ac]" $CONTACT_VAL;;
         cem_l2w4)   # windowed latent-L2 control: 4-frame window vs the tiled goal, same input as the w4 critic
           if [ ! -d "$D/train_checkpoints/value_l2w4" ]; then
             pixi run train model=metric learner=l2 cache="$CD/counterstrike_fs1.pt" window_frames=4 window_lag=5 \
