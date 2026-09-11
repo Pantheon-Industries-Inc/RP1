@@ -1235,3 +1235,51 @@ what this probe says would help) was neutral. So a measurably better-resolved
 critic does not transfer to the planner -- the third independent confirmation,
 after E16 and E18, that critic quality is not the binding constraint. Cost of
 closing this line: ~35 GPU-minutes and no training arms.
+
+## E24 -- RLP-on-latent: the deficit is OPTIMIZER-generic, not objective-specific (2026-09-11)
+
+The control that separates "the critic is a bad objective" from "the refiner is
+a bad optimizer". Arm LATENT (`value.learner=l2`, `planner.freeze_critic_frac=0`,
+w1): the deployed critic IS the single-frame latent distance, so the refiner
+descends **exactly the objective CEM scores 79.3 with**. Tags
+`pusht-latent-s{0,1,2}-20260911`, held-out draws 42/43/44.
+
+| seed | rlp | cem_latent | cem_value (= the deployed critic) |
+|---|---|---|---|
+| 0 | 66.0 / 78.0 / 54.0 = **66.0** | 78.0 / 84.0 / 76.0 = 79.3 | 79.3 |
+| 1 | 68.0 / 80.0 / 54.0 = **67.3** | 79.3 | 79.3 |
+| 2 | 64.0 / 72.0 / 50.0 = **62.0** | 79.3 | 79.3 |
+| **median** | **66.0** | **79.3** | **79.3** |
+
+`cem_value` reproduces `cem_latent` to the digit on every draw, which is the
+wiring check: with `learner=l2` the deployed critic and the latent cost are the
+same function.
+
+**Result: 66.0 against 79.3 on the identical objective, the identical world
+model and the identical draws -- a 13.3-point optimizer gap.** Handing the
+refiner the best objective the campaign knows does not help; it is *worse* than
+the TD-critic refiner (W1NEAR_FRZ 70.7) and no better than the config-B base
+(64.7).
+
+The inversion is the interesting part. Measured as a **ranking** objective the
+latent distance is the best available (CEM 79.3 vs 76.7 on the co-trained
+critic) and the least hallucinated (E16: 5 px imagination gap vs 31 and 51).
+Measured as a **descent** objective for the learned refiner it is the worst
+tried: the refiner's gap to its own sampler widens from 6.0 (critic) to 13.3
+(latent). A smooth, sharp cost is exactly what K=8 steps of learned gradient
+descent through a differentiable world model can exploit; CEM cannot reach
+those minima because its candidates come from a fixed Gaussian.
+
+**What this closes.** Every critic-side arm in this campaign -- E10
+augmentation, E12 expectile, E13/E14 relabeling and granularity, E17 contact,
+E20 pessimism and capacity, E23 resolution -- was optimising a component that
+is not the binding constraint. The binding constraint is the refiner's training
+objective: `loss = e_path[-1] + mean_weight * mean(e_path)` over WM-imagined
+rollouts, with no term asking whether the imagined outcome is achievable. An
+action sequence that fools the world model is a global optimum of that loss.
+
+**What remains.** Only levers that change the optimizer or the model it
+descends through: Dyna on PushT (fine-tune the WM where the deployed planner
+actually goes -- never run, and the mechanism this result points at),
+descent/selection decoupling (score the K+1 iterates with a function the
+refiner did not descend), and variance reduction on the seed lottery.
