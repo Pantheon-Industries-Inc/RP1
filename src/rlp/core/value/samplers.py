@@ -42,7 +42,6 @@ class TransitionBatch(TypedDict):
 
 class NStepBatch(TypedDict):
     z_t: torch.Tensor
-    z_t1: torch.Tensor
     z_tn: torch.Tensor
     z_g: torch.Tensor
     n_eff: torch.Tensor
@@ -53,9 +52,6 @@ class NStepBatch(TypedDict):
     t_idx: torch.Tensor
     tn_idx: torch.Tensor
     g_idx: torch.Tensor
-    # row at t+1: the far end of the sub-step segment starting at t, so a
-    # learner can place a query BETWEEN two logged frames (see `subgrid`).
-    t1_idx: torch.Tensor
 
 
 class FutureBatch(TypedDict):
@@ -234,7 +230,6 @@ class NStepGoalSampler(_BaseSampler):
 
     def sample(self, batch_size: int) -> NStepBatch:
         t_idx = np.empty(batch_size, np.int64)
-        t1_idx = np.empty(batch_size, np.int64)
         tn_idx = np.empty(batch_size, np.int64)
         g_idx = np.empty(batch_size, np.int64)
         n_eff = np.empty(batch_size, np.float32)
@@ -246,7 +241,7 @@ class NStepGoalSampler(_BaseSampler):
             L = len(rows)
             t = int(self.rng.integers(0, L - 1))
             ne = min(self.n, L - 1 - t)
-            t_idx[b], t1_idx[b], tn_idx[b], n_eff[b] = rows[t], rows[t + 1], rows[t + ne], ne
+            t_idx[b], tn_idx[b], n_eff[b] = rows[t], rows[t + ne], ne
             if self.rng.random() < self.p_cross:
                 g_idx[b] = int(self.rng.integers(0, self.n_total))  # cross-episode goal
             else:
@@ -262,7 +257,6 @@ class NStepGoalSampler(_BaseSampler):
                     reached[b], dist[b] = 1.0, float(delta)
         return {
             "z_t": self.z[t_idx],
-            "z_t1": self.z[t1_idx],
             "z_tn": self.z[tn_idx],
             "z_g": self.z[g_idx],
             "n_eff": torch.from_numpy(n_eff),
@@ -271,7 +265,6 @@ class NStepGoalSampler(_BaseSampler):
             "t_idx": torch.from_numpy(t_idx),
             "tn_idx": torch.from_numpy(tn_idx),
             "g_idx": torch.from_numpy(g_idx),
-            "t1_idx": torch.from_numpy(t1_idx),
         }
 
 

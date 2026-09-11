@@ -1177,3 +1177,61 @@ mode-A five; 31 and 43 were not in that set, and they show the complementary
 defect -- V is wrong on states the planner actually reaches. Task 3 is the
 one clean WM failure, with the imagined terminal rated 9.2 better than
 reality, on a task whose block only needs to move 9 px.
+
+## E23 -- the terminal-precision hypothesis is FALSE; near-goal flatness is the expectile (2026-09-11)
+
+E22 left four of five planner failures at 20.1-29.8 px against a 20 px
+threshold with V in [1.4, 4.4], and the reading was that V regresses INTEGER
+steps-to-go, so it is a staircase and grad V ~ 0 across the final step -- a
+gradient refiner would have nothing to descend exactly where these episodes
+miss. Two candidate fixes followed from that: a success-indicator head
+(rejected on inspection -- a step function is flat on both sides of the
+boundary) and a continuous target.
+
+The continuous target was built and measured instead of assumed.
+**Sub-step query interpolation**: a fraction of TD queries placed alpha of the
+way from frame t to frame t+1, every remaining-distance term reduced by the
+same alpha. A unit check on a cache whose latents encode the step index
+confirms label == true remaining distance to 2e-06, so what follows is a fact
+about the data, not an implementation slip.
+
+`scripts/pusht_diag/value_resolution_probe.py` walks a query from frame t to
+t+1 in 9 sub-steps and reports how far V moves (one step should be ~1.0),
+how monotone it is, and how separated consecutive frames are. Four TD fits per
+cache, 2000 steps, n-step 1, gamma 0.98, near_frac 0.3.
+
+| cache | ||z_t - z_t+1|| / ||z_t - z_goal|| | tau | subgrid | drop across one step | monotone |
+|---|---|---|---|---|---|
+| PushT (job rlp-pusht-vres) | 1.284 / 2.207 = **0.68** | 0.03 | 0.0 | **+0.429** | **98%** |
+| PushT | | 0.03 | 0.5 | +0.126 | 96% |
+| PushT | | 0.5 | 0.0 | **+0.864** | 97% |
+| PushT | | 0.5 | 0.5 | +0.667 | 98% |
+| TwoRoom (local) | 7.395 / 8.443 = 1.03 | 0.03 | 0.0 | +0.444 | 66% |
+| TwoRoom | | 0.03 | 0.5 | +0.258 | 62% |
+| TwoRoom | | 0.5 | 0.0 | +0.870 | 68% |
+| TwoRoom | | 0.5 | 0.5 | +0.748 | 65% |
+
+Three readings, all against the hypothesis:
+
+1. **V is not a staircase.** On PushT it is **98% monotone** inside a single
+   primitive step. There is no gradient starvation from integer targets.
+2. **Consecutive frames are well separated** (PushT ratio 0.68: one primitive
+   step is two thirds of the whole 1-3 step goal distance), so the sub-step
+   information was always present in the latent. The premise that the critic
+   *cannot* resolve within a step is wrong.
+3. **What compresses V near the goal is the OPTIMISTIC EXPECTILE.** tau 0.03
+   recovers 43% of a step where tau 0.5 recovers 86% -- a clean 2x, and the
+   same 2x on both environments.
+
+And the proposed fix is actively harmful: subgrid cuts the per-step drop 3.4x
+at tau 0.03 (0.429 -> 0.126) and 1.3x at tau 0.5, biasing V down rather than
+adding resolution. Deleted, with its knob, sampler fields and plumbing; the
+probe stays.
+
+**Why this does not become an expectile arm.** The campaign already measured
+that direction: E01 (teacher + co-critic expectile 0.1) scored 56.0 vs base
+64.7, and EXPN (neutral expectile inside the last 3 steps, the arm closest to
+what this probe says would help) was neutral. So a measurably better-resolved
+critic does not transfer to the planner -- the third independent confirmation,
+after E16 and E18, that critic quality is not the binding constraint. Cost of
+closing this line: ~35 GPU-minutes and no training arms.

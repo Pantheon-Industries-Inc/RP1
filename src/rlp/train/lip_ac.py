@@ -203,12 +203,8 @@ def _run(cfg: DictConfig) -> None:
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
     td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
     td_near_max = int(a.get("near_max", 3) or 3)
-    td_subgrid = float(a.get("subgrid", 0.0) or 0.0)
-    sub_rng = np.random.default_rng(a.seed + 13)
     if td_near_frac > 0:
         logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
-    if td_subgrid > 0:
-        logger.info(f"LIP-AC co-critic sub-step queries: frac={td_subgrid} between frames t and t+1")
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
@@ -327,24 +323,15 @@ def _run(cfg: DictConfig) -> None:
             # window critics: every query is an m-frame stack rebuilt from the
             # dense cache; the goal side is the sampled goal frame's own window
             z_t = _window_rows(b["t_idx"]).to(dev)
-            z_t1 = _window_rows(b["t1_idx"]).to(dev) if td_subgrid > 0 else None
             z_tn = _window_rows(b["tn_idx"]).to(dev)
             z_g = _window_rows(b["g_idx"]).to(dev)
         else:
             z_t, z_tn, z_g = b["z_t"].to(dev), b["z_tn"].to(dev), b["z_g"].to(dev)
-            z_t1 = b["z_t1"].to(dev) if td_subgrid > 0 else None
         ne, reached, dist = (
             b["n_eff"].to(dev),
             b["reached"].to(dev),
             b["dist"].to(dev),
         )
-        if z_t1 is not None:
-            # sub-step queries: alpha of the way from frame t to t+1 (the whole
-            # window shifts), every remaining-distance term shrinks by alpha
-            take = torch.from_numpy(sub_rng.random(a.td_batch) < td_subgrid).to(dev)
-            alpha = torch.from_numpy(sub_rng.random(a.td_batch)).float().to(dev) * take
-            z_t = z_t + alpha.unsqueeze(-1) * (z_t1 - z_t)
-            ne, dist = ne - alpha, (dist - alpha).clamp_min(0.0)
         with torch.no_grad():
             d_next = teacher_fn(z_tn, z_g)
             if a.gamma >= 1.0:
