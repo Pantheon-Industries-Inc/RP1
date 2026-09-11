@@ -80,7 +80,7 @@ class MetricCost(nn.Module):
         predicted = info_dict["predicted_emb"]
         b, c = predicted.shape[0], predicted.shape[1]
         flat = predicted.reshape(b * c, predicted.shape[-2], predicted.shape[-1])
-        return self.contact(flat.float()).view(b, c)
+        return cast(torch.Tensor, self.contact(flat.float())).view(b, c)
 
     def set_align_remaining(self, remaining_chunks: Sequence[int] | None) -> None:
         """Publish per-environment chunks remaining until the graded step."""

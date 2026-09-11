@@ -19,7 +19,7 @@ Three samplers, one per learner:
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import numpy as np
 import torch
@@ -198,7 +198,7 @@ class NStepGoalSampler(_BaseSampler):
         seed: int = 0,
         max_delta: int | None = None,
         state: np.ndarray | None = None,
-        tolerance: dict[str, object] | None = None,
+        tolerance: dict[str, Any] | None = None,
         near_frac: float = 0.0,
         near_max: int = 3,
     ) -> None:
@@ -238,12 +238,12 @@ class NStepGoalSampler(_BaseSampler):
         """Success-set membership of state(s) ``s`` w.r.t. goal state ``g`` (env ``eval_state`` semantics)."""
         if self.tolerance is None:
             raise RuntimeError("tolerance not configured")
-        pos_dims = list(self.tolerance["pos_dims"])  # type: ignore[arg-type]
-        ok = np.linalg.norm(s[..., pos_dims] - g[..., pos_dims], axis=-1) < float(self.tolerance["pos"])  # type: ignore[arg-type]
+        pos_dims = list(self.tolerance["pos_dims"])
+        ok = np.linalg.norm(s[..., pos_dims] - g[..., pos_dims], axis=-1) < float(self.tolerance["pos"])
         angle_dim = self.tolerance.get("angle_dim")
         if angle_dim is not None:
             # the environment compares raw angles (no wrap-around); mirror it exactly
-            ok = ok & (np.abs(s[..., int(angle_dim)] - g[..., int(angle_dim)]) < float(self.tolerance["angle"]))  # type: ignore[arg-type]
+            ok = ok & (np.abs(s[..., int(angle_dim)] - g[..., int(angle_dim)]) < float(self.tolerance["angle"]))
         return np.asarray(ok)
 
     def _offset(self, hi: int) -> int:

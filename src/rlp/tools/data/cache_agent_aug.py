@@ -223,7 +223,7 @@ def _run(cfg: DictConfig) -> None:
             "jpeg_quality": jpeg_q,
             "state_layout": "state(7)|displaced_agent_xy(2)|transit_steps(1)",
         }
-        if fid_frames is not None and len(fid_rows) and raw_true_render is not None:
+        if fid_frames is not None and fid_next is not None and len(fid_rows) and raw_true_render is not None:
             true_render = _jpeg_roundtrip(raw_true_render, jpeg_q) if jpeg_q else raw_true_render
             aug_render = pool.apply(_render_chunk, (aug5[fid_rows], jpeg_q))
             pix_mae = float(np.abs(true_render.astype(np.int16) - fid_frames.astype(np.int16)).mean())

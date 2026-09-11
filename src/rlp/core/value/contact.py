@@ -42,7 +42,7 @@ than better, so it is not exploitable and is deliberately not penalised.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 from torch import nn
@@ -61,7 +61,7 @@ class StateProbe(nn.Module):
 
     @property
     def latent_dim(self) -> int:
-        return int(self.weight.shape[0])
+        return int(cast(torch.Tensor, self.weight).shape[0])
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """``z`` (..., D) -> (..., 6). A windowed latent uses its newest frame."""
@@ -70,7 +70,7 @@ class StateProbe(nn.Module):
             if z.shape[-1] % d:
                 raise ValueError(f"probe dim {d} does not divide latent width {z.shape[-1]}")
             z = z[..., -d:]  # window layout is oldest-first, newest last
-        return z.float() @ self.weight + self.bias
+        return z.float() @ cast(torch.Tensor, self.weight) + cast(torch.Tensor, self.bias)
 
     @classmethod
     def load(cls, path: str | Path, device: str | torch.device = "cpu") -> StateProbe:
@@ -123,7 +123,7 @@ class ContactPenalty(nn.Module):
         self.gap_norm = float(gap_norm)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
-        return self.probe(z)
+        return cast(torch.Tensor, self.probe(z))
 
     def terms(self, trajectory: torch.Tensor, start: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """Per-step ``(move, gap)`` in px for ``trajectory`` (B, H, D)."""

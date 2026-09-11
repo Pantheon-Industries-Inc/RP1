@@ -447,13 +447,15 @@ class LIPSolver(CEMSolver):
                     vb = v[start_idx:end_idx]
                     if torch.is_tensor(v):
                         td = self.dtype if vb.is_floating_point() else None
-                        vb = vb.to(device=self.device, dtype=td).unsqueeze(1).expand(bs, self.num_samples, *vb.shape[1:])
+                        tail = vb.shape[1:]
+                        vb = vb.to(device=self.device, dtype=td).unsqueeze(1).expand(bs, self.num_samples, *tail)
                     elif isinstance(v, np.ndarray):
                         vb = np.repeat(vb[:, None, ...], self.num_samples, axis=1)
                     expanded[k] = vb
                 for _ in range(self.cem_init_steps):
-                    cand = torch.randn(bs, self.num_samples, H, adim, generator=self.torch_gen,
-                                       device=self.device, dtype=self.dtype)
+                    cand = torch.randn(
+                        bs, self.num_samples, H, adim, generator=self.torch_gen, device=self.device, dtype=self.dtype
+                    )
                     cand = cand * batch_var.unsqueeze(1) + batch_mean.unsqueeze(1)
                     cand[:, 0] = batch_mean
                     costs = cast(EnvironmentCost, self.model).get_cost(expanded, cand)
@@ -541,8 +543,8 @@ class LIPSolver(CEMSolver):
         elif self.init_mode == "cem" and R == 1:
             A = self._cem_init(info_dict, B).clamp(-float(self.actor.amax), float(self.actor.amax))
         A_init = A.detach().clone()
-        e_iters: list[torch.Tensor] = []   # E(A_k) before the k-th update, k = 0..K-1
-        lat_iters: list[torch.Tensor] = [] # imagined terminal latent distance of A_k
+        e_iters: list[torch.Tensor] = []  # E(A_k) before the k-th update, k = 0..K-1
+        lat_iters: list[torch.Tensor] = []  # imagined terminal latent distance of A_k
         s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
         graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []

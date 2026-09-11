@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import torch
@@ -104,6 +105,7 @@ def near_goal_terms(
         weights = weights / weights.mean().clamp_min(1e-8)
     return tau, weights
 
+
 # (z_aug, transit): row-aligned agent-displaced latents (already windowed like
 # the training cache) and the per-row free-transit cost in primitive steps
 type AugCache = tuple[torch.Tensor, torch.Tensor]
@@ -154,7 +156,7 @@ def fit(
     device: str = "cpu",
     aug: AugCache | None = None,
     state: np.ndarray | None = None,
-    tolerance: dict[str, object] | None = None,
+    tolerance: dict[str, Any] | None = None,
     goal_frames: torch.Tensor | None = None,
 ) -> MetricHead:
     """Train and return a temporal-distance (quasi)metric head.

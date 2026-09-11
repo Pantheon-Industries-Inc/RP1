@@ -208,3 +208,7 @@ pyrightconfig.json
 
 # macOS
 .DS_Store
+
+# Local run scratch (job driver logs, ad-hoc analysis) and W&B run dirs
+/scratchpad/
+/wandb/

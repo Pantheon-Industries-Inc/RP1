@@ -15,6 +15,8 @@ Example::
         learner=regression output.checkpoint=tworoom_regression scale=100
 """
 
+from typing import Any, cast
+
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
@@ -32,7 +34,8 @@ from rlp.logging import logger
 def _run(cfg: DictConfig) -> None:
     # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
     # the value-head keys and derived aliases can be merged in.
-    args = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg, resolve=True)), cfg.core.value)
+    flat = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    args = cast(DictConfig, OmegaConf.merge(flat, cfg.core.value))
     args.embed_dim = args.embedding_dim
     args.rep_dim = args.representation_dim
 
@@ -74,7 +77,7 @@ def _run(cfg: DictConfig) -> None:
         ):
             raise ValueError("state_cache rows do not align with the training cache")
         state = state_cache.z.numpy()
-        tolerance = OmegaConf.to_container(args.tol, resolve=True)  # type: ignore[assignment]
+        tolerance = cast(dict[str, Any] | None, OmegaConf.to_container(args.tol, resolve=True))
         logger.info(f"Loaded state cache for tolerance relabeling: {state.shape}, tol={tolerance}")
 
     learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
