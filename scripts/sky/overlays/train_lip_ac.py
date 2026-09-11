@@ -36,12 +36,22 @@ the same value file can be CEM-evaluated via `+metric=` for apples-to-apples.
 """
 import argparse
 import copy
+import faulthandler
+import signal as _hang_signal
 import gc
 import math
 import os
 import pathlib
 import shutil
 import time
+
+# 2026-08-18 silent-hang forensics: six identical stalls (train seeds 0/1/2,
+# six distinct nodes) stopped writing at ~step 500 with no error and no exit,
+# so nothing ever reached the harness's failure accounting. SIGUSR1 now dumps
+# every thread's Python stack to stderr (-> the cell's train log); the harness
+# watchdog sends it before killing a stalled trainer, so the next stall leaves
+# an autopsy instead of a mystery.
+faulthandler.register(_hang_signal.SIGUSR1, all_threads=True)
 
 import h5py
 
@@ -59,6 +69,21 @@ from stable_worldmodel.trm import LatentCache, load_metric
 from stable_worldmodel.trm.io import build_metric, save_metric
 from stable_worldmodel.trm.learners.td import _expectile_loss
 from stable_worldmodel.trm.samplers import NStepGoalSampler
+
+
+class _NearGoalSampler(NStepGoalSampler):
+    """NStepGoalSampler drawing a fraction of in-episode hindsight goals 1..near_max
+    steps ahead (near-goal resolution for the co-critic). near_frac=0 = legacy."""
+
+    def __init__(self, *args, near_frac: float = 0.0, near_max: int = 3, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert hasattr(NStepGoalSampler, "_offset"), "legacy NStepGoalSampler lacks _offset(); cannot oversample near goals"
+        self.near_frac, self.near_max = float(near_frac), int(near_max)
+
+    def _offset(self, hi):
+        if self.near_frac > 0 and self.rng.random() < self.near_frac:
+            return int(self.rng.integers(1, max(1, min(self.near_max, int(hi))) + 1))
+        return super()._offset(hi)
 
 
 def _cos(base, final, t, T):
@@ -154,6 +179,13 @@ def main():
                    help="mlp arch: ABLATION — drop grad_A V from the actor input; "
                         "it plans from [A, E, z0, zg] with no value-gradient signal. "
                         "Only informative with z0/zg kept (a full-input actor).")
+    p.add_argument("--vnorm", choices=["none", "log", "loggn", "scale"], default="none",
+                   help="v4: conditioning of the value-derived actor inputs. "
+                        "'none' = shipped raw E (steps-to-go at gamma=1) and raw "
+                        "grad; 'log' = log1p(E); 'loggn' = log1p(E) + "
+                        "RMS-normalised grad_A V (full invariance to affine "
+                        "rescaling of V). Saved into the checkpoint and "
+                        "reapplied by LIPSolver at deploy.")
     p.add_argument("--cond-mode", choices=["token", "global"], default="token",
                    help="v3 vonly scalars: 'token' = V(z_t,zg) + k appended per token; "
                         "'global' (v3.2) = final value E and k enter via a learned "
@@ -182,8 +214,33 @@ def main():
                         "e.g. 0.1 -> 0.03: smooth teacher early, sharp shortest-path late")
     p.add_argument("--n-step", type=int, default=None)
     p.add_argument("--gamma", type=float, default=None)
+    p.add_argument("--ckpt-every", type=int, default=0,
+                   help="save a DEPLOYABLE snapshot (actor + co-critic teacher) "
+                        "every N steps; 0 disables. Enables within-run early "
+                        "stopping: select the best snapshot on val draws.")
+    p.add_argument("--squash", choices=["hard", "tanh"], default="hard",
+                   help="plan box enforcement: hard clamp (zero grad when "
+                        "saturated) or amax*tanh(u/amax) (gradient flows "
+                        "everywhere). Saved into the checkpoint.")
+    p.add_argument("--boundary", choices=["legacy", "smooth", "disc"], default="legacy",
+                   help="n-step seam at gamma<1: legacy = raw in-window label vs "
+                        "discounted bootstrap (non-monotone at delta=n); smooth = "
+                        "boot n_eff + g^n_eff*d_next (continuous, per-window "
+                        "discounting); disc = discount the exact branch too")
     p.add_argument("--td-batch", type=int, default=1024)
     p.add_argument("--td-p-cross", type=float, default=0.3)
+    p.add_argument("--near-frac", type=float, default=0.0,
+                   help="co-critic: fraction of in-episode hindsight goals drawn 1..near-max steps ahead")
+    p.add_argument("--near-max", type=int, default=3)
+    p.add_argument("--ac-weight", type=float, default=0.0,
+                   help="anti-constancy regularizer: penalize the batch-level "
+                        "constancy of net plan displacement (the TwoRoom "
+                        "WM-hallucination basin emits ~80%%-constant plans; "
+                        "an honest planner must vary its plan with the task)")
+    p.add_argument("--v4-hidden", type=int, default=512,
+                   help="v4 refiner MLP width (round-tripped via the checkpoint)")
+    p.add_argument("--v4-layers", type=int, default=2,
+                   help="v4 refiner hidden layers (2 = shipped net)")
     p.add_argument("--td-max-delta", type=int, default=None)
     p.add_argument("--critic-lr", type=float, default=None)
     p.add_argument("--critic-lr-final", type=float, default=None,
@@ -462,9 +519,12 @@ def main():
             critic = build_metric("td", c_td.latent_dim, arch).to(dev)
         critic.train()
         teacher = copy.deepcopy(critic).to(dev)
-        td_sampler = NStepGoalSampler(c_td, n_step=a.n_step, p_cross=a.td_p_cross,
+        td_sampler = _NearGoalSampler(c_td, n_step=a.n_step, p_cross=a.td_p_cross,
                                       n_buckets=10, balanced=True, seed=a.seed,
-                                      max_delta=a.td_max_delta)
+                                      max_delta=a.td_max_delta,
+                                      near_frac=a.near_frac, near_max=a.near_max)
+        if a.near_frac > 0:
+            print(f"[lip-ac] co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps", flush=True)
         c_opt = torch.optim.AdamW(critic.parameters(), lr=a.critic_lr,
                                   weight_decay=a.critic_wd)
     for prm in teacher.parameters():
@@ -494,7 +554,8 @@ def main():
         plan_cost, plan_disc = float(n_plan), 1.0
     else:
         plan_disc = a.gamma ** n_plan
-        plan_cost = (1.0 - plan_disc) / (1.0 - a.gamma)
+        plan_cost = (float(n_plan) if a.boundary == "smooth"
+                     else (1.0 - plan_disc) / (1.0 - a.gamma))
 
     def critic_step(expand=None, tau=None, lr=None):
         tau = a.expectile if tau is None else tau
@@ -510,8 +571,11 @@ def main():
                 cost, disc = ne, torch.ones_like(ne)
             else:
                 disc = a.gamma ** ne
-                cost = (1.0 - disc) / (1.0 - a.gamma)
-            tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
+                cost = ne if a.boundary == "smooth" else (1.0 - disc) / (1.0 - a.gamma)
+            dist_t = dist
+            if a.gamma < 1.0 and a.boundary == "disc":
+                dist_t = (1.0 - a.gamma ** dist) / (1.0 - a.gamma)
+            tgt = reached * dist_t + (1.0 - reached) * (cost + disc * d_next)
         loss = _expectile_loss(critic(z_t, z_g) - tgt, tau, a.huber_beta)
         if expand is not None:                  # value expansion on planner rollouts
             z0e, zTe, zge = expand
@@ -547,8 +611,12 @@ def main():
     elif a.arch == "v4":
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
                          amax=a.amax, use_zg=False, use_gate=False, use_z0=False,
-                         use_grad=not a.drop_grad,
-                         head_scale=a.head_scale).to(dev)
+                         use_grad=not a.drop_grad, hidden=a.v4_hidden,
+                         n_layers=a.v4_layers,
+                         head_scale=a.head_scale, vnorm=a.vnorm,
+                         vnorm_k=(1.0 - a.gamma) if (a.gamma or 1.0) < 1.0 else 0.01,
+                         squash=a.squash).to(dev)
+        print(f"[vnorm] {a.vnorm}", flush=True)
     else:
         net = PlannerNet(z.shape[-1], horizon=a.horizon, a_dim=a_dim, feed=a.feed,
                          amax=a.amax, use_zg=not a.drop_zg,
@@ -707,6 +775,13 @@ def main():
                 _align = _ps.gather(1, _h[:, None]).squeeze(1).mean()
             _align = a.align_weight * _align
         loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean() + _align
+        if a.ac_weight > 0:
+            # constancy of net displacement across the batch: ||E_b[sum_t A]||^2
+            # / E_b||sum_t A||^2 in [0,1]; ~0.8 for the hallucination basin,
+            # 0.26-0.39 for honest seeds. Scale-free, rollout-free.
+            _disp = A.sum(1)
+            _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
+            loss = loss + a.ac_weight * _const
         if a.bc_weight > 0:                       # trust-region toward data actions
             loss = loss + a.bc_weight * ((A - aref) ** 2).mean()
         a_opt.zero_grad(set_to_none=True)
@@ -728,6 +803,47 @@ def main():
     expand = None
     _last_heartbeat = 0.0
     _last_step_end = time.monotonic()
+    def _snapshot(step):
+        # Deployable mid-training checkpoint: same dict as the final save, but
+        # CPU copies so training tensors stay on device. Teacher (EMA co-critic)
+        # first — the actor references it.
+        import copy as _copy
+        root, ext = os.path.splitext(a.out)
+        snap_out = f"{root}_step{step}{ext}"
+        vroot, vext = os.path.splitext(a.out_value)
+        snap_val = f"{vroot}_step{step}{vext}"
+        if a.actor_only:
+            snap_val = a.init_value
+        else:
+            save_metric(_copy.deepcopy(teacher).cpu(), "td", value_latent_dim, arch, snap_val)
+        _kind = {"traj": "lip3", "v4r": "lip4r", "v4": "lip4"}.get(
+            a.arch, "lip" if a.feed == "none" else "lip2")
+        sd_cpu = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+        torch.save({"kind": _kind, "feed": a.feed, "sd": sd_cpu,
+                    "z_dim": z.shape[-1], "horizon": a.horizon, "iters": a.iters,
+                    "a_dim": a_dim, "amax": a.amax, "width": a.width, "layers": a.layers,
+                    "s_dim": a.s_dim, "s0_mode": a.s0_mode, "hidden": a.rec_hidden,
+                    "goal_mode": a.goal_mode, "gd_init": a.gd_init,
+                    "feat_norm": a.feat_norm, "iter_mode": a.iter_mode,
+                    "head_mode": a.head_mode, "cond_mode": a.cond_mode,
+                    "use_gate": getattr(net, "use_gate", not a.no_gate),
+                    "use_zg": getattr(net, "use_zg", not a.drop_zg),
+                    "use_z0": getattr(net, "use_z0", not a.drop_z0),
+                    "use_grad": getattr(net, "use_grad", not a.drop_grad),
+                    "vnorm": getattr(net, "vnorm", "none"),
+                    "vnorm_k": getattr(net, "vnorm_k", 1.0),
+                    "squash": getattr(net, "squash", "hard"),
+                "v4_hidden": a.v4_hidden,
+                "v4_layers": a.v4_layers,
+                    "head_scale": a.head_scale, "pre_ln": a.pre_ln,
+                    "temporal_objective": a.temporal_objective,
+                    "value": snap_val,
+                    "wandb_id": (_wb.id if _wb is not None else None),
+                    "wandb_project": a.wandb_project or None,
+                    "wandb_entity": a.wandb_entity or None,
+                    "train_args": vars(a)}, snap_out)
+        print(f"[snapshot] step {step} -> {snap_out}", flush=True)
+
     for step in range(a.steps):
         critic_live = step < freeze_at
         if step == freeze_at:
@@ -771,13 +887,15 @@ def main():
                 "pantheon_telemetry/active_step": step + 1,
                 "pantheon_telemetry/step_time_s": _step_time,
                 "pantheon_telemetry/effective_mfu": 0.0,
-                "pantheon_telemetry/wandb_url": _wb.get_url(),
+                "pantheon_telemetry/wandb_url": (getattr(_wb, "url", None) or (_wb.get_url() if hasattr(_wb, "get_url") else "")),
             })
             _last_heartbeat = _step_end
         if step % 500 == 0:
             print(f"step {step}: E_final {e_final:.3f} E_first {e_first:.3f} "
                   f"td_loss {cl:.4f} tau {tau_s:.3f} clr {clr_s:.2e} alr {alr_s:.2e}",
                   flush=True)
+        if a.ckpt_every and step > 0 and step % a.ckpt_every == 0:
+            _snapshot(step)
 
     # ------------------------------------------------------------ save (teacher first;
     # the actor checkpoint references it, and it is what the actor optimized against)
@@ -811,6 +929,11 @@ def main():
                 "use_zg": getattr(net, "use_zg", not a.drop_zg),
                 "use_z0": getattr(net, "use_z0", not a.drop_z0),
                 "use_grad": getattr(net, "use_grad", not a.drop_grad),
+                "vnorm": getattr(net, "vnorm", "none"),
+                "vnorm_k": getattr(net, "vnorm_k", 1.0),
+                "squash": getattr(net, "squash", "hard"),
+                "v4_hidden": a.v4_hidden,
+                "v4_layers": a.v4_layers,
                 "head_scale": a.head_scale, "pre_ln": a.pre_ln,
                 "temporal_objective": a.temporal_objective,
                 "value": a.out_value,

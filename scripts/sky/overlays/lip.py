@@ -66,11 +66,33 @@ class PlannerNet(nn.Module):
 
     def __init__(self, z_dim, horizon=5, a_dim=25, hidden=512, amax=2.5,
                  feed="none", use_zg=False, use_gate=False, use_z0=False,
-                 use_grad=True, head_scale=1.0):
+                 use_grad=True, head_scale=1.0, vnorm="none", vnorm_k=1.0, squash="hard", n_layers=2):
         super().__init__()
         self.h, self.a, self.amax, self.feed = horizon, a_dim, amax, feed
         self.use_zg, self.use_gate, self.use_z0 = use_zg, use_gate, use_z0
         self.use_grad = use_grad
+        # vnorm: conditioning of the two value-derived inputs. 'none' = the
+        # shipped behaviour (raw E, raw grad). With gamma=1 the E channel is
+        # literally steps-to-go, so a goal 4x further away presents a 4x larger
+        # unnormalised scalar to an un-normalised MLP: on TwoRoom the actor
+        # trains with E in the h25 band and h100 conditions it far outside that
+        # band. 'log' = log1p(E) compresses the band; 'loggn' additionally
+        # RMS-normalises grad_A V, making the actor invariant to any affine
+        # rescaling of V (the property that makes DMPO/CEM horizon-robust).
+        # in_dim is unchanged, so state_dicts stay interchangeable across
+        # vnorm settings.
+        self.vnorm = str(vnorm)
+        # 'scale': E_in * vnorm_k, with k = (1 - gamma) at training time — the
+        # linear interface normalization (v * (1-gamma) lives in [0,1] for a
+        # discounted cost-to-go). Preserves resolution where log1p over-
+        # compresses an already-discount-compressed E (gamma < 1).
+        self.vnorm_k = float(vnorm_k)
+        # 'tanh': A = amax * tanh(u / amax) — same box as the hard clamp but
+        # gradients stay nonzero for saturated coordinates (torch.clamp has
+        # zero grad outside the box, so boundary-pinned plan entries receive
+        # NO learning signal — the mechanistic root of the gamma x clip
+        # collapse at tight clips).
+        self.squash = str(squash)
         extra = {"none": 0, "end": z_dim, "traj": horizon * z_dim}[feed]
         # use_zg=False ('vonly-ized' MLP): the raw goal embedding is dropped —
         # the goal reaches the actor only through the teacher's signals
@@ -90,11 +112,13 @@ class PlannerNet(nn.Module):
         # (only informative on a full-input actor that still has z0/zg).
         in_dim = (horizon * a_dim + int(use_grad) * horizon * a_dim + 1
                   + (int(use_z0) + int(use_zg)) * z_dim + extra)
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, hidden), nn.ReLU(),
-            nn.Linear(hidden, horizon * a_dim + (1 if use_gate else 0)),
-        )
+        # n_layers = number of hidden layers; 2 reproduces the shipped
+        # Linear-ReLU-Linear-ReLU-head exactly.
+        _body = [nn.Linear(in_dim, hidden), nn.ReLU()]
+        for _ in range(int(n_layers) - 1):
+            _body += [nn.Linear(hidden, hidden), nn.ReLU()]
+        _body += [nn.Linear(hidden, horizon * a_dim + (1 if use_gate else 0))]
+        self.net = nn.Sequential(*_body)
         if head_scale != 1.0:
             # small-init for the no-gate form: refinement starts near-identity
             # with live gradients (covers the gate's damping role at init;
@@ -105,10 +129,18 @@ class PlannerNet(nn.Module):
 
     def forward(self, A, gradA, E, z0, zg, ztraj=None, k=0, vtraj=None):
         B = A.shape[0]
+        E_in = E.reshape(B, 1)
+        if self.vnorm in ("log", "loggn"):
+            E_in = torch.log1p(E_in.clamp_min(0.0))
+        elif self.vnorm == "scale":
+            E_in = E_in * self.vnorm_k
         parts = [A.reshape(B, -1)]
         if self.use_grad:
-            parts.append(gradA.reshape(B, -1))
-        parts.append(E.reshape(B, 1))
+            g = gradA.reshape(B, -1)
+            if self.vnorm == "loggn":
+                g = g / g.pow(2).mean(dim=-1, keepdim=True).sqrt().clamp_min(1e-8)
+            parts.append(g)
+        parts.append(E_in)
         if self.use_z0:
             parts.append(z0)
         if self.use_zg:
@@ -121,7 +153,11 @@ class PlannerNet(nn.Module):
         if self.use_gate:
             dA = out[:, :-1].view(B, self.h, self.a)
             gate = torch.sigmoid(out[:, -1:]).unsqueeze(-1)
+            if self.squash == "tanh":
+                return self.amax * torch.tanh((A + gate * dA) / self.amax)
             return (A + gate * dA).clamp(-self.amax, self.amax)
+        if self.squash == "tanh":
+            return self.amax * torch.tanh((A + out.view(B, self.h, self.a)) / self.amax)
         return (A + out.view(B, self.h, self.a)).clamp(-self.amax, self.amax)
 
 
@@ -570,7 +606,20 @@ class LIPSolver(CEMSolver):
                                     use_zg=ck.get("use_zg", not v4),
                                     use_gate=ck.get("use_gate", not v4),
                                     use_z0=ck.get("use_z0", not v4),
-                                    use_grad=ck.get("use_grad", True)).to(self.device)
+                                    use_grad=ck.get("use_grad", True),
+                                    vnorm=ck.get("vnorm", "none"),
+                                    vnorm_k=ck.get("vnorm_k", 1.0),
+                                    squash=ck.get("squash", "hard"),
+                                    hidden=ck.get("v4_hidden", 512),
+                                    n_layers=ck.get("v4_layers", 2)).to(self.device)
+        # A vnorm actor deployed with raw E is a guaranteed silent null, so say
+        # out loud which conditioning this cell actually loaded.
+        if getattr(self.actor, "vnorm", "none") != "none":
+            print(f"[lip] actor vnorm={self.actor.vnorm}", flush=True)
+        elif ck.get("vnorm", "none") != "none":
+            raise ValueError(
+                f"checkpoint trained with vnorm={ck['vnorm']!r} but the "
+                f"reconstructed {self.kind!r} actor has no vnorm support")
         self.actor.load_state_dict(ck["sd"])
         self.actor.eval()
         self._actor_horizon = ck["horizon"]        # plan length must match the trained net
@@ -791,11 +840,17 @@ class LIPSolver(CEMSolver):
                 z_traj = roll(z_roll, a_hist[:B], A)                # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
                 e_imag = self.lip_value(z_imag, zg)
+            # disambiguate parallel eval_wm subprocesses sharing one probe
+            # dir: tag files with the hydra seed/offset (from argv) + pid
+            import sys as _sys
+            _tag = "_".join(
+                a.replace("eval.goal_offset_steps=", "h").replace("seed=", "e")
+                for a in _sys.argv if a.startswith(("seed=", "eval.goal_offset_steps=")))
             torch.save(
                 {"z0": z_hist[:, -1].detach().cpu(), "z_traj": z_traj.detach().cpu(),
                  "z_imag": z_imag.detach().cpu(), "A": A.detach().cpu(),
                  "E": e_imag.detach().cpu(), "zg": zg.detach().cpu()},
-                f"{os.environ['LIP_PROBE_DIR']}/probe_{_LIP_PROBE_N:04d}.pt")
+                f"{os.environ['LIP_PROBE_DIR']}/probe_{_tag}_p{os.getpid()}_{_LIP_PROBE_N:04d}.pt")
             _LIP_PROBE_N += 1
         return A.detach().to(self.dtype)
 

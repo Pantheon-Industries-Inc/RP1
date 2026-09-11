@@ -57,12 +57,17 @@ class TDConfig:
     rank_weight: float = 0.0
     rank_margin: float = 0.5
     rank_max_delta: int = 200
+    # near-goal resolution: fraction of in-episode hindsight goals drawn
+    # 1..near_max steps ahead (see NStepGoalSampler)
+    near_frac: float = 0.0
+    near_max: int = 3
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
 
 
 def _expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
+    """Expectile-weighted Huber loss."""
     huber = torch.nn.functional.smooth_l1_loss(diff, torch.zeros_like(diff), beta=beta, reduction="none")
     weight = torch.where(diff > 0, 1.0 - expectile, expectile)  # diff=pred-target
     return (weight * huber).mean()
@@ -93,7 +98,11 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
     )
 
 
-def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
+def fit(
+    cache: LatentCache,
+    cfg: TDConfig,
+    device: str = "cpu",
+) -> MetricHead:
     """Train and return a temporal-distance (quasi)metric head."""
     torch.manual_seed(cfg.seed)
     value = _make_head(cfg, cache.latent_dim).to(device)
@@ -110,7 +119,11 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
         balanced=cfg.balanced,
         seed=cfg.seed,
         max_delta=cfg.max_delta,
+        near_frac=cfg.near_frac,
+        near_max=cfg.near_max,
     )
+    if cfg.near_frac > 0:
+        logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
     g = cfg.gamma
     step_norm = 1.0
     episodes = cache.episodes()
@@ -164,8 +177,7 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu") -> MetricHead:
             else:
                 disc = g**ne
                 c = (1.0 - disc) / (1.0 - g)
-            boot = c + disc * d_next
-            tgt = reached * dist + (1.0 - reached) * boot
+            tgt = reached * dist + (1.0 - reached) * (c + disc * d_next)
         pred = value(z_t, z_g)
         loss = _expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
         if cfg.rank_weight > 0:

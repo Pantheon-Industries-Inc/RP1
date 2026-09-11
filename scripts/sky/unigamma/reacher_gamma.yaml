@@ -1,0 +1,1166 @@
+# scripts/sky/unigamma/reacher_gamma.yaml — unified-gamma fleet variant of
+# reacher_split_replication.yaml (2026-08-18). Deltas: RS_GAMMA threads the
+# discount into BOTH the window teacher and the actor/co-trained critic;
+# RS_VNORM threads the actor E-channel conditioning (vnorm overlay files);
+# the clone never smudges LFS (budget exhausted; reacher needs no LFS object
+# — WM from the W&B artifact, data from HF, scripts are plain git).
+# Reacher paper-winner replication (2026-08-13) -- copy of the rlp12
+# campaign yaml (campaigns/rlp12_reacher_w1/reacher_w1.yaml @ origin/eval-sweep,
+# already clean-split: train 0:8000 / eval 8000:10000) with file mounts
+# vendored into scripts/sky/overlays_reacher/ and EXPAND made effective in
+# GRID=latched_terminal_search (paper winners are expand=0 on Reacher).
+#
+# rlp12_reacher_w1 campaign copy of configs/rlp_reacher_grid_sweep.yaml
+# (working-tree state that launched jobs 4759/4760/4804/4805), plus:
+#   1. the latent measurement arm honors VALUE_FRAMES (l2window${VALUE_FRAMES}
+#      via make_l2window_n.py) instead of hardcoding l2window3.pt — VALUE_FRAMES=1
+#      is the paper's own terminal-L2 cost through the identical metric hook;
+#   2. GRID=w1_diagnosis: PLDM window-1 RLP deconfound, {expand 0,1} x
+#      {amax 1.0,1.8} at mw0.3/lr1e-4 — separates expand-weight co-exploitation
+#      from amax transfer in the w1 collapse (87.8/60.7 vs w3 99.8/90.7).
+# Defaults VALUE_FRAMES=3: behavior identical to the parent yaml.
+#
+# Canonical Reacher RLP grid-sweep configuration.
+#
+# Runs the EXACT paper code (reacher/pod_src_20260804 snapshot, patched
+# pad-context/vframes3/detseed) with the campaign-standardized protocol:
+#   data      episodes 0:8000 train / 8000:10000 eval (clean split)
+#   training  steps 6000, batch 256, replay-prob 0.5; expand-weight is 0 for
+#             LeWM and 1.0 for PLDM (the independently established winners),
+#             freeze-critic-frac 0.5, gamma 0.98, expectile 0.1->0.03,
+#             critic-lr 1e-3->1e-4, n-step 50, iters 8, horizon 5, max-delta 12
+#   TD/value  3-frame window quasimetric (reacher's latent interface) at the
+#             standardized numbers: expectile 0.03, gamma 0.98, steps 12000
+# RLP-specific hypers stay reacher-specific: LeWM amax=2.4, mean-weight=.3,
+# actor-lr=1e-4; PLDM amax=1.4, mean-weight=.1, actor-lr=3e-4. Searches must
+# override those settings explicitly.
+# Eval: either legacy held-at-end or separate latched first-hit passes at
+# tau=0.1/0.05. First-hit passes terminate each environment immediately on
+# reaching their threshold; h25, budget 50, reporting seeds 42-44, egl.
+# Reference (paper, steps 1000 / batch 128 / expand 0, leaked data):
+# LIP lejepa 98.2 +- 1.2, pldm 94.2 +- 4.1 @0.1; clean-split lejepa 97.7.
+
+name: reacher-gamma
+
+envs:
+  BASE: lejepa             # lejepa | pldm  (tarball: lejepa<-lewm, pldm<-pldm)
+  TRAIN_SEEDS: "0 1 2"
+  SMOKE: "0"
+  GRID: "amax"              # amax | cross | pldm_refine | telescoping | measurements | latched_measurements | latched_terminal_search
+  AMFIX: ""                 # cross mode: pinned amax (default per base)
+  CROSS_EXPANDS: "0 0.5 1.0 3.0"  # override for targeted per-base dose screens
+  CROSS_REPLAYS: "0 0.25 0.5"
+  PWM_AMAX: ""              # GRID=pwm: space-separated amax values to sweep.
+                            # Empty = the single RLP-tuned value per base, which
+                            # is how the collapsed 2505/2506 runs were produced.
+                            # PWM's own amax optimum has never been measured;
+                            # it was inherited from the RLP arm on the assumption
+                            # that a knob tuned for one solver transfers to another.
+  REPLAY: "0.5"             # replay-prob; SWEPT in cross mode
+  EXPAND: ""                # auto: LeWM 0, PLDM 1; any other value is explicit
+  STEPS: "6000"             # actor optimization steps; long-data sweep uses 12k/18k
+  CKPT_EVERY: "0"           # final actor only; no intermediate actor snapshots
+  TRAIN_TIMEOUT: "64800"    # long actor runs: 18 hours per configuration
+  ONLYCFG: ""
+  PLANNERS: "cem adam mppi"   # GRID=planners: sampling/gradient arms
+  # 2026-08-12 user-set reacher default: 10 optimization steps per decision
+  # (CEM/MPPI 300x10, Adam 100x10). NOTE: the solver YAML default, the
+  # upstream stable-worldmodel default, and the LeWM paper's appendix are all
+  # 30 steps; every reacher measurement recorded before 2026-08-12 used 30.
+  # Do not mix 10-step and 30-step cells in one table.
+  PLANNER_STEPS: "10"
+  PLANNER_RH: "5"             # deadline-CEM comparison overrides to 1
+  PLANNER_DEADLINE: ""        # graded environment step; e.g. 50
+  SUCCESS_THRESHOLDS: "0.1 0.05" # separate first-hit simulator passes
+  RS_GAMMA: "0.98"         # discount for BOTH the window teacher and the
+  RS_NSTEP: "50"           # n-step span for window teacher and co-critic
+                           # actor/co-trained critic (unified-gamma arms;
+                           # the banked reacher recipe is 0.98)
+  RS_VNORM: "none"         # actor E-channel conditioning: none | log | loggn
+  RS_BOUNDARY: "legacy"    # n-step seam at gamma<1 (legacy | smooth | disc), for
+                           # BOTH the window teacher and the co-trained critic
+  RS_MD: "12"              # actor goal band (fs5 blocks); 20 = the unified
+                           # horizon-covering band
+  RS_LATCHED: "0"          # 1 = force the latched first-hit evaluator (the
+                           # paper's tau convention) on any grid
+  CROSS_MW: ""             # optional cross-grid mean-weight override
+  CROSS_LR: ""             # optional cross-grid actor-lr override
+  RS_SQUASH: "hard"        # plan box: hard clamp | tanh (grad-preserving)
+  RS_CKPT_SELECT: "0"      # 1 = within-run early stopping: score every snapshot
+                           # (+ final) with the held-at-end eval on the selection
+                           # draws, deploy the argmax. Report draws untouched.
+  RS_CKPT_VAL_SEEDS: "50 51"
+  RS_EMA_TAU: "0.005"      # co-critic teacher EMA rate (0.002 = the unified
+                           # stabilizer from the 2026-08-20 critic wave)
+  RS_K: "8"                # refinement depth K
+  RS_WIDTH: "512"          # v4 refiner MLP width
+  RS_LAYERS: "2"           # v4 refiner hidden layers
+  ACR_LAM: "0"             # anti-constancy regularizer weight
+  CRIT_DEPTH: "2"          # MRN critic-head depth (window teacher + co-critic)
+                           # -- W3 cache key must change with it (see below)
+  MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
+  INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
+  REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
+  VALUE_EXPECTILE: "0.03"   # paper init value artifact used 0.05 (window3_*_e005)
+  VALUE_FRAMES: "1"           # HARDCODED w=1 (2026-08-22 user decision: reacher
+                              # runs the single-frame value/critic under the
+                              # unified config; w=3 was the pre-unification default)
+  PRE_MEASUREMENT_SMOKE: "0" # tiny exact-protocol gate before the reporting cells
+  CELL_TIMEOUT: "21600"
+  COST: "value"             # value = the window quasimetric | latent = l2window3
+                            # (parameter-free L2 in the SAME 3-frame window space;
+                            #  this is what the paper calls "Latent + CEM" on reacher)
+  MAXPAR: "4"
+  ACTOR_ONLY: "0"          # established recipe co-trains critic for first half
+  FINAL_ONLY: "1"          # evaluate only the final actor checkpoint
+  SELECTION_ONLY: "0"      # 1 = draws 50/51 now; report 42-44 after winner selection
+  REPORT_ONLY: "0"         # 1 = draws 42-44 only; suppress 50/51
+  REUSE_ONLY: "0"          # 1 = missing final actor is fatal; never retrain
+  ACTOR_IMPORT_TAG: ""     # reuse-only: copy final actors from these persist tags (space-separated)
+  DEPLOY_AMAX: ""          # eval-only: rewrite imported actors' deploy clamp
+                           # (top-level ck['amax']); requires REUSE_ONLY=1
+  GRAPHED_MODE: "false"    # lip eval: false | true | verify (CUDA-graphed inference)
+  HELD_AT_END: "0"         # 1 = score the latched grid held-at-end (evone; no early termination)
+  W1_AMS: "0.6 1.0 1.4 1.8 2.4"  # GRID=w1_grid: amax axis (one value per shard job)
+  W1_MWS: "0.1 0.3 0.5"          # GRID=w1_grid: mean-weight axis
+  W1_LRS: "1e-4 3e-4"            # GRID=w1_grid: actor-lr axis
+  W1_EXPANDS: "0 1"              # GRID=w1_grid: expand-weight axis
+  BATCH: "256"
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: rlp-pldm-reacher-refine-20260810
+  WANDB_PROJECT: RLP
+  WANDB_ENTITY: armin-sommer
+
+secrets:
+  WANDB_API_KEY: null
+  GIT_TOKEN: null
+
+resources:
+  accelerators: H200:4
+  cpus: 80
+  memory: 920
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  # 2026-08-21: migrated off the shared 10Ti 'checkpoints' PVC (volume-level
+  # quota exhausted by other tenants -- writes failed silently and jobs
+  # reported SUCCEEDED with empty outputs). Banked pre-migration data stays
+  # on the old volume; read it with collect_unig_legacy.yaml.
+  /checkpoints: armin-rlp-checkpoints
+
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        nodeSelector:
+          pantheon.inc/raid0: "enabled"
+        volumes:
+          - name: raid0
+            hostPath:
+              path: /mnt/raid0
+              type: Directory
+        containers:
+          - volumeMounts:
+              - mountPath: /mnt/raid0
+                name: raid0
+
+file_mounts:
+  /tmp/codex-overlays/train_lip_ac.py: ./scripts/sky/unigamma/overlays_reacher_vnorm/train_lip_ac.py
+  /tmp/codex-overlays/latent_cache.py: ./scripts/sky/overlays_reacher/latent_cache.py
+  /tmp/codex-overlays/lip.py: ./scripts/sky/unigamma/overlays_reacher_vnorm/lip.py
+  /tmp/codex-overlays/policy.py: ./scripts/sky/overlays_reacher/policy.py
+  /tmp/codex-overlays/eval_wm.py: ./scripts/sky/overlays_reacher/eval_wm.py
+  /tmp/codex-overlays/world.py: ./scripts/sky/overlays_reacher/world.py
+  /tmp/codex-overlays/make_l2window_n.py: ./scripts/sky/overlays_reacher/make_l2window_n.py
+  /tmp/codex-overlays/td.py: ./scripts/sky/unigamma/overlays_boundary/td.py
+  /tmp/codex-overlays/train_window.py: ./scripts/sky/unigamma/overlays_boundary/train_window.py
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq
+  sudo apt-get install -yqq git git-lfs zstd libegl1 libgl1 libglew-dev libosmesa6 patchelf >/dev/null 2>&1 || true
+
+  cd ~
+  if [ ! -d repo ]; then
+    GIT_LFS_SKIP_SMUDGE=1 git clone -q --depth 1 --branch eval-sweep \
+      "https://x-access-token:${GIT_TOKEN}@github.com/armin-sommer/Value_Metric_LeWM.git" repo
+  fi
+  cd ~/repo && git remote set-url origin https://github.com/armin-sommer/Value_Metric_LeWM.git
+  echo "[repo] $(git rev-parse --short HEAD)"
+
+  # deps: main-tree extras for the common stack, then the reacher campaign's
+  # load-bearing pin (transformers 4.49 => NO encoder key renames at convert)
+  pip install -q -e "$HOME/repo/stable-worldmodel[train,format]" \
+    opencv-python-headless hdf5plugin hf_transfer wandb dm_control "mujoco<3.12" 2>&1 | tail -2
+  pip install -q "transformers==4.49.0" 2>&1 | tail -1
+  cp /tmp/codex-overlays/train_lip_ac.py "$HOME/repo/reacher/pod_src_20260804/scripts/plan/train_lip_ac.py"
+  cp /tmp/codex-overlays/latent_cache.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/trm/latent_cache.py"
+  cp /tmp/codex-overlays/lip.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/solver/lip.py"
+  cp /tmp/codex-overlays/policy.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/policy.py"
+  cp /tmp/codex-overlays/eval_wm.py "$HOME/repo/reacher/pod_src_20260804/scripts/plan/eval_wm.py"
+  cp /tmp/codex-overlays/world.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/world/world.py"
+  cp /tmp/codex-overlays/td.py "$HOME/repo/reacher/pod_src_20260804/stable_worldmodel/trm/learners/td.py"
+  cp /tmp/codex-overlays/train_window.py "$HOME/repo/reacher/pod_src_20260804/workspace_drivers/train_window.py"
+  python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
+
+  WANDB_ROOT=/mnt/raid0/rlp-wandb/${EXPERIMENT_TAG}
+  sudo mkdir -p "$WANDB_ROOT"/{runs,artifacts,cache}
+  sudo chmod 777 "$WANDB_ROOT" "$WANDB_ROOT"/{runs,artifacts,cache}
+  export WANDB_DIR="$WANDB_ROOT/runs"
+  export WANDB_ARTIFACT_DIR="$WANDB_ROOT/artifacts"
+  export WANDB_CACHE_DIR="$WANDB_ROOT/cache"
+
+  python3 -c "
+  import os, wandb
+  wandb.login(key=os.environ['WANDB_API_KEY'], relogin=True)
+  r = wandb.init(project=os.environ['WANDB_PROJECT'], entity=os.environ['WANDB_ENTITY'],
+                 name='reacher-sweep-probe-' + os.environ['BASE'], job_type='probe', reinit=True)
+  r.log({'probe': 1}); r.finish(); print('[wandb] verified')
+  "
+
+  SCRATCH=/mnt/raid0/${EXPERIMENT_TAG}
+  sudo mkdir -p "$SCRATCH" && sudo chmod 777 "$SCRATCH"
+  if [ -e /workspace ] && [ ! -L /workspace ]; then
+    sudo rmdir /workspace || { echo "refusing non-empty image /workspace"; exit 1; }
+  fi
+  sudo ln -sfn "$SCRATCH" /workspace
+
+  # recreate the pod's /workspace layout so every hardcoded path in the
+  # snapshot works verbatim
+  sudo mkdir -p /workspace && sudo chown $(whoami) /workspace
+  mkdir -p /workspace/datasets_canon/lewm-reacher /workspace/pretrained_tars \
+           /workspace/pretrained /workspace/swm_home /workspace/caches \
+           /workspace/metrics /workspace/actors /workspace/logs /workspace/results /workspace/_hfdl
+  ln -sfn ~/repo/reacher/pod_src_20260804 /workspace/swm_cem
+  ln -sf ~/repo/reacher/pod_src_20260804/workspace_drivers/train_window.py /workspace/train_window.py
+
+  export STABLEWM_HOME=/workspace/swm_home PYTHONPATH=/workspace/swm_cem
+  export HDF5_PLUGIN_PATH=$(python3 -c 'import hdf5plugin; print(hdf5plugin.PLUGIN_PATH)')
+  CANON=/workspace/datasets_canon/lewm-reacher/reacher.h5
+
+  # dataset (93G extracted)
+  if [ ! -f "$CANON" ]; then
+    cd /workspace/_hfdl
+    HF_HUB_ENABLE_HF_TRANSFER=1 python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('quentinll/lewm-reacher','reacher.tar.zst',repo_type='dataset',local_dir='.')"
+    tar -I zstd --no-same-owner -xf reacher.tar.zst -C /workspace/datasets_canon/lewm-reacher/
+    rm -f reacher.tar.zst
+  fi
+  df -h /workspace | tail -1
+
+  # slim h5 FIRST: renames ep_idx -> episode_idx; the converter reads it
+  cp ~/repo/reacher/pod_src_20260804/workspace_drivers/build_slim_h5.py /workspace/
+  [ -f /workspace/reacher_slim.h5 ] || python3 /workspace/build_slim_h5.py 2>&1 | tail -2
+
+  # base from the wandb artifact (tarball names: lejepa<-lewm, pldm<-pldm)
+  TAR=lewm; [ "$BASE" = pldm ] && TAR=pldm
+  if [ ! -d /workspace/swm_home/checkpoints/${BASE}_reacher ]; then
+    python3 - <<'PY'
+  import os, shutil, wandb
+  api = wandb.Api()
+  tar = "lewm" if os.environ["BASE"] == "lejepa" else "pldm"
+  a = api.artifact(f"armin-sommer/RLP/reacher_base_{tar}:latest", type="wm_base")
+  d = a.download()
+  for f in os.listdir(d):
+      shutil.copy(os.path.join(d, f), "/workspace/pretrained_tars/")
+      print("[base]", f, flush=True)
+  PY
+    tar -I zstd --no-same-owner -xf /workspace/pretrained_tars/${TAR}.tar.zst -C /workspace/pretrained/
+    # converter patch: source parity pixels + episode bookkeeping from the h5
+    # (handles the ep_idx rename); committed in dino_patch_metric
+    cp ~/repo/reacher/dino_patch_metric/patch_convert_h5.py /workspace/
+    (cd /workspace && python3 patch_convert_h5.py 2>&1 | tail -1) || true
+    cd /workspace/swm_cem
+    CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/convert_reacher_bases.py \
+      --only ${BASE} --from-h5 --h5 "$CANON" 2>&1 | tail -3
+  fi
+  [ -d /workspace/swm_home/checkpoints/${BASE}_reacher ] || { echo "convert failed"; exit 1; }
+
+  # slim h5 (actions + episode bookkeeping; renames ep_idx -> episode_idx)
+  [ -f /workspace/reacher_slim.h5 ] || python3 /workspace/build_slim_h5.py 2>&1 | tail -2
+
+  # caches: fs1 (state-key qpos) -> filter to episodes 0:7999 -> fs5
+  cd /workspace/swm_cem
+  C1F=/workspace/caches/canon_${BASE}_fs1_full.pt
+  C1=/workspace/caches/tr_${BASE}_fs1.pt
+  C5=/workspace/caches/tr_${BASE}_fs5.pt
+  if [ ! -f "$C5" ]; then
+    CUDA_VISIBLE_DEVICES=0 python3 scripts/trm/cache_latents.py \
+      --wm /workspace/swm_home/checkpoints/${BASE}_reacher --dataset "$CANON" \
+      --out "$C1F" --state-key qpos --batch-size 512 > /workspace/logs/cache1.log 2>&1
+    python3 - <<'PY'
+  import os, torch, numpy as np
+  B = os.environ["BASE"]
+  src, dst = f"/workspace/caches/canon_{B}_fs1_full.pt", f"/workspace/caches/tr_{B}_fs1.pt"
+  c = torch.load(src, map_location="cpu", weights_only=False)
+  e = np.asarray(c["episode_idx"]); m = e < 8000
+  out = {k: (v[torch.from_numpy(m)] if torch.is_tensor(v) and len(v) == len(e)
+             else (v[m] if hasattr(v, "shape") and len(v) == len(e) else v)) for k, v in c.items()}
+  assert np.asarray(out["episode_idx"]).max() < 8000
+  torch.save(out, dst)
+  print(f"[filter] {len(e)} -> {len(np.asarray(out['episode_idx']))} rows", flush=True)
+  PY
+    rm -f "$C1F"
+    CUDA_VISIBLE_DEVICES=0 python3 scripts/trm/subsample_cache.py --in "$C1" --out "$C5" \
+      --frameskip 5 > /workspace/logs/cache5.log 2>&1
+  fi
+
+  # window value, STANDARDIZED numbers on the clean split
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
+  WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
+  [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
+    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
+    --boundary ${RS_BOUNDARY:-legacy} \
+    --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
+  [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
+  echo "[setup] reacher/${BASE} ready"
+
+run: |
+  set -uo pipefail
+  # pod_src_20260804's LIPSolver predates the graphed kwarg; pass it only when enabled
+  GRAPHED_FLAG=""
+  [ "${GRAPHED_MODE:-false}" != false ] && GRAPHED_FLAG="+solver.graphed=${GRAPHED_MODE}"
+  # node + physical GPU identity, so an XID alert (which names only a node
+  # and a PCI address) can be tied to a job by grep instead of by hand.
+  echo "[node] $(hostname) | gpus: $(nvidia-smi --query-gpu=index,uuid --format=csv,noheader 2>/dev/null | tr '\n' ' ' || echo unavailable)"
+  cd /workspace/swm_cem
+  export STABLEWM_HOME=/workspace/swm_home PYTHONPATH=/workspace/swm_cem TQDM_DISABLE=1
+  export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8
+  export HDF5_PLUGIN_PATH=$(python3 -c 'import hdf5plugin; print(hdf5plugin.PLUGIN_PATH)')
+  export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+  CANON=/workspace/datasets_canon/lewm-reacher/reacher.h5
+  SLIM=/workspace/reacher_slim.h5
+  WM=/workspace/swm_home/checkpoints/${BASE}_reacher
+  PROFILE=reacher-lewm; [ "$BASE" = pldm ] && PROFILE=reacher-pldm
+  if [ -z "${EXPAND:-}" ]; then
+    EXPAND=0
+    [ "$BASE" = pldm ] && EXPAND=1
+  fi
+  export EXPAND
+  C1=/workspace/caches/tr_${BASE}_fs1.pt
+  C5=/workspace/caches/tr_${BASE}_fs5.pt
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
+  PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
+  export PERSIST
+  ACTORS=$PERSIST/actors; METRICS=$PERSIST/metrics; RESULTS=$PERSIST/results
+  if [ -n "${ACTOR_IMPORT_TAG:-}" ]; then
+    mkdir -p "$ACTORS"
+    for _t in ${ACTOR_IMPORT_TAG}; do
+      cp -n /checkpoints/${PANTHEON_USER}/${_t}/actors/*.pt "$ACTORS"/ 2>/dev/null || true
+    done
+    echo "[import] $(ls "$ACTORS" | wc -l) actors from: ${ACTOR_IMPORT_TAG}"
+  fi
+  # DEPLOY_AMAX: rewrite imported actors' TOP-LEVEL amax (deploy clamp) --
+  # see tworoom_g98_rescue.yaml for the rationale. Eval-only.
+  if [ -n "${DEPLOY_AMAX:-}" ]; then
+    [ "${REUSE_ONLY:-0}" = 1 ] || { echo "DEPLOY_AMAX requires REUSE_ONLY=1" >&2; exit 2; }
+    ACTORS="$ACTORS" DEPLOY_AMAX="$DEPLOY_AMAX" python3 - <<'PYDA'
+  import glob, os, torch
+  v = float(os.environ["DEPLOY_AMAX"])
+  fs = sorted(glob.glob(os.path.join(os.environ["ACTORS"], "*.pt")))
+  assert fs, "DEPLOY_AMAX: no imported actors to rewrite"
+  for f in fs:
+      ck = torch.load(f, map_location="cpu", weights_only=False)
+      old = ck.get("amax")
+      ck["amax"] = v
+      torch.save(ck, f)
+      print(f"[deploy-amax] {os.path.basename(f)}: {old} -> {v}", flush=True)
+  PYDA
+  fi
+  LOGDIR=$PERSIST/logs
+  FAILDIR=$RESULTS/failures
+  mkdir -p "$ACTORS" "$METRICS" "$RESULTS" "$LOGDIR" "$FAILDIR"
+  # Failure sentinels are attempt-local.  A corrected managed-job relaunch uses
+  # the same EXPERIMENT_TAG to resume training state and must not inherit a
+  # stale hard-failure verdict from the previous payload.
+  find "$FAILDIR" -maxdepth 1 -type f -delete
+  DRV=$RESULTS/driver.log
+  SUM=$RESULTS/summary.csv; touch "$SUM"
+  # failed cells (recorded as =FAIL by an earlier payload) must retry, not
+  # be skipped by the grep-based resume check
+  sed -i '/=FAIL/d' "$SUM" 2>/dev/null || true
+  SLOT=/workspace/logs/slots; mkdir -p "$SLOT"
+  # GRANULAR amax (0.2 steps) around each base's carded winner -- the old
+  # amax closure predates the standardized recipe and must be re-found.
+  # mw/lr pinned to two anchors: the base's carded winner + the cross-env
+  # winner (m0.3, 3e-4).
+  AMS="1.4 1.6 1.8 2.0 2.2 2.4 2.6"; COMBOS="0.3:1e-4 0.3:3e-4"
+  [ "$BASE" = pldm ] && { AMS="1.2 1.4 1.6 1.8 2.0 2.2 2.4"; COMBOS="0.1:3e-4 0.3:3e-4"; }
+  SEL="50 51"; REP="${REPORT_DRAWS:-42 43 44}"
+  [ "${SELECTION_ONLY:-0}" = 1 ] && REP=""
+  [ "${REPORT_ONLY:-0}" = 1 ] && SEL=""
+  # Planner arms have no hyperparameter/checkpoint selection; measure only the
+  # three predeclared reporting draws. RLP keeps 50/51 for model selection.
+  CFG=()
+  for AM in $AMS; do
+    for CO in $COMBOS; do
+      MW=${CO%%:*}; LR=${CO##*:}
+      CFG+=("rs_a${AM}_m${MW}_l${LR} $AM $MW $LR")
+    done
+  done
+  STEPS=${STEPS:-6000}
+  if [ "${SMOKE:-0}" = 1 ]; then
+    CFG=("${CFG[0]}"); TRAIN_SEEDS="0"; STEPS=60; SEL="50"; REP=""
+    echo "[smoke] one config, 60 steps"
+  fi
+  # GRID=cross: the expand x replay ablation at a pinned amax. Rows carry
+  # their own expand/replay so one job measures the whole 4x3 cross.
+  if [ "${GRID}" = cross ]; then
+    AF=${AMFIX:-2.2}
+    [ "$BASE" = pldm ] && AF=${AMFIX:-1.4}
+    CO_MW=0.3; CO_LR=1e-4
+    [ "$BASE" = pldm ] && { CO_MW=0.5; CO_LR=3e-4; }   # paper PLDM anchor m0.5
+    CO_MW=${CROSS_MW:-$CO_MW}; CO_LR=${CROSS_LR:-$CO_LR}
+    CFG=()
+    for XW in ${CROSS_EXPANDS:-0 0.5 1.0 3.0}; do
+      for RP in ${CROSS_REPLAYS:-0 0.25 0.5}; do
+        CFG+=("rs_x${XW}_r${RP} $AF $CO_MW $CO_LR $XW $RP")
+      done
+    done
+  fi
+  # Twelve targeted PLDM refinements, evaluated at all three training seeds:
+  # amax {1.2,1.4,1.6} x mean-weight {0.2,0.5} x actor-lr {1e-4,6e-4}.
+  # The already-completed m0.3/l3e-4 runs are the centre anchor. This factorial
+  # probes both sides of mean weighting and learning rate while leaving all
+  # critic/data/co-training hypers untouched.
+  if [ "${GRID}" = pldm_refine ]; then
+    [ "$BASE" = pldm ] || { echo "GRID=pldm_refine requires BASE=pldm"; exit 2; }
+    CFG=()
+    for AM in 1.2 1.4 1.6; do
+      for MW in 0.2 0.5; do
+        for LR in 1e-4 6e-4; do
+          CFG+=("rs_ref_a${AM}_m${MW}_l${LR} $AM $MW $LR")
+        done
+      done
+    done
+  fi
+  # Six stop-gradient telescoping configs plus one fixed terminal control.
+  # Fields: name amax mean-weight actor-lr expand replay temporal-objective.
+  if [ "${GRID}" = telescoping ] || [ "${GRID}" = telescoping_all ]; then
+    CFG=()
+    if [ "$BASE" = pldm ]; then AMS="1.2 1.4 1.6"; CONTROL=1.4; MW=0.1; CLR=3e-4
+    else AMS="2.0 2.4 2.8"; CONTROL=2.4; MW=0.3; CLR=1e-4; fi
+    for AM in $AMS; do
+      for LR in 1e-4 3e-4; do
+        CFG+=("telex_a${AM}_l${LR} $AM $MW $LR 0 0.5 tel-exact")
+      done
+    done
+    CFG+=("terminal_control_a${CONTROL} ${CONTROL} $MW $CLR 0 0.5 terminal")
+  fi
+  # Standard terminal-objective search under the replacement first-hit
+  # reporting protocol. Thresholds affect evaluation only: every final actor
+  # is evaluated in separate tau=.1 and tau=.05 simulator passes.
+  if [ "${GRID}" = latched_terminal_search ]; then
+    CFG=()
+    if [ "$BASE" = pldm ]; then AMS="1.0 1.4 1.8"; BEST_EXPAND=1
+    else AMS="2.0 2.4 2.8"; BEST_EXPAND=0; fi
+    # paper App C.3 winners use expand 0 everywhere on Reacher; honor an
+    # explicit EXPAND override (2026-08-13 split replication)
+    [ -n "${EXPAND:-}" ] && BEST_EXPAND=$EXPAND
+    if [ "${INCLUDE_PAPER:-0}" = 1 ]; then
+      # the checkpoint-verified recipe behind the paper's reacher numbers
+      # (reacher/HYPERS_20260802.md): LeWM a2.2/m0.3/lr1e-4, PLDM a1.8/m0.5/lr3e-4
+      CFG+=("rs_latched_terminal_a2.2_m0.3_l1e-4 2.2 0.3 1e-4 ${BEST_EXPAND} 0.5 terminal")
+    fi
+    for AM in $AMS; do
+      for MW in 0.1 0.3 0.5; do
+        for LR in 1e-4 3e-4; do
+          CFG+=("rs_latched_terminal_a${AM}_m${MW}_l${LR} $AM $MW $LR ${BEST_EXPAND} 0.5 terminal")
+        done
+      done
+    done
+  fi
+  # PLDM window-1 RLP deconfound: the w1 retrain (jobs 4804/4805) reused the
+  # w3-selected winners (amax=1.0, expand=1) without re-selection, so base
+  # identity, expand-weight, and amax transfer are aliased in the collapse
+  # (87.8/60.7 vs w3 99.8/90.7). This 2x2 separates them at mw0.3/lr1e-4:
+  # rows carry their own expand (field 5); replay 0.5, terminal objective.
+  # Run with VALUE_FRAMES=1 so the critic init IS the memoryless w1 value.
+  if [ "${GRID}" = w1_diagnosis ]; then
+    # per-base arms: {transferred-lower, the base's w3-recipe amax}
+    if [ "$BASE" = pldm ]; then W1D_AMS="1.0 1.8"; else W1D_AMS="1.4 2.2"; fi
+    CFG=()
+    for AM in $W1D_AMS; do
+      CFG+=("rs_w1diag_x0_a${AM} ${AM} 0.3 1e-4 0 0.5 terminal")
+      CFG+=("rs_w1diag_x1_a${AM} ${AM} 0.3 1e-4 1 0.5 terminal")
+    done
+  fi
+  # PLDM window-1 RE-SELECTION grid (user-directed 2026-08-12): the w1 numbers
+  # so far reuse w3-selected winners; this searches amax x mw x lr x expand
+  # FRESH at window-1. Shard by amax via W1_AMS (12 configs x 3 seeds per
+  # shard). Run with SELECTION_ONLY=1 (draws 50/51); report winners after.
+  if [ "${GRID}" = w1_grid ]; then
+    [ "$BASE" = pldm ] || { echo "GRID=w1_grid requires BASE=pldm"; exit 2; }
+    CFG=()
+    for AM in ${W1_AMS}; do
+      for MW in ${W1_MWS}; do
+        for LR in ${W1_LRS}; do
+          for XW in ${W1_EXPANDS}; do
+            CFG+=("rs_w1g_a${AM}_m${MW}_l${LR}_x${XW} $AM $MW $LR $XW 0.5 terminal")
+          done
+        done
+      done
+    done
+  fi
+  if [ -n "${ONLYCFG:-}" ]; then
+    NEW=()
+    for row in "${CFG[@]}"; do
+      for pat in ${ONLYCFG}; do
+        case "$row" in ${pat}*) NEW+=("$row"); break;; esac
+      done
+    done
+    CFG=("${NEW[@]}")
+  fi
+  echo "[grid] reacher/${BASE} -> ${#CFG[@]} configs x seeds ${TRAIN_SEEDS}, amax {${AMS}}, expand ${EXPAND}"
+  FROZEN_ARGS=""
+  [ "${ACTOR_ONLY:-0}" = 1 ] && FROZEN_ARGS="--actor-only --reuse-refinement-rollouts --cache-device auto"
+
+  acquire() { local s; while :; do
+      for s in $(seq 0 $((MAXPAR - 1))); do
+        mkdir "$SLOT/$s" 2>/dev/null && { echo "$s"; return; }
+      done; sleep 15; done; }
+
+  # EGL evaluation is serialized across every managed job colocated on a
+  # physical node. This lock deliberately lives outside EXPERIMENT_TAG.
+  reacher_eval_lock() {
+    exec 9>/mnt/raid0/rlp-reacher-egl-eval.lock
+    flock 9
+  }
+  reacher_eval_unlock() {
+    flock -u 9 || true
+    exec 9>&-
+  }
+
+  # First-hit Reacher protocol. Each tolerance gets its own simulator pass:
+  # stopping at 0.1 rad would otherwise make a later 0.05-rad hit impossible
+  # to observe. World.evaluate latches the first hit and marks that individual
+  # vector environment done before the next simulator step.
+  if [ "${GRID}" = latched_measurements ]; then
+    SUMP="$RESULTS/latched_measurements.csv"
+    touch "$SUMP"
+    if [ "${PRE_MEASUREMENT_SMOKE:-0}" = 1 ]; then
+      SMP=""; for _p in ${PLANNERS:-cem adam mppi}; do SMP=$_p; break; done
+      SMTAU=""; for _t in ${SUCCESS_THRESHOLDS}; do SMTAU=$_t; break; done
+      for SMCOST in ${MEASUREMENT_COSTS:-latent value}; do
+        SMCRIT="$W3"
+        if [ "$SMCOST" = latent ]; then
+          SMCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+          [ -f "$SMCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
+        fi
+        [ -f "$SMCRIT" ] || { echo "[smoke-fail] missing critic $SMCRIT"; exit 1; }
+        SMLOG="$LOGDIR/smoke_${BASE}_${SMCOST}_${SMP}_tau${SMTAU}.log"
+        SMBS=10; [ "$SMP" = adam ] && SMBS=1
+        reacher_eval_lock
+        # A 5-step planner applies 5-frame action blocks, so 25 is the
+        # minimum valid smoke budget; smaller values fail before evaluation.
+        MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0 CUDA_VISIBLE_DEVICES=0 \
+        timeout 1800 python3 scripts/plan/eval_wm.py --config-name reacher \
+          policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+          +eval.ep_range=8000:10000 seed=42 \
+          eval.goal_offset_steps=25 eval.eval_budget=25 \
+          +eval.success_threshold=$SMTAU +eval.terminate_on_success=true \
+          plan_config.receding_horizon=${PLANNER_RH} \
+          solver=$SMP solver.batch_size=$SMBS solver.n_steps=${PLANNER_STEPS:-10} "+metric=$SMCRIT" \
+          output.filename="smoke_${BASE}_${SMCOST}_${SMP}.txt" > "$SMLOG" 2>&1
+        SMRC=$?
+        reacher_eval_unlock
+        [ "$SMRC" -eq 0 ] || { echo "[smoke-fail] ${SMCOST}+${SMP} rc=${SMRC}"; tail -40 "$SMLOG"; exit 1; }
+        grep -q "metric-hook" "$SMLOG" || { echo "[smoke-fail] metric hook absent: ${SMCOST}+${SMP}"; tail -40 "$SMLOG"; exit 1; }
+        grep -q "LATCHED-first-hit tau=${SMTAU}rad" "$SMLOG" || { echo "[smoke-fail] latched output absent: ${SMCOST}+${SMP}"; tail -40 "$SMLOG"; exit 1; }
+        echo "[smoke-pass] reacher/${BASE} ${SMCOST}+${SMP} tau=${SMTAU}"
+      done
+    fi
+    for COST in ${MEASUREMENT_COSTS:-latent value}; do
+      VCRIT="$W3"
+      if [ "$COST" = latent ]; then
+        VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+        [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
+        [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-1} build failed"; exit 1; }
+      fi
+      for TAU in ${SUCCESS_THRESHOLDS}; do
+        TAUTAG=${TAU/./p}
+        for P in ${PLANNERS:-cem adam mppi}; do
+        for ES in $REP; do
+          NMP="${BASE}_${COST}_${P}_latched_tau${TAUTAG}_rh${PLANNER_RH}_h25_e${ES}"
+          grep -Eq "^${NMP},.*success=[0-9]" "$SUMP" 2>/dev/null && continue
+          G=$(acquire)
+          (
+            BS=10; [ "$P" = adam ] && BS=1
+            reacher_eval_lock
+            MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=$G CUDA_VISIBLE_DEVICES=$G \
+            timeout ${CELL_TIMEOUT:-21600} python3 scripts/plan/eval_wm.py --config-name reacher \
+              policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+              +eval.ep_range=8000:10000 seed=$ES \
+              eval.goal_offset_steps=25 eval.eval_budget=50 \
+              +eval.success_threshold=$TAU +eval.terminate_on_success=true \
+              plan_config.receding_horizon=${PLANNER_RH} \
+              solver=$P solver.batch_size=$BS solver.n_steps=${PLANNER_STEPS:-10} "+metric=$VCRIT" \
+              output.filename="${NMP}.txt" > "$LOGDIR/latched_${NMP}.log" 2>&1
+            RC=$?
+            reacher_eval_unlock
+            SCORE=$(grep -E "LATCHED-first-hit tau=${TAU}rad" \
+              "$LOGDIR/latched_${NMP}.log" | tail -1 \
+              | sed -E 's/.*rad ([0-9.]+).*/\1/')
+            HOOK=0; grep -q "metric-hook" "$LOGDIR/latched_${NMP}.log" && HOOK=1
+            if [ "$RC" -ne 0 ] || [ -z "$SCORE" ] || [ "$HOOK" -ne 1 ]; then
+              echo "[cell-fail] ${NMP}:" >&2
+              tail -40 "$LOGDIR/latched_${NMP}.log" | sed 's/^/  | /' >&2
+              touch "$FAILDIR/measurement_${NMP}"
+              SCORE=FAIL
+            fi
+            echo "${NMP},base=${BASE},cost=${COST},planner=${P},tau=${TAU},draw=${ES},success=${SCORE}" >> "$SUMP"
+            echo "[cell] ${NMP} tau=${TAU} success=${SCORE:-FAIL}"
+            rmdir "$SLOT/$G" 2>/dev/null
+          ) &
+        done
+        done
+      done
+    done
+    wait
+    export LATCHED_RESULTS_CSV="$SUMP"
+    python3 - <<'PY'
+  import collections, os, statistics, wandb
+
+  rows = collections.defaultdict(list)
+  cells = {}
+  path = os.environ['LATCHED_RESULTS_CSV']
+  for line in open(path):
+      fields = line.strip().split(',')
+      data = dict(x.split('=', 1) for x in fields[1:] if '=' in x)
+      if data.get('success', 'FAIL') == 'FAIL':
+          continue
+      key = (data['cost'], data['planner'], data['tau'])
+      value = float(data['success'])
+      rows[key].append(value)
+      cells[fields[0]] = value
+
+  base = os.environ['BASE']
+  run = wandb.init(
+      project=os.environ['WANDB_PROJECT'], entity=os.environ['WANDB_ENTITY'],
+      name=f"reacher_latched_{base}_{os.environ['EXPERIMENT_TAG']}", job_type='latched_measurements',
+      config={
+          'base': base,
+          'success_convention': 'latched-first-hit-terminate',
+          'thresholds_rad': [0.1, 0.05],
+          'receding_horizon': int(os.environ['PLANNER_RH']),
+      }, reinit=True,
+  )
+  print(f'\n=== Reacher/{base}: latched first-hit, terminate on success ===')
+  for (cost, planner, tau), values in sorted(rows.items()):
+      mean = sum(values) / len(values)
+      sd = statistics.stdev(values) if len(values) > 1 else 0.0
+      tag = tau.replace('.', 'p')
+      print(f'  {cost}+{planner} tau={tau}: {mean:5.1f} +- {sd:4.1f} (n={len(values)})')
+      run.summary[f'eval/{cost}_{planner}_tau{tag}_mean'] = mean
+      run.summary[f'eval/{cost}_{planner}_tau{tag}_sd'] = sd
+      run.summary[f'eval/{cost}_{planner}_tau{tag}_n'] = len(values)
+  for key, value in cells.items():
+      run.summary[f'cell/{key}'] = value
+  artifact = wandb.Artifact(f"reacher_latched_{base}_{os.environ['EXPERIMENT_TAG']}_cells", type='results')
+  artifact.add_file(path)
+  run.log_artifact(artifact)
+  run.finish()
+  print('[latched-measurements] complete')
+  PY
+    if find "$FAILDIR" -maxdepth 1 -name 'measurement_*' -print -quit | grep -q .; then
+      echo "[latched-measurements] one or more cells failed" >&2
+      exit 1
+    fi
+    exit 0
+  fi
+
+  # GRID=planners: hold the BASE fixed (same WM, same TD critic, same data
+  # mixture) and vary ONLY the planner -- the sampling/gradient arms of the
+  # value-metric row, re-measured against the identical critic the LIP actor
+  # was trained on. No actor training happens in this mode.
+  # GRID=pwm: the reactive-policy baseline. pi(z, z_g) -> action block, ZERO
+  # world-model rollouts at deploy -- the compute floor of the table. Trained
+  # against the SAME window value the RLP actor uses (--init-value), budget
+  # matched to RLP's step count, so the contrast is refinement-vs-amortisation
+  # at a fixed cost (RESULTS_PAPER_20260802 4.2).
+  if [ "${GRID}" = pwm ]; then
+    export VBASE_PY="${BASE}_pwm" VCRIT_PY="$W3"
+    SUMP=/workspace/results/pwm.csv; touch "$SUMP"
+    # amax sweep. Jobs 2505/2506 pinned amax to the RLP-tuned value and PWM
+    # collapsed on 2 of 3 seeds (lejepa 1.7/68.7/1.7 @0.1) and on 3 of 3 (pldm,
+    # mean 1.1) -- the signature of an unstable operating point, not of a
+    # uniformly wrong one. PWM's own optimum has never been measured on any
+    # environment. Empty PWM_AMAX reproduces the old single-value behaviour.
+    AMS="${PWM_AMAX}"
+    [ -z "$AMS" ] && { AMS=2.2; [ "$BASE" = pldm ] && AMS=1.8; }
+    echo "[pwm] ${BASE}: amax sweep over [${AMS}] x seeds [${TRAIN_SEEDS}]"
+    for AM in ${AMS}; do
+    for SEED in ${TRAIN_SEEDS}; do
+      OUTP=/workspace/actors/pwm_${BASE}_a${AM}_s${SEED}.pt
+      if [ ! -f "$OUTP" ]; then
+        CUDA_VISIBLE_DEVICES=0 timeout 21600 python3 scripts/plan/train_pwm_ac.py \
+          --cache "$C5" --cache-td "$C1" --wm "$WM" --init-value "$W3" \
+          --terminal --horizon 5 --gamma 0.99 --amax $AM \
+          --width 512 --layers 3 --actor-lr 5e-4 --actor-lr-final 5e-5 \
+          --steps ${STEPS:-1000} --seed ${SEED} \
+          --out "$OUTP" --out-value /workspace/metrics/pwm_${BASE}_a${AM}_s${SEED}_value.pt \
+          > /workspace/logs/pwm_train_a${AM}_s${SEED}.log 2>&1 \
+          || { echo "[pwm-train-fail] a${AM} s${SEED}:"; tail -25 /workspace/logs/pwm_train_a${AM}_s${SEED}.log | sed 's/^/  | /'; }
+      fi
+      [ -f "$OUTP" ] || continue
+      for ES in $SEL $REP; do
+        NMP="${BASE}_pwm_a${AM}_s${SEED}_e${ES}"
+        grep -q "^${NMP}," "$SUMP" 2>/dev/null && continue
+        G=$(acquire)
+        (
+          MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=$G CUDA_VISIBLE_DEVICES=$G \
+          timeout 10800 python3 scripts/plan/eval_wm.py --config-name reacher \
+            policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+            +eval.ep_range=8000:10000 seed=$ES \
+            eval.goal_offset_steps=25 eval.eval_budget=50 \
+            plan_config.receding_horizon=5 \
+            solver=pwm solver.batch_size=10 "solver.actor_path=$OUTP" \
+            output.filename="${NMP}.txt" > /workspace/logs/pw_${NMP}.log 2>&1
+          h05=$(grep -oE "HELD-at-end [0-9.]+" /workspace/logs/pw_${NMP}.log | tail -1 | grep -oE "[0-9.]+")
+          h10=$(grep -oE "0\.1rad [0-9.]+" /workspace/logs/pw_${NMP}.log | tail -1 | sed -E "s/0\.1rad //")
+          [ -z "$h05" ] && { echo "[cell-fail] ${NMP}:"
+            tail -25 /workspace/logs/pw_${NMP}.log | sed 's/^/  | /'; } >&2
+          echo "${NMP},held05=${h05:-FAIL},held10=${h10:-FAIL}" >> "$SUMP"
+          echo "[cell] ${NMP} held05=${h05:-FAIL} held10=${h10:-FAIL}"
+          rmdir "$SLOT/$G" 2>/dev/null
+        ) &
+      done
+    done
+    done
+    wait
+    python3 - <<'PY'
+  import collections, os, re, statistics, wandb
+  rows = {}
+  for ln in open("/workspace/results/pwm.csv"):
+      p = ln.strip().split(",")
+      d = dict(x.split("=") for x in p[1:] if "=" in x)
+      if d.get("held05", "FAIL") != "FAIL":
+          rows[p[0]] = (float(d["held05"]), float(d["held10"]))
+  base = os.environ["VBASE_PY"]
+  # key: <base>_pwm_a<amax>_s<seed>_e<draw>. Group by (amax, sel|rep) -- pooling
+  # across amax would average a working operating point with a collapsed one,
+  # which is exactly how 2505's "24.0" hid a 2-of-3 collapse.
+  KEY = re.compile(r"_a([0-9.]+)_s(\d+)_e(\d+)$")
+  agg = collections.defaultdict(lambda: ([], []))
+  per_seed = collections.defaultdict(lambda: ([], []))
+  for k, (a, b) in rows.items():
+      m = KEY.search(k)
+      if not m:
+          continue
+      am, seed, es = m.group(1), m.group(2), int(m.group(3))
+      tag = "sel" if es in (50, 51) else "rep"
+      agg[(am, tag)][0].append(a); agg[(am, tag)][1].append(b)
+      if tag == "rep":
+          per_seed[(am, seed)][0].append(a); per_seed[(am, seed)][1].append(b)
+  r = wandb.init(project=os.environ["WANDB_PROJECT"], entity=os.environ["WANDB_ENTITY"],
+                 name=f"reacher_{base}", job_type="pwm", config={"base": base}, reinit=True)
+  print(f"\n=== PWM (reactive, 0 rollouts), reacher/{base} ===")
+  for (am, tag), (a05, a10) in sorted(agg.items(), key=lambda x: (float(x[0][0]), x[0][1])):
+      m05, m10 = sum(a05)/len(a05), sum(a10)/len(a10)
+      sd = statistics.stdev(a10) if len(a10) > 1 else 0.0
+      print(f"  amax {am:>4} {tag}: {m10:5.1f} @0.1 / {m05:5.1f} @0.05  +-{sd:4.1f} (n={len(a10)})")
+      r.summary[f"eval/a{am}_{tag}_held10"] = m10; r.summary[f"eval/a{am}_{tag}_held05"] = m05
+      r.summary[f"eval/a{am}_{tag}_held10_sd"] = sd; r.summary[f"eval/a{am}_{tag}_n"] = len(a10)
+  # per-seed report means: the collapse is only visible before averaging
+  print("  --- per-seed (report draws), collapse check ---")
+  for (am, seed), (a05, a10) in sorted(per_seed.items(), key=lambda x: (float(x[0][0]), x[0][1])):
+      m10 = sum(a10)/len(a10); m05 = sum(a05)/len(a05)
+      print(f"  amax {am:>4} seed {seed}: {m10:5.1f} @0.1 / {m05:5.1f} @0.05"
+            + ("   <-- COLLAPSED" if m10 < 10 else ""))
+      r.summary[f"seed/a{am}_s{seed}_held10"] = m10
+      r.summary[f"seed/a{am}_s{seed}_held05"] = m05
+  for k, (a, b) in rows.items():
+      r.summary[f"cell/{k}_held05"] = a; r.summary[f"cell/{k}_held10"] = b
+  r.finish(); print("[wandb] logged")
+  PY
+    echo "[pwm] complete"; exit 0
+  fi
+  if [ "${GRID}" = planners ] || [ "${GRID}" = measurements ] || [ "${GRID}" = telescoping_all ]; then
+    export I3_MODE=deadline
+    READOUT="rh${PLANNER_RH}"
+    PDLFLAG=()
+    if [ -n "${PLANNER_DEADLINE:-}" ]; then
+      READOUT="rh${PLANNER_RH}_deadline${PLANNER_DEADLINE}"
+      PDLFLAG=("+plan_config.deadline=${PLANNER_DEADLINE}")
+    fi
+    export READOUT
+    COSTS=${COST}
+    [ "${GRID}" = measurements ] && COSTS="latent value"
+    [ "${GRID}" = telescoping_all ] && COSTS="latent value"
+    for COST in $COSTS; do
+    # latent arm: parameter-free L2 over the same 3-frame window the value uses.
+    # NOT raw latent distance -- on reacher the published "Latent + CEM" bar is
+    # l2window3 (empty state_dict) through the identical metric hook, so the
+    # value-vs-latent contrast isolates LEARNED vs UNLEARNED, not window vs no
+    # window.
+    VCRIT="$W3"
+    if [ "${COST}" = latent ]; then
+      VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
+      [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
+      [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-1} build failed"; exit 1; }
+    fi
+    export VBASE_PY="${BASE}_${COST}" VCRIT_PY="$VCRIT"
+    export COST
+    SUMP=/workspace/results/${COST}_planners_${READOUT}.csv; touch "$SUMP"
+    for P in ${PLANNERS:-cem adam mppi}; do
+    for O in 25; do
+    PSEEDS="$SEL $REP"
+    { [ "${GRID}" = measurements ] || [ "${GRID}" = telescoping_all ]; } && PSEEDS="$REP"
+    for ES in $PSEEDS; do
+      NMP="${BASE}_${COST}_${P}_${READOUT}_h${O}_e${ES}"
+      grep -q "^${NMP}," "$SUMP" 2>/dev/null && continue
+      G=$(acquire)
+      (
+        BS=10; [ "$P" = adam ] && BS=1     # backward graph; chunk envs
+        MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=$G CUDA_VISIBLE_DEVICES=$G \
+        timeout 21600 python3 scripts/plan/eval_wm.py --config-name reacher \
+          policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+          +eval.ep_range=8000:10000 seed=$ES \
+          eval.goal_offset_steps=$O eval.eval_budget=$((O * 2)) \
+          plan_config.receding_horizon=${PLANNER_RH} "${PDLFLAG[@]}" \
+          solver=$P solver.batch_size=$BS solver.n_steps=${PLANNER_STEPS:-10} "+metric=$VCRIT" \
+          output.filename="${NMP}.txt" > /workspace/logs/pl_${NMP}.log 2>&1
+        h05=$(grep -oE "HELD-at-end [0-9.]+" /workspace/logs/pl_${NMP}.log | tail -1 | grep -oE "[0-9.]+")
+        h10=$(grep -oE "0\.1rad [0-9.]+" /workspace/logs/pl_${NMP}.log | tail -1 | sed -E "s/0\.1rad //")
+        [ -z "$h05" ] && { echo "[cell-fail] ${NMP}:"
+          tail -25 /workspace/logs/pl_${NMP}.log | sed 's/^/  | /'; } >&2
+        grep -q "metric-hook" /workspace/logs/pl_${NMP}.log \
+          || echo "[warn] ${NMP}: metric hook never fired (silent latent fallback)" >&2
+        echo "${NMP},held05=${h05:-FAIL},held10=${h10:-FAIL}" >> "$SUMP"
+        echo "[cell] ${NMP} held05=${h05:-FAIL} held10=${h10:-FAIL}"
+        rmdir "$SLOT/$G" 2>/dev/null
+      ) &
+    done; done; done
+    wait
+    python3 - <<'PY'
+  import collections, os, statistics, wandb
+  rows = {}
+  cost = os.environ["COST"]
+  readout = os.environ["READOUT"]
+  for ln in open(f"/workspace/results/{cost}_planners_{readout}.csv"):
+      p = ln.strip().split(",")
+      d = dict(x.split("=") for x in p[1:] if "=" in x)
+      if d.get("held05", "FAIL") != "FAIL":
+          rows[p[0]] = (float(d["held05"]), float(d["held10"]))
+  base = os.environ.get("VBASE_PY", "BASE")
+  agg = collections.defaultdict(lambda: ([], []))
+  for k, (a, b) in rows.items():
+      # Cell IDs are base_cost_planner_readout_horizon_evaldraw.  The readout
+      # itself may contain underscores (for example rh1_deadline50), so parsing
+      # from the right with a fixed field count would mislabel the planner.
+      fields = k.split("_")
+      planner, h, e = fields[2], fields[-2], fields[-1]
+      es = int(e[1:])
+      tag = "sel" if es in (50, 51) else "rep"
+      agg[(planner, tag)][0].append(a); agg[(planner, tag)][1].append(b)
+  r = wandb.init(project=os.environ["WANDB_PROJECT"], entity=os.environ["WANDB_ENTITY"],
+                 name=f"reacher_valueplanners_{base}_{readout}", job_type="value_planners",
+                 config={"base": base, "critic": os.environ.get("VCRIT_PY", ""),
+                         "readout": readout}, reinit=True)
+  print(f"\n=== value metric x planner, reacher/{base} (held-at-end) ===")
+  for (planner, tag), (a05, a10) in sorted(agg.items()):
+      m05, m10 = sum(a05)/len(a05), sum(a10)/len(a10)
+      sd = statistics.stdev(a10) if len(a10) > 1 else 0.0
+      print(f"  {tag} value+{planner:5s}: {m10:5.1f} @0.1 / {m05:5.1f} @0.05  (n={len(a10)})")
+      r.summary[f"eval/{tag}_{planner}_held10"] = m10
+      r.summary[f"eval/{tag}_{planner}_held05"] = m05
+      r.summary[f"eval/{tag}_{planner}_held10_sd"] = sd
+      r.summary[f"eval/{tag}_{planner}_n"] = len(a10)
+  for k, (a, b) in rows.items():
+      r.summary[f"cell/{k}_held05"] = a; r.summary[f"cell/{k}_held10"] = b
+  art = wandb.Artifact(f"reacher_valueplanners_{base}_cells", type="results")
+  art.add_file(f"/workspace/results/{cost}_planners_{readout}.csv")
+  r.log_artifact(art); r.finish()
+  print("[wandb] logged")
+  PY
+    echo "[${COST}-planners] complete"
+    done
+    [ "${GRID}" = telescoping_all ] || exit 0
+  fi
+
+  for SEED in ${TRAIN_SEEDS}; do
+  for row in "${CFG[@]}"; do
+    set -- $row; NM=$1; AMAX=$2; MW=$3; LR=$4; XW=${5:-$EXPAND}; RP=${6:-$REPLAY}; TOBJ=${7:-terminal}
+    [ "${ACTOR_ONLY:-0}" = 1 ] && XW=0
+    OUT=$ACTORS/${NM}_${BASE}_s${SEED}.pt
+    S=$(acquire)
+    (
+      if [ ! -f "$OUT" ]; then
+        if [ "${REUSE_ONLY:-0}" = 1 ]; then
+          echo "[reuse-only] missing final actor: $OUT" >&2
+          touch "$FAILDIR/train_${NM}_s${SEED}"
+        else
+          LRF=$(python3 -c "print('%g' % (float('$LR') / 10))")
+          STATE=${OUT}.trainstate.pt
+          STATE_ARGS=()
+          if [ "${ACTOR_ONLY:-0}" = 1 ]; then
+            STATE_ARGS=(--save-train-state "$STATE" --state-every 100)
+            [ -f "$STATE" ] && STATE_ARGS+=(--resume-state "$STATE")
+          fi
+          DGFLAG=""; [ "${DROP_GRAD:-0}" = 1 ] && DGFLAG="--drop-grad"
+          CUDA_VISIBLE_DEVICES=$S timeout ${TRAIN_TIMEOUT:-64800} python3 scripts/plan/train_lip_ac.py \
+          --cache "$C5" --cache-td "$C1" --h5 "$SLIM" --wm "$WM" --pad-context ${DGFLAG} \
+          --init-value "$W3" \
+          --recipe-profile "$PROFILE" \
+          --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step ${RS_NSTEP:-50} \
+          --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} \
+          --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
+          --critic-lr 1e-3 --critic-lr-final 1e-4 \
+          --replay-prob $RP --expand-weight $XW --freeze-critic-frac 0.5 ${FROZEN_ARGS} \
+          --lambda-schedule uniform --mean-weight $MW --amax $AMAX \
+          --temporal-objective "$TOBJ" \
+          --steps $STEPS --batch ${BATCH:-128} --ckpt-every ${CKPT_EVERY:-0} \
+          --actor-lr $LR --actor-lr-final $LRF --seed ${SEED} \
+          "${STATE_ARGS[@]}" \
+          --wandb-run-name "reacher_train_${NM}_${BASE}_s${SEED}" \
+          --wandb-run-id "${EXPERIMENT_TAG}-${NM}-${BASE}-s${SEED}" \
+          --out "$OUT" --out-value $METRICS/${NM}_${BASE}_s${SEED}_value.pt \
+          > /workspace/logs/train_${NM}_s${SEED}.log 2>&1 \
+            || { touch "$FAILDIR/train_${NM}_s${SEED}";
+                 echo "[train-fail] ${NM} s${SEED}:" >&2;
+                 tail -80 /workspace/logs/train_${NM}_s${SEED}.log | sed 's/^/  | /' >&2; }
+        fi
+      else
+        echo "TRAIN ${NM} s${SEED}: REUSED persistent final actor" >> "$DRV"
+      fi
+      if [ -f "$OUT" ]; then
+        echo "TRAIN ${NM} s${SEED}: OK" >> "$DRV"
+        evone() { local ck=$1 tag=$2 es=$3 nm="${NM}_s${SEED}_${2}_e${3}"
+          if ! grep -q "^${nm}," "$SUM"; then
+            MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=$S CUDA_VISIBLE_DEVICES=$S \
+            timeout 9000 python3 scripts/plan/eval_wm.py --config-name reacher \
+              policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+              +eval.ep_range=8000:10000 seed=$es \
+              eval.goal_offset_steps=25 eval.eval_budget=50 \
+              solver=lip solver.actor_path="$ck" solver.rollout_compat=false $GRAPHED_FLAG \
+              solver.batch_size=10 output.filename=${nm}.txt \
+              > /workspace/logs/ev_${nm}.log 2>&1
+            local h05 h10
+            h05=$(grep -oE "HELD-at-end [0-9.]+" /workspace/logs/ev_${nm}.log | tail -1 | grep -oE "[0-9.]+")
+            h10=$(grep -oE "0\.1rad [0-9.]+" /workspace/logs/ev_${nm}.log | tail -1 | sed -E "s/0\.1rad //")
+            [ -z "$h05" ] && { echo "EVAL ${nm}: FAIL" >> "$DRV"
+              touch "$FAILDIR/eval_${nm}"
+              { echo "[eval-fail] ${nm}:"; tail -20 /workspace/logs/ev_${nm}.log | sed 's/^/  | /'; } >&2; }
+            echo "${nm},held05=${h05:-FAIL},held10=${h10:-FAIL}" >> "$SUM"
+            echo "[cell] ${nm} held05=${h05:-FAIL} held10=${h10:-FAIL}" >&2
+          fi
+          grep "^${nm}," "$SUM" | tail -1 | grep -oE "held10=[0-9.]+" | cut -d= -f2
+        }
+        evone_latched() {
+          local ck=$1 tag=$2 es=$3 nm="${NM}_s${SEED}_${2}_e${3}"
+          if ! grep -q "^${nm}," "$SUM"; then
+            local v10=FAIL v05=FAIL tau tautag score
+            for tau in ${SUCCESS_THRESHOLDS}; do
+              tautag=${tau/./p}
+              MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=$S CUDA_VISIBLE_DEVICES=$S \
+              timeout 9000 python3 scripts/plan/eval_wm.py --config-name reacher \
+                policy="$WM" eval.dataset_name="$CANON" dataset.stats="$CANON" \
+                +eval.ep_range=8000:10000 seed=$es \
+                eval.goal_offset_steps=25 eval.eval_budget=50 \
+                +eval.success_threshold=$tau +eval.terminate_on_success=true \
+                plan_config.receding_horizon=5 \
+                solver=lip solver.actor_path="$ck" solver.rollout_compat=false $GRAPHED_FLAG \
+                solver.batch_size=10 output.filename=${nm}_tau${tautag}.txt \
+                > /workspace/logs/ev_${nm}_tau${tautag}.log 2>&1
+              score=$(grep -E "LATCHED-first-hit tau=${tau}rad" \
+                /workspace/logs/ev_${nm}_tau${tautag}.log | tail -1 \
+                | sed -E 's/.*rad ([0-9.]+).*/\1/')
+              [ -z "$score" ] && {
+                echo "EVAL ${nm} tau=${tau}: FAIL" >> "$DRV"
+                touch "$FAILDIR/eval_${nm}_tau${tautag}"
+                { echo "[eval-fail] ${nm} tau=${tau}:";
+                  tail -25 /workspace/logs/ev_${nm}_tau${tautag}.log \
+                    | sed 's/^/  | /'; } >&2
+              }
+              [ "$tau" = "0.1" ] && v10=${score:-FAIL}
+              [ "$tau" = "0.05" ] && v05=${score:-FAIL}
+            done
+            for tau in ${SUCCESS_THRESHOLDS}; do
+              grep -a '\[per-episode\]' /workspace/logs/ev_${nm}_tau${tau/./p}.log 2>/dev/null \
+                | sed "s/^/${nm},tau=${tau} /" >> "$RESULTS/per_episode.jsonl" || true
+            done
+            echo "${nm},latched10=${v10},latched05=${v05}" >> "$SUM"
+            echo "[cell] ${nm} latched10=${v10} latched05=${v05}" >&2
+          fi
+        }
+        # within-run early stopping: held-at-end val score per candidate
+        # (1 sim pass per draw; latched stays the report metric). The snapshot
+        # dict references the FINAL teacher critic — by eval time it exists,
+        # and deploying the final critic with an earlier actor is the intended
+        # semantics (the critic converges monotonically; the actor is what
+        # early stopping selects).
+        if [ "${RS_CKPT_SELECT:-0}" = 1 ] && ls "$OUT".step*.pt >/dev/null 2>&1; then
+          CSBEST=""; CSBESTV="-1"; CSI=0
+          for CKP in "$OUT".step*.pt "$OUT"; do
+            CSI=$((CSI+1))
+            CSSUM=0; CSN=0
+            for VS in ${RS_CKPT_VAL_SEEDS:-50 51}; do
+              CV=$(evone "$CKP" "ckv${CSI}" "$VS" || true)
+              [ -n "$CV" ] && { CSSUM=$(python3 -c "print($CSSUM + $CV)"); CSN=$((CSN+1)); }
+            done
+            CSAVG=""; [ "$CSN" -gt 0 ] && CSAVG=$(python3 -c "print($CSSUM / $CSN)")
+            echo "[ckpt-select] ${NM} s${SEED} $(basename "$CKP") val=${CSAVG:-none}" | tee -a "$DRV"
+            if [ -n "$CSAVG" ] && python3 -c "import sys; sys.exit(0 if float('$CSAVG') > float('$CSBESTV') else 1)"; then
+              CSBESTV=$CSAVG; CSBEST=$CKP
+            fi
+          done
+          if [ -n "$CSBEST" ] && [ "$CSBEST" != "$OUT" ]; then
+            echo "[ckpt-select] ${NM} s${SEED} winner $(basename "$CSBEST") (val $CSBESTV) -> deployed" | tee -a "$DRV"
+            cp "$CSBEST" "$OUT"
+          else
+            echo "[ckpt-select] ${NM} s${SEED} final wins (val $CSBESTV)" | tee -a "$DRV"
+          fi
+        fi
+        if [ "${GRID}" = latched_terminal_search ] || [ "${GRID}" = w1_diagnosis ] || [ "${GRID}" = w1_grid ] || [ "${RS_LATCHED:-0}" = 1 ]; then
+          # The 6k training budget fixes the checkpoint. Tau only changes the
+          # first-hit evaluator, never the learned actor. HELD_AT_END=1 scores
+          # the same actors without early termination (held10/held05 keys).
+          for ES in $SEL $REP; do
+            if [ "${HELD_AT_END:-0}" = 1 ]; then
+              evone "$OUT" final "$ES" > /dev/null
+            else
+              evone_latched "$OUT" final "$ES"
+            fi
+          done
+          echo "SELECT ${NM} s${SEED}: final (fixed step ${STEPS})" >> "$DRV"
+        elif [ "${FINAL_ONLY:-1}" = 1 ]; then
+          # The training budget fixes the checkpoint. Evaluate it once per
+          # seed; one simulator run yields both held10 and held05.
+          for ES in $SEL $REP; do evone "$OUT" final "$ES" > /dev/null; done
+          echo "SELECT ${NM} s${SEED}: final (fixed step ${STEPS})" >> "$DRV"
+        else
+          # Historical independent checkpoint selection for both thresholds.
+          BESTTAG10=final; BESTV10=-1; BESTTAG05=final; BESTV05=-1
+          CKPTS=()
+          for CK in "$OUT".step*.pt; do [ -f "$CK" ] && CKPTS+=("$CK"); done
+          CKPTS+=("$OUT")
+          for CK in "${CKPTS[@]}"; do
+            [ -f "$CK" ] || continue
+            TAG=$(basename "$CK" | grep -oE 'step[0-9]+' || echo final)
+            T10=0; T05=0; N=0
+            for ES in $SEL; do
+              evone "$CK" "$TAG" "$ES" > /dev/null
+              LN=$(grep "^${NM}_s${SEED}_${TAG}_e${ES}," "$SUM" | tail -1)
+              V10=$(echo "$LN" | grep -oE 'held10=[0-9.]+' | cut -d= -f2)
+              V05=$(echo "$LN" | grep -oE 'held05=[0-9.]+' | cut -d= -f2)
+              if [ -n "$V10" ] && [ -n "$V05" ]; then
+                T10=$(awk "BEGIN{print $T10+$V10}")
+                T05=$(awk "BEGIN{print $T05+$V05}")
+                N=$((N+1))
+              fi
+            done
+            if [ "$N" -gt 0 ]; then
+              V10=$(awk "BEGIN{print $T10/$N}"); V05=$(awk "BEGIN{print $T05/$N}")
+            else
+              V10=-1; V05=-1
+            fi
+            echo "[ladder] ${NM} s${SEED} ${TAG}: sel10=${V10} sel05=${V05}"
+            awk "BEGIN{exit !($V10 > $BESTV10)}" && { BESTV10=$V10; BESTTAG10=$TAG; BESTCK10=$CK; }
+            awk "BEGIN{exit !($V05 > $BESTV05)}" && { BESTV05=$V05; BESTTAG05=$TAG; BESTCK05=$CK; }
+          done
+          echo "SELECT10 ${NM} s${SEED}: ${BESTTAG10} (${BESTV10})" >> "$DRV"
+          echo "SELECT05 ${NM} s${SEED}: ${BESTTAG05} (${BESTV05})" >> "$DRV"
+          for ES in $SEL $REP; do
+            evone "${BESTCK10:-$OUT}" "${BESTTAG10}_sel10" "$ES" > /dev/null
+            evone "${BESTCK05:-$OUT}" "${BESTTAG05}_sel05" "$ES" > /dev/null
+          done
+        fi
+      else
+        echo "TRAIN ${NM} s${SEED}: FAIL" >> "$DRV"
+        touch "$FAILDIR/train_${NM}_s${SEED}"
+        echo "[train-fail] ${NM} s${SEED}, last 30 lines:"; tail -30 /workspace/logs/train_${NM}_s${SEED}.log | sed 's/^/  | /'
+      fi
+      rmdir "$SLOT/$S" 2>/dev/null
+    ) &
+    echo "launched ${NM} seed ${SEED} (amax $AMAX, mw $MW, lr $LR) slot $S"
+  done
+  done
+  wait
+  sort "$DRV" 2>/dev/null | uniq -c
+
+  # log everything to wandb: one run per actor with selection/report means,
+  # actor+value artifact attached (pod trainer has no wandb of its own)
+  python3 - <<'PY'
+  import csv, glob, os, statistics as st
+  import wandb
+  BASE = os.environ["BASE"]
+  rows = {}
+  root = os.environ["PERSIST"]
+  for ln in open(os.path.join(root, "results", "summary.csv")):
+      if "," not in ln: continue
+      parts = ln.strip().split(",")
+      nm = parts[0]
+      d = dict(p.split("=") for p in parts[1:] if "=" in p)
+      rows[nm] = d
+  for actor in sorted(glob.glob(os.path.join(root, "actors", f"rs_*_{BASE}_s?.pt"))):
+      stem = os.path.basename(actor)[:-3]           # rs_m0.1_l1e-4_<base>_s0
+      cfg, seed = stem.rsplit("_", 2)[0], stem.rsplit("_", 1)[1]
+      row_prefix = f"{cfg}_{seed}_"
+      pre = f"{cfg}_{seed}_e"
+      def mean(seeds, key):
+          vs = []
+          for s in seeds:
+              cand = [v for k, v in rows.items()
+                      if k.startswith(stem + "_") and k.endswith(f"_e{s}") and v.get(key, "FAIL") != "FAIL"]
+              if cand: vs.append(float(cand[-1][key]))
+          return (sum(vs) / len(vs), len(vs)) if vs else (None, 0)
+      final_only = os.environ.get("FINAL_ONLY", "1") == "1"
+      latched = (os.environ.get("GRID") in ("latched_terminal_search", "w1_diagnosis", "w1_grid")
+                 and os.environ.get("HELD_AT_END", "0") != "1")
+      r = wandb.init(project=os.environ["WANDB_PROJECT"], entity=os.environ["WANDB_ENTITY"],
+                     name=f"reacher_{stem}", job_type="reacher_sweep",
+                     config={"base": BASE, "config": cfg, "train_seed": seed,
+                             "steps": int(os.environ.get("STEPS", "6000")),
+                             "expand": float(os.environ.get("EXPAND", "1.0")),
+                             "selection": ("fixed final training checkpoint" if final_only else
+                                           "independent held10 and held05 on draws 50/51"),
+                             "success_convention": ("latched-first-hit-terminate" if latched else
+                                                    "held-at-end"),
+                             "thresholds_rad": ([0.1, 0.05] if latched else None),
+                             "temporal_objective": "terminal",
+                             "protocol": "batch256 replay0.5 freeze0.5 g0.98 window-e0.03-12k clean-split"},
+                     reinit=True)
+      selected_tags = ("final",) if final_only else ("sel10", "sel05")
+      for selected in selected_tags:
+          for split, seeds in (("sel", ["50", "51"]), ("rep", ["42", "43", "44"])):
+              keys = (("latched10", "latched05") if latched
+                      else ("held10", "held05"))
+              for key in keys:
+                  vs = []
+                  for s in seeds:
+                      cand = [v for k, v in rows.items()
+                              if k.startswith(row_prefix) and f"_{selected}_e{s}" in k
+                              and v.get(key, "FAIL") != "FAIL"]
+                      if cand: vs.append(float(cand[-1][key]))
+                  if vs:
+                      r.summary[f"eval/{selected}_{split}_{key}"] = sum(vs) / len(vs)
+                      r.summary[f"eval/{selected}_{split}_{key}_n"] = len(vs)
+          for s in ("50", "51", "42", "43", "44"):
+              cand = [(k, v) for k, v in rows.items()
+                      if k.startswith(row_prefix) and f"_{selected}_e{s}" in k
+                      and v.get(keys[0], "FAIL") != "FAIL"]
+              if cand:
+                  _, v = cand[-1]
+                  for key in keys:
+                      r.summary[f"eval/{selected}_cell_e{s}_{key}"] = float(v[key])
+      art = wandb.Artifact(f"reacher_{stem}", type="lip_actor")
+      art.add_file(actor)
+      for ckpt in sorted(glob.glob(actor + ".step*.pt")):
+          art.add_file(ckpt)
+      val = os.path.join(root, "metrics", f"{cfg}_{BASE}_{seed}_value.pt")
+      if os.path.exists(val): art.add_file(val)
+      art.add_file(os.path.join(root, "results", "summary.csv"))
+      train_log = f"/workspace/logs/train_{cfg}_{seed}.log"
+      if os.path.exists(train_log): art.add_file(train_log)
+      for eval_log in sorted(glob.glob(f"/workspace/logs/ev_{cfg}_{seed}_*.log")):
+          art.add_file(eval_log)
+      r.log_artifact(art); r.finish()
+      print(f"[wandb] {stem} logged", flush=True)
+  print("[wandb] all runs logged", flush=True)
+  PY
+  if find "$FAILDIR" -type f -print -quit | grep -q .; then
+    echo "[reacher] hard failure: $(find "$FAILDIR" -type f | wc -l) failed cells" >&2
+    exit 1
+  fi
+  echo "[reacher] ${BASE} complete"

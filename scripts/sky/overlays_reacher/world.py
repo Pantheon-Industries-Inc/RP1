@@ -714,6 +714,9 @@ class World:
                         'first-hit scoring requires info[\'qpos_maxdiff\']'
                     )
                 _md = np.asarray(_md).reshape(-1).astype(float)
+                if '_min_md' not in results:
+                    results['_min_md'] = np.full(n, np.inf)
+                results['_min_md'] = np.minimum(results['_min_md'], _md)
                 _hit = _md < success_threshold
                 _new = _hit & ~results['episode_successes']
                 results['episode_successes'] |= _hit
@@ -807,6 +810,17 @@ class World:
                 f'| median-hit-step {_median}',
                 flush=True,
             )
+            import json as _json
+            _mm = results.get('_min_md')
+            print('[per-episode] ' + _json.dumps({
+                'tau': float(success_threshold),
+                'success': results['episode_successes']
+                    .astype(int).tolist(),
+                'first_hit_steps':
+                    results['first_hit_steps'].tolist(),
+                'closest_rad': None if _mm is None else
+                    [round(float(x), 4) for x in _mm],
+            }), flush=True)
         elif '_ever' in results:
             _ever = float(results.pop('_ever').sum()) / n * 100.0
             _held = results['success_rate']

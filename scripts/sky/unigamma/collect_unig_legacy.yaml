@@ -1,0 +1,84 @@
+# Collect per-arm results for the unified-gamma fleet, grouped by
+# (EXPERIMENT_TAG, arm, offset) so arms that share a name across tags
+# (e.g. unig_ctrl_a2.5 under g98/g99/g100 jobs) never pool. The last
+# "[summary] {...}" line per eval log wins (append-only logs, retries
+# are last-wins).
+#
+#   sky jobs launch scripts/sky/unigamma/collect_unig.yaml -n unig-collect -y --async \
+#       --env TAG_GLOB="rlp-tw-unig-*-20260818"
+name: unig-collect-legacy
+
+envs:
+  PANTHEON_USER: armin@pantheon.inc
+  TAG_GLOB: "rlp-*-unig-*-20260818"
+
+resources:
+  cpus: 2
+  memory: 8
+
+volumes:
+  /checkpoints: checkpoints
+
+run: |
+  set -uo pipefail
+  python3 - <<'PY'
+  import glob, json, os, re, statistics as st, collections
+
+  user = os.environ["PANTHEON_USER"]
+  root = f"/checkpoints/{user}"
+  pat  = os.path.join(root, os.environ["TAG_GLOB"], "logs", "*_eval.log")
+  files = sorted(glob.glob(pat))
+  print(f"# {len(files)} eval logs under {pat}\n")
+
+  rows = []
+  for f in files:
+      tag = f.split("/")[3]
+      base = os.path.basename(f)
+      m = re.match(r"g_(.+)_s(\d+)_eval\.log$", base)
+      if not m:
+          continue
+      arm, seed = m.group(1), int(m.group(2))
+      txt = open(f, errors="replace").read()
+      sums = re.findall(r"\[summary\]\s*(\{.*?\})", txt)
+      if not sums:
+          rows.append((tag, arm, seed, None))
+          continue
+      d = json.loads(sums[-1])
+      cells = {k: v for k, v in d.items() if re.search(r"rh5_h\d+_s\d+$", k)}
+      rows.append((tag, arm, seed, cells))
+
+  print("tag,arm,offset,seed,mean,cells")
+  agg = collections.defaultdict(list)
+  for tag, arm, seed, cells in rows:
+      if cells is None:
+          print(f"{tag},{arm},?,{seed},NO_SUMMARY,")
+          continue
+      byoff = collections.defaultdict(dict)
+      for k, v in cells.items():
+          m = re.search(r"_h(\d+)_s(\d+)$", k)
+          byoff[int(m.group(1))][int(m.group(2))] = v
+      for off, draws in sorted(byoff.items()):
+          vals = [v for v in draws.values() if v is not None]
+          mean = st.mean(vals) if vals else None
+          cs = " ".join(f"s{s}={v}" for s, v in sorted(draws.items()))
+          print(f"{tag},{arm},h{off},{seed},{mean if mean is None else f'{mean:.2f}'},{cs}")
+          if mean is not None:
+              agg[(tag, arm, off)].append((seed, mean))
+
+  print("\n# ---- per (tag, arm, offset) aggregate over seeds (last-wins per seed) ----")
+  print("tag,arm,offset,n_seeds,mean,sd,seed_means")
+  for (tag, arm, off), pairs in sorted(agg.items()):
+      last = {}
+      for seed, mean in pairs:
+          last[seed] = mean          # rows arrive in file order; last wins
+      vals = [last[s] for s in sorted(last)]
+      sd = st.stdev(vals) if len(vals) > 1 else 0.0
+      seeds = "/".join(f"{v:.1f}" for v in vals)
+      print(f"{tag},{arm},h{off},{len(vals)},{st.mean(vals):.2f},{sd:.2f},{seeds}")
+
+  missing = [(t, a, s) for t, a, s, c in rows if c is None]
+  if missing:
+      print(f"\n# WARNING: {len(missing)} cells with no [summary]:")
+      for t, a, s in missing:
+          print(f"#   {t} {a} s{s}")
+  PY

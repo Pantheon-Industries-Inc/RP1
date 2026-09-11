@@ -37,7 +37,7 @@ from rlp.logging import logger
 
 from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
-from ..temporal import trajectory_value
+from ..temporal import trajectory_value, window_pair, windowed_trajectory_value
 from ..world_model.protocols import LatentWorldModel, TokenWorldModel
 
 
@@ -91,6 +91,9 @@ class LIPCheckpoint(TypedDict):
     amu5: NotRequired[torch.Tensor]
     ast5: NotRequired[torch.Tensor]
     temporal_objective: NotRequired[str]
+    vnorm: NotRequired[str]
+    window_frames: NotRequired[int]
+    window_lag: NotRequired[int | None]
 
 
 # Mech-interp hook: ``probe_directory`` dumps per-replan
@@ -132,10 +135,9 @@ class LIPSolver(CEMSolver):
     """Plan with a trained LIP checkpoint; optionally refine with MPPI.
 
     With ``n_steps=0`` (the benchmarked configuration) the solver is fully
-    deterministic: K learned refinement iterations, execute the plan. With
-    ``restarts=R > 1`` it runs R noisy-initialized refinements per env and
-    picks by terminal value (argmin-V; ``robust_m > 0`` averages the value of
-    m perturbed copies instead). ``n_steps > 0`` additionally runs MPPI
+    deterministic: one pass of K learned refinement iterations from a single
+    initialization, then execute the plan -- there are no deploy-time restarts
+    (2026-09-04 directive). ``n_steps > 0`` additionally runs MPPI
     (softmax-weighted, temperature ``lam``) seeded from the LIP plan.
 
     The plan length (horizon) always comes from the actor checkpoint.
@@ -147,13 +149,12 @@ class LIPSolver(CEMSolver):
         actor_path: str = "",
         value_path: str | None = None,
         lam: float = 1.0,
-        restarts: int = 1,
-        restart_noise: float = 0.5,
         lip_select: str = "last",
-        robust_m: int = 0,
         init_mode: str = "zero",
         init_samples: int = 64,
         init_scale: float = 1.5,
+        cem_init_steps: int = 30,
+        iters_override: int | None = None,
         reuse_trajectory: bool | str = True,
         graphed: bool | str = False,
         record_probes: bool = False,
@@ -164,19 +165,25 @@ class LIPSolver(CEMSolver):
         from rlp.core.value import load_metric
 
         self.lam = lam
-        self.restarts = int(restarts)
-        self.restart_noise = restart_noise
         self.lip_select = lip_select
-        self.robust_m = int(robust_m)
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
-        # before refinement. Unlike `restarts` (noise around zero, argmin over
-        # REFINED plans — the configuration that hurt on v2WM), selection here
-        # happens on unrefined samples, exactly CEM's iteration-0, and the
-        # refinement trajectory stays single and deterministic.
+        # before refinement. Selection happens on UNREFINED samples, exactly
+        # CEM's iteration-0, so the refinement trajectory itself stays single
+        # and deterministic (no deploy-time restarts).
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
+        # init_mode="cem": A(0) = the mean of a CEM run on the solver's planning
+        # cost (num_samples x cem_init_steps, topk elites -- the cem_latent
+        # arm's own update rule), then the K learned refinements as usual. An
+        # oracle-initialisation diagnostic: separates "the refiner cannot find
+        # the basin" from "the refiner cannot hold a good plan".
+        self.cem_init_steps = int(cem_init_steps)
+        # iters_override: deploy-time K (None = the checkpoint's trained K).
+        # 0 = emit the initial plan untouched (control arm); >K = continuation
+        # diagnostic. Diagnostic only -- the shipped protocol is one K=8 pass.
+        self.iters_override = None if iters_override is None else int(iters_override)
         # Default TRUE since 2026-08-12: the gradient unroll's trajectory is
         # reused as the actor features (9 fwd + 8 bwd instead of 17 fwd +
         # 8 bwd). The discarded unroll was a bit-exact duplicate — verified by
@@ -195,11 +202,20 @@ class LIPSolver(CEMSolver):
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
             self.probe_directory.mkdir(parents=True, exist_ok=True)
-
         raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw_checkpoint, dict):
             raise TypeError("LIP checkpoint must contain a mapping")
         ck = cast(LIPCheckpoint, raw_checkpoint)
+        if ck.get("vnorm", "none") != "none":
+            # The port's PlannerNet consumes the raw critic value E. Loading a
+            # vnorm-trained state_dict here would deploy the actor on an input
+            # scale it never saw — in_dim is identical, so it fails silently and
+            # only shows up as a mysteriously weak success rate.
+            raise ValueError(
+                f"checkpoint was trained with vnorm={ck['vnorm']!r}; this "
+                "PlannerNet has no vnorm support and would silently feed raw E. "
+                "Evaluate through scripts/sky/overlays/lip.py, or port the flag."
+            )
         self.kind = ck.get("kind")
         if self.kind not in (
             "lip",
@@ -263,6 +279,9 @@ class LIPSolver(CEMSolver):
         self.actor.eval()
         self._actor_horizon = ck["horizon"]  # plan length must match the trained net
         self.lip_iters = ck["iters"]
+        if self.iters_override is not None:
+            logger.info(f"LIP iterations overridden at deploy: {self.lip_iters} -> {self.iters_override}")
+            self.lip_iters = self.iters_override
         self.temporal_objective = ck.get("temporal_objective", "terminal")
         if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
             raise ValueError(f"unsupported temporal objective: {self.temporal_objective}")
@@ -283,6 +302,22 @@ class LIPSolver(CEMSolver):
         value_module = load_metric(value_reference, device=self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
+        # m-frame window values score a stack of the last `vframes` imagined
+        # frames with the (static) goal frame duplicated to match. Trainers
+        # record `window_frames` in the planner checkpoint; older checkpoints
+        # referencing a windowed value fall back to the declared latent widths.
+        value_dim = int(getattr(value_module, "latent_dim", ck["z_dim"]))
+        declared_frames = ck.get("window_frames")
+        self.vframes = int(declared_frames) if declared_frames is not None else max(value_dim // int(ck["z_dim"]), 1)
+        if self.vframes > 1:
+            logger.info(f"LIP window value: {self.vframes} frames")
+            if self.kind == "lip_dino":
+                raise ValueError("windowed values are not supported for lip_dino checkpoints")
+            if self.graphed:
+                raise ValueError("graphed LIP inference does not support windowed values")
+            gm = getattr(self.actor, "goal_mode", None)
+            if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
+                raise ValueError("windowed values do not support per-step value conditioning (goal_mode=sep/vonly)")
         if self.kind == "lip_dino":
             if "amu5" not in ck or "ast5" not in ck:
                 raise ValueError("lip_dino checkpoint lacks action statistics")
@@ -296,6 +331,18 @@ class LIPSolver(CEMSolver):
 
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
+
+    def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+        """Trajectory score; stacks the last ``vframes`` imagined frames and
+        duplicates the observed goal frame when the value is windowed.
+        """
+        if self.vframes > 1:
+            energy = windowed_trajectory_value(
+                self.lip_value, trajectory, goal, history, self.vframes, self.temporal_objective
+            )
+        else:
+            energy = trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        return energy
 
     def _value_init(
         self,
@@ -327,14 +374,61 @@ class LIPSolver(CEMSolver):
         cand = cand.clamp(-amax, amax)
         C = cand.shape[1]
         with torch.no_grad():
-            term = rollout_terminal(
-                wm,
-                z_hist.repeat_interleave(C, dim=0),
-                a_hist.repeat_interleave(C, dim=0),
-                cand.reshape(B * C, H, adim),
-            )
-            E = self.lip_value(term.float(), zg.repeat_interleave(C, dim=0)).view(B, C)
+            zg_c = zg.repeat_interleave(C, dim=0)
+            if self.vframes > 1:
+                # window values need the full trajectory to stack terminal frames
+                trajectory = rollout_traj(
+                    wm,
+                    z_hist.repeat_interleave(C, dim=0),
+                    a_hist.repeat_interleave(C, dim=0),
+                    cand.reshape(B * C, H, adim),
+                )
+                E = self.lip_value(*window_pair(trajectory.float(), zg_c, self.vframes)).view(B, C)
+            else:
+                term = rollout_terminal(
+                    wm,
+                    z_hist.repeat_interleave(C, dim=0),
+                    a_hist.repeat_interleave(C, dim=0),
+                    cand.reshape(B * C, H, adim),
+                )
+                E = self.lip_value(term.float(), zg_c).view(B, C)
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
+
+    def _cem_init(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        """A(0) = CEM mean on the solver's planning cost (the cem_latent arm's
+        rule: N(mean, var) samples, top-k elites, mean/std update), batched
+        exactly like :meth:`solve`'s MPPI loop. Returns (B, H, adim)."""
+        H, adim = self.horizon, self.action_dim
+        mean = torch.zeros(n_envs, H, adim, device=self.device, dtype=self.dtype)
+        var = self.var_scale * torch.ones_like(mean)
+        with torch.no_grad():
+            for start_idx in range(0, n_envs, self.batch_size):
+                end_idx = min(start_idx + self.batch_size, n_envs)
+                bs = end_idx - start_idx
+                batch_mean, batch_var = mean[start_idx:end_idx], var[start_idx:end_idx]
+                expanded: dict[str, Any] = {}
+                for k, v in info_dict.items():
+                    vb = v[start_idx:end_idx]
+                    if torch.is_tensor(v):
+                        td = self.dtype if vb.is_floating_point() else None
+                        tail = vb.shape[1:]
+                        vb = vb.to(device=self.device, dtype=td).unsqueeze(1).expand(bs, self.num_samples, *tail)
+                    elif isinstance(v, np.ndarray):
+                        vb = np.repeat(vb[:, None, ...], self.num_samples, axis=1)
+                    expanded[k] = vb
+                for _ in range(self.cem_init_steps):
+                    cand = torch.randn(
+                        bs, self.num_samples, H, adim, generator=self.torch_gen, device=self.device, dtype=self.dtype
+                    )
+                    cand = cand * batch_var.unsqueeze(1) + batch_mean.unsqueeze(1)
+                    cand[:, 0] = batch_mean
+                    costs = cast(EnvironmentCost, self.model).get_cost(expanded, cand)
+                    _, top = torch.topk(costs, k=self.topk, dim=1, largest=False)
+                    rows = torch.arange(bs, device=self.device).unsqueeze(1).expand(-1, self.topk)
+                    elites = cand[rows, top]
+                    batch_mean, batch_var = elites.mean(dim=1), elites.std(dim=1)
+                mean[start_idx:end_idx] = batch_mean
+        return mean.float()
 
     # ------------------------------------------------------------------ lip
     def _graphed_for(self, wm: Any, z_hist: torch.Tensor, a_hist: torch.Tensor, z_goal: torch.Tensor) -> Any:
@@ -361,6 +455,7 @@ class LIPSolver(CEMSolver):
         return self._graphed_refinement
 
     def _proposal_lip(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
+        encode_start = time.time()
         wm = cast(EncoderWorldModel, self._base())
         with torch.no_grad():
             px = info_dict["pixels"].to(self.device, dtype=self.dtype)
@@ -389,22 +484,22 @@ class LIPSolver(CEMSolver):
                 genc_in["proprio"] = gpro.unsqueeze(1).expand(-1, gx.shape[1], -1)
             zg = wm.encode(genc_in)["emb"][:, -1].float()
 
-        R = max(1, self.restarts)
+        # everything above is observation/goal encoding; everything below is
+        # planning. The split matters: only the refinement is graph-captured,
+        # so a whole-decision number is not comparable to a refinement number.
+        self._last_encode_seconds = time.time() - encode_start
         B = n_envs
-        zh_r = z_hist.repeat_interleave(R, dim=0)
-        zg_r = zg.repeat_interleave(R, dim=0)
+        zh_r, zg_r = z_hist, zg
         z0_r = zh_r[:, -1]
-        a_hist = torch.zeros(B * R, 2, self.action_dim, device=self.device)
-        A = self.restart_noise * torch.randn(
-            B * R,
-            self.horizon,
-            self.action_dim,
-            device=self.device,
-            generator=self.torch_gen,
-        )
-        A[::R] = 0.0  # one zero-init restart per env
-        if self.init_mode == "value" and R == 1:
+        a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
+        A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
+        if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
+        elif self.init_mode == "cem":
+            A = self._cem_init(info_dict, B).clamp(-float(self.actor.amax), float(self.actor.amax))
+        A_init = A.detach().clone()
+        e_iters: list[torch.Tensor] = []  # E(A_k) before the k-th update, k = 0..K-1
+        lat_iters: list[torch.Tensor] = []  # imagined terminal latent distance of A_k
         s = self.actor.init_state(A.shape[0], z0_r) if isinstance(self.actor, PlannerNetRec) else None
         graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []
@@ -429,7 +524,7 @@ class LIPSolver(CEMSolver):
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
                     A_in = A.detach().requires_grad_(True)
                     traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                    score = trajectory_value(self.lip_value, traj, zg_r, z0_r, self.temporal_objective)
+                    score = self._score(traj, zg_r, zh_r)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
                 if graphed_ref is not None:
@@ -444,7 +539,10 @@ class LIPSolver(CEMSolver):
                         traj_f = traj.detach()
                     else:
                         traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                    E = trajectory_value(self.lip_value, traj_f, zg_r, z0_r, self.temporal_objective)
+                    E = self._score(traj_f, zg_r, zh_r)
+                if self.probe_directory is not None:
+                    e_iters.append(E.detach().float().clone())
+                    lat_iters.append((traj_f[:, -1].float() - zg_r).norm(dim=-1).detach())
                 vtraj = None
                 gm = getattr(self.actor, "goal_mode", None)
                 if gm == "sep" or (gm == "vonly" and getattr(self.actor, "cond", None) is None):
@@ -463,38 +561,33 @@ class LIPSolver(CEMSolver):
                     A = self.actor(A, gA, E, z0_r, zg_r, traj_f, k=k_it, vtraj=vtraj)
                 buf.append(A.clone())
         with torch.no_grad():
+            if not buf:  # iters_override=0: emit the initial plan untouched (control arm)
+                buf = [A.detach().clone()]
             cands = torch.stack(buf if self.lip_select == "buffer" else buf[-1:], dim=1)
             C = cands.shape[1]
-            cf = cands.reshape(B * R * C, self.horizon, self.action_dim)
+            cf = cands.reshape(B * C, self.horizon, self.action_dim)
             zh_c = zh_r.repeat_interleave(C, dim=0)
             ah_c = a_hist.repeat_interleave(C, dim=0)
             zg_c = zg_r.repeat_interleave(C, dim=0)
-            if self.robust_m > 0:  # value of m perturbed copies (robust argmin)
-                scores = torch.zeros(cf.shape[0], device=cf.device)
-                amax = self.actor.amax
-                for _ in range(self.robust_m):
-                    pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
-                    perturbed = rollout_traj(wm, zh_c, ah_c, pert)
-                    scores = scores + trajectory_value(
-                        self.lip_value, perturbed, zg_c, zh_c[:, -1], self.temporal_objective
-                    )
-                Ef = (scores / self.robust_m).view(B, R * C)
-            elif graphed_ref is not None and C == 1:
+            if graphed_ref is not None and C == 1:
                 # selection unroll through the same captured graph (shape matches)
-                Ef = graphed_ref.score(cf).view(B, R * C)
+                Ef = graphed_ref.score(cf).view(B, C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
-                Ef = trajectory_value(
-                    self.lip_value, final_trajectory, zg_c, zh_c[:, -1], self.temporal_objective
-                ).view(B, R * C)
+                Ef = self._score(final_trajectory, zg_c, zh_c).view(B, C)
             best = Ef.argmin(dim=1)
-            A = cands.view(B, R * C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
+            A = cands.view(B, C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
         if self.probe_directory is not None:
             global _LIP_PROBE_N
             with torch.no_grad():
                 z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
-                e_imag = trajectory_value(self.lip_value, z_traj, zg, z_hist[:, -1], self.temporal_objective)
+                e_imag = self._score(z_traj, zg, z_hist)
+                # candidate population under both objectives (probe-only rollout;
+                # Ef is the critic energy the deployed argmin actually used)
+                traj_c = rollout_traj(wm, zh_c, ah_c, cf)
+                lat_pop = (traj_c[:, -1] - zg_c).norm(dim=-1).view(B, C)
+                lat_traj = (z_traj - zg.unsqueeze(1)).norm(dim=-1)  # (B,H)
             torch.save(
                 {
                     "z0": z_hist[:, -1].detach().cpu(),
@@ -503,6 +596,17 @@ class LIPSolver(CEMSolver):
                     "A": A.detach().cpu(),
                     "E": e_imag.detach().cpu(),
                     "zg": zg.detach().cpu(),
+                    "Ef_pop": Ef.detach().cpu(),
+                    "lat_pop": lat_pop.detach().cpu(),
+                    "best": best.detach().cpu(),
+                    "lat_traj": lat_traj.detach().cpu(),
+                    "cands": cands.view(B, C, self.horizon, self.action_dim).detach().cpu(),
+                    # diagnostics (2026-09-08): refinement trajectory per iteration
+                    "A_init": A_init.cpu(),
+                    "E_iters": torch.stack(e_iters).cpu() if e_iters else torch.zeros(0),
+                    "lat_iters": torch.stack(lat_iters).cpu() if lat_iters else torch.zeros(0),
+                    "init_mode": self.init_mode,
+                    "iters": int(self.lip_iters),
                 },
                 self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
             )
@@ -610,5 +714,10 @@ class LIPSolver(CEMSolver):
         outputs["actions"] = mean.detach().cpu()
         outputs["mean"] = [mean.detach().cpu()]
         outputs["var"] = [var.detach().cpu()]
-        logger.info(f"LIP solve completed in {time.time() - start_time:.4f} seconds")
+        total_seconds = time.time() - start_time
+        encode_seconds = getattr(self, "_last_encode_seconds", 0.0)
+        logger.info(
+            f"LIP solve completed in {total_seconds:.4f} seconds "
+            f"(encode {encode_seconds:.4f}, plan {total_seconds - encode_seconds:.4f})"
+        )
         return outputs

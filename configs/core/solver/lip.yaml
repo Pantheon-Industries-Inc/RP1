@@ -7,11 +7,25 @@ n_steps: 0
 topk: 30
 lam: 1.0
 actor_path: ???
-restarts: 1
-restart_noise: 0.5
-robust_m: 0
 reuse_trajectory: true  # 9-unroll reuse, bit-exact (default since 2026-08-12)
 graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
 record_probes: false
 probe_directory: ${run.artifacts}/probes
 value_path: null  # override the value recorded in the actor checkpoint
+# Plan initialisation. "zero" (the benchmarked default) starts refinement from
+# A=0, so the solver is purely LOCAL descent from a single fixed point.
+# "value" instead picks A(0) = argmin-E over {zero, iid-Gaussian, time-tiled
+# Gaussian} candidates -- exactly CEM's iteration-0 -- which is the only way
+# the refiner reaches the sustained-motion (time-tiled) family when the value
+# gradient is flat at A=0. Costs init_samples forward rollouts once per
+# decision. Listed explicitly so they are overridable and their defaults are
+# visible; the values here reproduce the previous behaviour exactly.
+init_mode: zero
+init_samples: 64
+init_scale: 1.5
+# Diagnostics (2026-09-08): init_mode "cem" starts refinement from a CEM run on
+# the planning cost (oracle-initialisation test); iters_override sets the
+# deploy-time K (0 = emit the init plan; >K = continuation). Both are
+# diagnostic only -- the shipped protocol is the checkpoint's K, zero init.
+cem_init_steps: 30
+iters_override: null

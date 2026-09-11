@@ -1,0 +1,148 @@
+# Planner wall-clock benchmark — ms/decision for every planner on ONE node.
+#
+#   sky jobs launch scripts/sky/planner_speed.yaml -n speed-tworoom --priority p1 \
+#       --env ENVNAME=tworoom --env BASE=lejepa --env EXPERIMENT_TAG=speed-tw-20260816 -y
+#   sky jobs launch scripts/sky/planner_speed.yaml -n speed-cube --priority p1 \
+#       --env ENVNAME=cube --env BASE=lewm --env EXPERIMENT_TAG=speed-cube-20260816 -y
+#
+# Every planner is timed in its real deployment path: the eval driver runs one
+# h100 episode batch (8 decisions per episode at receding_horizon=5), and each
+# solver logs `<planner> solve completed in <s> seconds` per decision. The
+# aggregator drops the first two decisions (CUDA/allocator warmup) and reports
+# the median and mean of the rest.
+#
+# Timing discipline, deliberately strict:
+#   * ONE job per node, planners run SEQUENTIALLY — a concurrent eval on the
+#     same node distorts both wall-clock and (historically) scores.
+#   * B=1 measures decision latency, the number comparable to the 2026-08-12
+#     audit (LIPv4 graphed 30.7 ms vs CEM 218.6 ms, H200/fp32/B=1).
+#   * B=50 measures the batched regime the campaigns actually evaluate in,
+#     where the samplers' 9,000 rollouts scale with the batch and RLP's 9
+#     do not.
+# Reported numbers are planner compute only: env stepping and rendering happen
+# outside the solve() call being timed.
+
+name: planner-speed
+
+envs:
+  ENVNAME: tworoom          # tworoom | cube
+  BASE: lejepa              # tworoom: lejepa|pldm   cube: lewm|pldm
+  AMAX: "2.5"               # informational; solvers read their checkpoints
+  BATCHES: "1 50"           # episode-batch sizes to time
+  PLANNERS: "l2o rlp cem mppi adam"   # + dmpo (needs DMPO_TAG)
+  DMPO_TAG: "dmpo-cube-lewm-20260814"  # /checkpoints tag holding dmpo_s0.pt
+  REPEATS_B1: "4"           # processes per planner at B=1 (early success = few decisions)
+  REPEATS_BIG: "1"          # batched runs already yield the full decision count
+  WARMUP: "2"               # decisions dropped per process (a graph capture
+                            # lands in the first ones; widen it to quote a mean)
+  GRAPHED: ""               # "", true, or verify — applies to the solvers that
+                            # support CUDA-graph capture (l2o, rlp/lip)
+  L2O_TAG: ""               # /checkpoints tag holding l2o_s0.pt + value_td
+                            # (default: l2o-<env>-<base>-20260815)
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: planner-speed
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: opt-out
+    telemetry-opt-out-reason: replication-validation
+
+volumes:
+  /checkpoints: checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$D" && chmod 777 "$D"
+  TAG=${L2O_TAG:-l2o-${ENVNAME}-${BASE}-20260815}
+  A=/checkpoints/$PANTHEON_USER/$TAG
+
+  case $ENVNAME in
+    tworoom)
+      pixi run tool tool=fetch_dataset dataset=tworoom
+      EVAL_MODEL="tworoom_lewm_h5"; [ "$BASE" = pldm ] && EVAL_MODEL="tworoom_pldm_h5"
+      RLP_ACTOR="$PWD/assets/core/planner/tworoom/${BASE}/terminal_a1.8_m0.1_l1e-4/s0/planner.pt"
+      [ "$BASE" = pldm ] && RLP_ACTOR="$PWD/assets/core/planner/tworoom/pldm/terminal_a1.8_m0.0_l1e-3/s0/planner.pt"
+      ;;
+    cube)
+      pixi run tool tool=fetch_dataset dataset=ogb_cube
+      EVAL_MODEL="$BASE"
+      RLP_ACTOR="$PWD/assets/core/planner/cube/${BASE}/s0/planner.pt"
+      ;;
+    *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
+  esac
+  [ -f "$A/l2o_s0.pt" ] || { echo "missing L2O actor at $A/l2o_s0.pt"; exit 1; }
+  [ -f "$RLP_ACTOR" ] || { echo "missing RLP actor at $RLP_ACTOR"; exit 1; }
+
+  # h100 gives 8 decisions per episode; one batch per (planner, B) measurement
+  HOR="evaluation.goal_offset_steps=100 evaluation.budget=200"
+
+  time_one () {  # time_one <planner> <batch> <repeats>
+    local planner=$1 batch=$2 reps=$3
+    case $planner in
+      l2o)  ARGS=(core/solver=l2o core.solver.actor_path="$A/l2o_s0.pt" core.solver.value_path="$A/value_td"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
+      rlp)  ARGS=(core/solver=lip core.solver.actor_path="$RLP_ACTOR"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
+      cem)  ARGS=(core/solver=cem core/value=metric "core.value.checkpoints=[$A/value_td]");;
+      mppi) ARGS=(core/solver=mppi core/value=metric "core.value.checkpoints=[$A/value_td]");;
+      adam) ARGS=(core/solver=adam core/value=metric "core.value.checkpoints=[$A/value_td]");;
+      dmpo) local M=/checkpoints/$PANTHEON_USER/$DMPO_TAG
+            ARGS=(core/solver=dmpo core.solver.actor_path="$M/dmpo_s0.pt"
+                  core.solver.value_path="$M/dmpo_value_s0"
+                  ${GRAPHED:+core.solver.graphed=$GRAPHED});;
+      *) echo "unknown planner $planner"; return 1;;
+    esac
+    # one process per seed: an episode that reaches its goal early stops
+    # producing decisions, so repeats are how B=1 gets enough samples. Each
+    # process carries its own warmup, hence one log file per seed.
+    local s
+    for s in $(seq 42 $((42 + reps - 1))); do
+      local log="$D/log_${ENVNAME}_${BASE}_${planner}_b${batch}_s${s}.txt"
+      echo "===== TIMING $planner B=$batch seed=$s ====="
+      echo "  overrides: ${ARGS[*]}"
+      pixi run eval model=$EVAL_MODEL runtime.seed=$s \
+        evaluation.num_episodes=$batch $HOR "${ARGS[@]}" 2>&1 | tee "$log" | tail -2
+      # surface capture and verify evidence: the tee'd file holds the detail,
+      # the job log only keeps the tail
+      echo "  captures: $(grep -c 'capturing' "$log" || true)"
+      grep -hoE '(graphed|Graphed)[A-Za-z ]*verify: max_deviation [0-9.e+-]+' "$log" | sort -u | head -3 || true
+    done
+  }
+
+  for B in $BATCHES; do
+    # B=1 episodes end early when the planner succeeds; repeat across seeds so
+    # every planner contributes a comparable number of timed decisions
+    REPS=$REPEATS_B1; [ "$B" != 1 ] && REPS=$REPEATS_BIG
+    for P in $PLANNERS; do
+      time_one "$P" "$B" "$REPS" || echo "TIMING_FAILED $P B=$B"
+    done
+  done
+
+  echo "===== SPEED SUMMARY ($ENVNAME/$BASE) ====="
+  pixi run python scripts/planner_speed_summary.py "$D" "$ENVNAME" "$BASE" "$BATCHES" "$PLANNERS" "$WARMUP" \
+    | tee "$D/summary_${ENVNAME}_${BASE}.txt"
+
+  echo "SPEED_DONE env=$ENVNAME base=$BASE tag=$EXPERIMENT_TAG"

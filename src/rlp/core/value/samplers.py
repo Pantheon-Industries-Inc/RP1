@@ -47,6 +47,11 @@ class NStepBatch(TypedDict):
     n_eff: torch.Tensor
     reached: torch.Tensor
     dist: torch.Tensor
+    # cache row indices of z_t / z_tn / z_g — window critics rebuild their
+    # m-frame inputs from the dense cache at these rows (see lip_ac).
+    t_idx: torch.Tensor
+    tn_idx: torch.Tensor
+    g_idx: torch.Tensor
 
 
 class FutureBatch(TypedDict):
@@ -192,7 +197,14 @@ class NStepGoalSampler(_BaseSampler):
         balanced: bool = True,
         seed: int = 0,
         max_delta: int | None = None,
+        near_frac: float = 0.0,
+        near_max: int = 3,
     ) -> None:
+        """
+        ``near_frac`` draws that fraction of in-episode hindsight goals
+        1..``near_max`` steps ahead so the last steps are actually fitted
+        (balanced full-horizon buckets put a few percent of pairs there).
+        """
         super().__init__(cache, seed=seed, min_len=2)
         self.n = n_step
         self.max_delta = max_delta
@@ -200,6 +212,8 @@ class NStepGoalSampler(_BaseSampler):
         self.n_buckets = n_buckets
         self.balanced = balanced
         self.n_total = len(cache.z)
+        self.near_frac = float(near_frac)
+        self.near_max = int(near_max)
 
     def _offset(self, hi: int) -> int:
         if hi < 1:
@@ -234,7 +248,10 @@ class NStepGoalSampler(_BaseSampler):
                 _hi = L - 1 - t
                 if self.max_delta is not None:
                     _hi = min(_hi, self.max_delta)
-                delta = self._offset(_hi)
+                if self.near_frac > 0 and self.rng.random() < self.near_frac:
+                    delta = int(self.rng.integers(1, min(self.near_max, _hi) + 1))
+                else:
+                    delta = self._offset(_hi)
                 g_idx[b] = rows[t + delta]
                 if delta <= ne:  # goal reached within the n-step window
                     reached[b], dist[b] = 1.0, float(delta)
@@ -245,6 +262,9 @@ class NStepGoalSampler(_BaseSampler):
             "n_eff": torch.from_numpy(n_eff),
             "reached": torch.from_numpy(reached),
             "dist": torch.from_numpy(dist),
+            "t_idx": torch.from_numpy(t_idx),
+            "tn_idx": torch.from_numpy(tn_idx),
+            "g_idx": torch.from_numpy(g_idx),
         }
 
 

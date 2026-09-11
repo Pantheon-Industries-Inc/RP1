@@ -104,7 +104,24 @@ def _run(cfg: DictConfig) -> None:
             dataset=str(cfg.dataset),
             output=actions_h5,
         )
+    window_frames = cfg.value.get("window_frames")
+    window_lag = cfg.value.get("window_lag")
+    windowed = window_frames is not None and int(window_frames) > 1
+    if windowed and (window_lag is None or int(window_lag) != int(cfg.frameskip)):
+        # imagined latents are one action block apart at plan time, so a
+        # window teacher trained at any other spacing would never be queried
+        # with the windows it was trained on
+        raise ValueError(
+            f"value.window_frames={window_frames} requires value.window_lag == "
+            f"frameskip ({cfg.frameskip}), got {window_lag}"
+        )
     if "value" not in skip:
+        value_overrides = _overrides(cfg.value)
+        # `depth` is a value-architecture knob (MRN head), not a trainer flag;
+        # route it onto the composed value group where train/metric reads it.
+        value_depth = value_overrides.pop("depth", None)
+        if value_depth is not None:
+            value_overrides["core.value.depth"] = value_depth
         run_stage(
             "value",
             "train/metric",
@@ -113,15 +130,25 @@ def _run(cfg: DictConfig) -> None:
             device=cfg.device,
             seed=cfg.seed,
             **{"output.checkpoint": "value_td"},
-            **_overrides(cfg.value),
+            **value_overrides,
         )
     if "planner" not in skip:
         planner_overrides = _overrides(cfg.planner)
-        # `amax` is a planner-architecture knob, not a trainer flag; route it
-        # onto the composed planner group where lip_ac reads it.
+        # `amax` and `iterations` are planner-architecture knobs, not trainer
+        # flags; route them onto the composed planner group where lip_ac
+        # reads them.
         amax = planner_overrides.pop("amax", None)
         if amax is not None:
             planner_overrides["core.planner.action_limit"] = amax
+        iterations = planner_overrides.pop("iterations", None)
+        if iterations is not None:
+            planner_overrides["core.planner.iterations"] = iterations
+        layers = planner_overrides.pop("layers", None)
+        if layers is not None:
+            planner_overrides["core.planner.transformer_layers"] = layers
+        width = planner_overrides.pop("width", None)
+        if width is not None:
+            planner_overrides["core.planner.transformer_width"] = width
         run_stage(
             "planner",
             "train/lip_ac",
@@ -130,6 +157,9 @@ def _run(cfg: DictConfig) -> None:
             h5=actions_h5,
             wm=str(cfg.wm),
             init_value=value_checkpoint,
+            # a windowed value stage hands the planner a windowed init_value;
+            # forward the lag so lip_ac can validate it against the action block
+            window_lag=window_lag,
             seed=cfg.seed,
             **{"output.planner_checkpoint": "planner.pt", "output.value_checkpoint": "value_ac"},
             **planner_overrides,

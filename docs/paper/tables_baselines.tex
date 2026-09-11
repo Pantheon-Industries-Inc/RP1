@@ -1,0 +1,194 @@
+% Baseline tables: TwoRoom, Reacher, OGBench Cube.
+% Requires: booktabs, caption, array (and wrapfig only for the wraptable variant
+% at the bottom of this file).
+%
+% Naming: the LeWM column is the LeJEPA-family base; the DMPO and L2O-MPC result
+% records call the same base "LeJEPA".
+%
+% Sources
+%   latent/value + CEM/MPPI/Adam ... docs/replication/RESULTS_REPLICATION_20260814.md
+%   DMPO ......................... docs/dmpo/RESULTS_dmpo_20260816.md
+%   L2O-MPC ...................... docs/l2o/RESULTS_L2O_20260816.md
+%   TwoRoom value+CEM remeasure .. docs/campaigns/2026-08-17/RESULTS_tworoom_improvement.md
+%
+% Reacher is the window-1 (single-frame critic) table: value rows are the
+% App C.3 family (jobs rlp12-measure-reacher-*-value-window1-r2), RP1 is the
+% window-1 ablation at expand=0 / recipe amax (LeWM job 6770 amax 2.2,
+% PLDM campaign rlp12_reacher_w1 amax 1.8), DMPO/L2O are their w1 arms.
+% The window-3 numbers for every row are in the same two records if the
+% protocol-matched table is wanted instead.
+
+% ---------------------------------------------------------------- TwoRoom ----
+\begin{table}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{TwoRoom success rate (\%).}}
+  \label{tab:tworoom}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}lrrrrr@{}
+  }
+  \toprule
+  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+  \cmidrule(lr){3-4}\cmidrule(l){5-6}
+  planner & rollouts & $h25$ & $h100$ & $h25$ & $h100$ \\
+  \midrule
+  latent + CEM   & $9000$ & 84.0 & 13.3 & 93.3 & 52.0 \\
+  latent + MPPI  & $9000$ & 70.7 & 20.0 & 64.0 & 33.3 \\
+  latent + Adam  & $3000$ & 94.7 & 24.0 & 90.7 & 42.0 \\
+  \midrule
+  value + CEM    & $9000$ & \textbf{100.0} & 96.0\rlap{$^{\dagger}$} & \textbf{100.0} & 89.3\rlap{$^{\dagger}$} \\
+  value + MPPI   & $9000$ & 87.3 & 64.0 & 78.7 & 58.7 \\
+  value + Adam   & $3000$ & 96.7 & 83.3 & 96.0 & 73.3 \\
+  \midrule
+  DMPO           & $256$  & 96.9 & \textbf{100.0} & 97.8 & 92.7 \\
+  L2O-MPC        & $256$  & 95.8 & 90.9 & 95.1 & 48.2 \\
+  \midrule
+  \textbf{RP1 (ours)} & $9$
+  & \textbf{100.0} & 94.2
+  & 98.2 & \textbf{96.0} \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent Success rate (\%), held-out protocol, 50 episodes per cell.
+  $h25$ and $h100$ refer to 25 and 100 steps respectively. \emph{latent} rows
+  score plans by terminal latent $L_2$; \emph{value} rows by the learned
+  quasimetric critic; DMPO and L2O-MPC are learned optimizers using the same
+  critic. Bold marks the best entry per column.
+  $^{\dagger}$A six-shard remeasurement gives $94.7 \pm 3.1$ (LeWM) and
+  $88.7 \pm 5.0$ (PLDM) at $h100$.\par}
+\end{table}
+
+% ---------------------------------------------------------------- Reacher ----
+\begin{table}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{Reacher success rate (\%), first-hit at $h25$, single-frame
+  (window-1) costs.}}
+  \label{tab:reacher}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}lrrrrr@{}
+  }
+  \toprule
+  & & \multicolumn{2}{c}{LeWM} & \multicolumn{2}{c}{PLDM} \\
+  \cmidrule(lr){3-4}\cmidrule(l){5-6}
+  planner & rollouts & $\tau{=}.1$ & $\tau{=}.05$ & $\tau{=}.1$ & $\tau{=}.05$ \\
+  \midrule
+  latent + CEM   & $9000$ & \textbf{98.7} & 80.3 & 96.7 & 80.0 \\
+  latent + MPPI  & $9000$ & 63.7 & 39.3 & 64.7 & 35.7 \\
+  latent + Adam  & $3000$ & 94.0 & 66.0 & 94.3 & 66.0 \\
+  \midrule
+  value + CEM    & $9000$ & 97.3 & 82.0 & 96.0 & 76.0 \\
+  value + MPPI   & $9000$ & 74.0 & 42.0 & 60.0\rlap{$^{\ddagger}$} & 38.7\rlap{$^{\ddagger}$} \\
+  value + Adam   & $3000$ & 88.0 & 64.7 & 92.7\rlap{$^{\ddagger}$} & 66.7\rlap{$^{\ddagger}$} \\
+  \midrule
+  DMPO           & $256$  & 92.4\rlap{$^{\diamond}$} & 67.8\rlap{$^{\diamond}$} & 90.0 & 62.9 \\
+  L2O-MPC        & $256$  & 90.9 & 69.6 & 89.3 & 60.9 \\
+  \midrule
+  \textbf{RP1 (ours)} & $9$
+  & \textbf{98.7} & \textbf{88.7}
+  & \textbf{97.8} & \textbf{82.0} \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent First-hit success (\%) at goal tolerance $\tau$ (rad), held-out,
+  open loop with receding horizon 5. All planners use \emph{single-frame}
+  (window-1) costs, so the rows differ in optimizer and objective only; the
+  paper's latent cost is single-frame terminal $L_2$ by construction. RP1 is the
+  window-1 ablation at expansion weight $0$ (3 seeds $\times$ draws 42--44);
+  DMPO and L2O-MPC are 3 seeds $\times$ draws 42--44; the sampling rows use
+  draws 42--47.
+  $^{\ddagger}$Paper-quoted (App.~C.3); the other value rows are our
+  reproductions of those cells, which match the published numbers exactly.
+  $^{\diamond}$Measured with the symmetric clip $a_{\max}{=}2.2$ rather than the
+  environment's per-dimension action bounds; the matched PLDM cells moved
+  $\le 1$ point when re-measured.\par}
+\end{table}
+
+% ---------------------------------------------------------- OGBench Cube ----
+% Full-width (table*): 8 numeric columns = 2 bases x 2 horizons x 2 scorings.
+%
+% "hard" is NOT a separate task split: it is the same run normalized against
+% the no-op floor, (s - f) / (100 - f) * 100, with f = 56.00 at h25 and
+% f = 45.33 at h100 (the "skill" normalization of REPLICATION_RLP.md).
+% Both floors were recovered by fitting all 32 published easy/hard pairs
+% (max residual 0.05 pt), so the DMPO and L2O-MPC hard cells below are computed
+% with the same two constants -- no new evaluation was run for them.
+\begin{table*}[t]
+  \centering
+  \captionsetup{font=small,skip=4pt}
+  \caption{\textbf{OGBench Cube success rate (\%).}}
+  \label{tab:ogbench}
+  \footnotesize
+  \renewcommand{\arraystretch}{1.08}
+  \begin{tabular*}{\linewidth}{
+    @{\extracolsep{\fill}}llrrrrrrrrr@{}
+  }
+  \toprule
+  & & & \multicolumn{4}{c}{LeWM} & \multicolumn{4}{c}{PLDM} \\
+  \cmidrule(lr){4-7}\cmidrule(l){8-11}
+  & & & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$}
+        & \multicolumn{2}{c}{$h25$} & \multicolumn{2}{c}{$h100$} \\
+  \cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(l){10-11}
+  & planner & rollouts & raw & norm. & raw & norm. & raw & norm. & raw & norm. \\
+  \midrule
+  (a) prior
+    & CEM   & $9000$ & 74.0 & 40.9 & 58.0 & 23.2 & 62.7 & 15.2 & 58.7 & 24.5 \\
+    & MPPI  & $9000$ & 56.7 &  1.6 & 46.7 &  2.5 & 58.7 &  6.1 & 47.3 &  3.6 \\
+    & Adam  & $3000$ & 74.0 & 40.9 & 57.3 & 21.9 & 63.3 & 16.6 & 55.3 & 18.2 \\
+  \midrule
+  (b) + value critic
+    & CEM   & $9000$ & 84.0 & 63.6 & 76.7 & 57.4 & 70.0 & 31.8 & 64.0 & 34.1 \\
+    & MPPI  & $9000$ & 63.3 & 16.6 & 52.0 & 12.2 & 64.7 & 19.8 & 50.7 &  9.8 \\
+    & Adam  & $3000$ & 74.7 & 42.5 & 68.7 & 42.7 & 64.0 & 18.2 & 54.0 & 15.9 \\
+  \midrule
+  (c) + learned search
+    & DMPO    & $256$ & 72.9\rlap{$^{\diamond}$} & 38.4\rlap{$^{\diamond}$} & 55.8\rlap{$^{\diamond}$} & 19.2\rlap{$^{\diamond}$} & 61.8\rlap{$^{\diamond}$} & 13.2\rlap{$^{\diamond}$} & 51.6\rlap{$^{\diamond}$} & 11.5\rlap{$^{\diamond}$} \\
+    & L2O-MPC & $256$ & 64.4 & 19.1 & 50.0 &  8.5 & 58.9 &  6.6 & 45.3 &  0.0 \\
+    & \textbf{RP1 (ours)} & $9$ & 89.1 & 75.2 & 82.4 & 67.8 & 82.9 & 61.1 & 77.1 & 58.1 \\
+  \midrule
+  (d) + Dyna
+    & \textbf{RP1\textsubscript{Dyna} (ours)} & $9$
+    & \textbf{94.4} & \textbf{87.3} & \textbf{84.7} & \textbf{72.0}
+    & \textbf{91.3} & \textbf{80.2} & \textbf{82.0} & \textbf{67.1} \\
+  \midrule
+  \multicolumn{3}{@{}l}{$\Delta$ norm., (d) vs.\ best prior}
+    & & $+46.4$ & & $+48.8$ & & $+63.6$ & & $+42.6$ \\
+  \bottomrule
+  \end{tabular*}
+
+  \vspace{3pt}
+  {\footnotesize\setlength{\parindent}{0pt}\raggedright
+  \indent Success rate (\%), 50 episodes per cell; $h25$ and $h100$ refer to 25
+  and 100 steps. \emph{raw} is the success rate; \emph{norm.} is the same run
+  normalized against the no-op floor $f$, $(s-f)/(100-f)$, with $f=56.0$ at
+  $h25$ and $f=45.3$ at $h100$ --- a zero-action policy already satisfies the
+  goal in over half the $h25$ episodes, so the normalized column is what
+  separates planners. Blocks (a)--(b) and the RP1 rows are the published
+  numbers. DMPO and L2O-MPC are measured here (3 optimizer seeds $\times$ eval
+  draws 42--44, held out) against the same critic and world model as
+  block~(b), and normalized with the same two floors; our own no-op run at
+  $h25$ measures $54.0$ rather than $56.0$, which would raise their $h25$
+  normalized cells by $\approx 2.7$ points. $\Delta$ compares (d) against the
+  best row in block~(a).
+  $^{\diamond}$DMPO clips to a symmetric $a_{\max}$ inherited from the RP1
+  recipe (LeWM 1.6, PLDM 4.5) rather than the environment's per-dimension
+  bounds, which binds on 4 of 5 dimensions for LeWM and 1 of 5 for PLDM; the
+  LeWM--PLDM comparison in that row is confounded and reruns are pending.\par}
+\end{table*}
+
+% ----------------------------------------------------------------------------
+% Wraptable variant of the TwoRoom table (needs \usepackage{wrapfig}). Use only
+% if the surrounding text can absorb ~22 lines of wrapped body text.
+%
+% \begin{wraptable}[22]{r}{0.55\textwidth}
+%   \vspace{-0.7\baselineskip}
+%   ... same body as tab:tworoom ...
+% \end{wraptable}

@@ -1,0 +1,130 @@
+# Counterstrike (PushT) value-function baseline: TD+CEM vs latent+CEM.
+#
+#   sky jobs launch scripts/sky/counterstrike_baselines.yaml -n cs-baseline \
+#       --priority p1 --env CACHE_TAG=counterstrike-20260815 \
+#       --env EXPERIMENT_TAG=cs-baseline-20260816 -y
+#
+# Isolates value-function quality from the planner entirely: trains ONLY the
+# offline quasimetric value (model=rlp skip=[cache,subsample,actions,planner]
+# on the shared caches, PushT corner gamma=1.0/exp=0.01/n=1), then evaluates
+# CEM under the learned value objective (core/value=metric) on BOTH the report
+# draws 42/43/44 and the selection draws 50/51, h25. The latent+CEM and no-op
+# numbers on 42/43/44 come from the seed-0 counterstrike run — together these
+# give the SOTA target (the paper's own latent+CEM on the identical held-out
+# protocol) and the value-function verdict:
+#   TD+CEM >= latent+CEM  ->  value function is good; planner hypers are the
+#                             remaining gap (old-stack: 88.0 vs 86.7 at h25)
+#   TD+CEM <  latent+CEM  ->  re-sweep the value corner before touching the
+#                             planner.
+
+name: cs-baseline
+
+envs:
+  VALUE_GAMMA: "1.0"
+  VALUE_EXPECTILE: "0.01"
+  VALUE_NSTEP: "1"
+  TRAIN_EPISODES: "16000"
+  WAIT_CACHE_MIN: "240"
+  EVAL_SEEDS: "42 43 44 50 51"
+  EVAL_CONDS: "cem_value"    # add "cem_latent noop" if the seed-0 run's
+                             # numbers need reproducing in this job
+  NUM_EPISODES: "50"
+  SMOKE: "0"
+  SEED: "0"
+  CACHE_TAG: counterstrike-20260815
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: cs-baseline
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: opt-out
+    telemetry-opt-out-reason: replication-validation
+
+volumes:
+  /checkpoints: checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  D=/checkpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$D" && chmod 777 "$D"
+  CD=/checkpoints/$PANTHEON_USER/$CACHE_TAG/caches
+
+  pixi run tool tool=fetch_dataset dataset=pusht
+  H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
+
+  WM=$D/lewm_pusht_official
+  if [ ! -f "$WM/weights.pt" ] || [ ! -f "$WM/config.json" ]; then
+    mkdir -p "$WM"
+    RAW=$RLP_DATA_HOME/wm_raw
+    pixi run hf download quentinll/lewm-pusht weights.pt config.json \
+      --revision 22b330c28c27ead4bfd1888615af1340e3fe9052 --local-dir "$RAW"
+    pixi run tool tool=convert_pldm src="$RAW/weights.pt" dst="$WM/weights.pt"
+    cp "$RAW/config.json" "$WM/config.json"
+  fi
+
+  WAITED=0
+  until [ -f "$CD/counterstrike_fs1.pt" ]; do
+    if [ "$WAITED" -ge "$WAIT_CACHE_MIN" ]; then
+      echo "FATAL: shared fs1 cache never appeared in $CD" >&2; exit 1
+    fi
+    echo "waiting for shared fs1 cache in $CD (${WAITED}m/${WAIT_CACHE_MIN}m)"
+    sleep 300; WAITED=$((WAITED + 5))
+  done
+
+  if [ ! -d "$D/value_td" ]; then
+    pixi run train model=rlp \
+      wm="$WM" dataset="$H5" \
+      name=counterstrike cache_directory="$CD" seed=$SEED \
+      train_episodes=$TRAIN_EPISODES \
+      value.gamma=$VALUE_GAMMA value.expectile=$VALUE_EXPECTILE \
+      value.n_step=$VALUE_NSTEP \
+      "skip=[cache,subsample,actions,planner]"
+    RUN=$(ls -dt logs/*/* | head -1)
+    cp -r "$RUN/checkpoints/value_td" "$D/value_td"
+  fi
+
+  run_eval () {  # run_eval <label> <seed> <overrides...>
+    local label=$1 seed=$2; shift 2
+    echo "===== EVAL $label seed=$seed ====="
+    pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+      runtime.seed=$seed evaluation.num_episodes=$NUM_EPISODES "$@"
+    local run=$(ls -dt logs/*/* | head -1)
+    local out="$D/results_${label}_s${seed}.txt"
+    cp "$run"/*results*.txt "$out" 2>/dev/null || find "$run" -name '*.txt' -exec cp {} "$out" \;
+    echo "----- RESULT $label seed=$seed -----"
+    cat "$out"
+  }
+
+  for ES in $EVAL_SEEDS; do
+    for COND in $EVAL_CONDS; do
+      case $COND in
+        cem_value) run_eval cem_value $ES core/solver=cem \
+                     core/value=metric "core.value.checkpoints=[$D/value_td]";;
+        cem_latent) run_eval cem_latent $ES core/solver=cem;;
+        noop) run_eval noop $ES core/policy=no_move;;
+      esac
+    done
+  done
+  echo "CS_BASELINE_DONE tag=$EXPERIMENT_TAG"

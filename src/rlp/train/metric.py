@@ -15,6 +15,8 @@ Example::
         learner=regression output.checkpoint=tworoom_regression scale=100
 """
 
+from typing import cast
+
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
 
@@ -31,14 +33,14 @@ from rlp.logging import logger
 def _run(cfg: DictConfig) -> None:
     # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
     # the value-head keys and derived aliases can be merged in.
-    args = OmegaConf.merge(OmegaConf.create(OmegaConf.to_container(cfg, resolve=True)), cfg.core.value)
+    flat = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    args = cast(DictConfig, OmegaConf.merge(flat, cfg.core.value))
     args.embed_dim = args.embedding_dim
     args.rep_dim = args.representation_dim
 
     device = pick_device(args.device)
-    cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap)).windowed(
-        int(args.window_frames), int(args.window_lag)
-    )
+    base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap))
+    cache = base_cache.windowed(int(args.window_frames), int(args.window_lag))
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 
     learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
@@ -84,6 +86,8 @@ def _run(cfg: DictConfig) -> None:
             num_components=args.num_components,
             rank_weight=args.rank_weight,
             rank_margin=args.rank_margin,
+            near_frac=float(args.get("near_frac", 0.0) or 0.0),
+            near_max=int(args.get("near_max", 3) or 3),
         )
         module = learners.td.fit(cache, td_cfg, device)
     else:  # contrastive

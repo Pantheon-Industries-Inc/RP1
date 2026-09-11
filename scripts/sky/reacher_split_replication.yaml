@@ -415,13 +415,13 @@ run: |
   # rows carry their own expand (field 5); replay 0.5, terminal objective.
   # Run with VALUE_FRAMES=1 so the critic init IS the memoryless w1 value.
   if [ "${GRID}" = w1_diagnosis ]; then
-    [ "$BASE" = pldm ] || { echo "GRID=w1_diagnosis requires BASE=pldm"; exit 2; }
-    CFG=(
-      "rs_w1diag_x0_a1.0 1.0 0.3 1e-4 0 0.5 terminal"
-      "rs_w1diag_x1_a1.0 1.0 0.3 1e-4 1 0.5 terminal"
-      "rs_w1diag_x0_a1.8 1.8 0.3 1e-4 0 0.5 terminal"
-      "rs_w1diag_x1_a1.8 1.8 0.3 1e-4 1 0.5 terminal"
-    )
+    # per-base arms: {transferred-lower, the base's w3-recipe amax}
+    if [ "$BASE" = pldm ]; then W1D_AMS="1.0 1.8"; else W1D_AMS="1.4 2.2"; fi
+    CFG=()
+    for AM in $W1D_AMS; do
+      CFG+=("rs_w1diag_x0_a${AM} ${AM} 0.3 1e-4 0 0.5 terminal")
+      CFG+=("rs_w1diag_x1_a${AM} ${AM} 0.3 1e-4 1 0.5 terminal")
+    done
   fi
   # PLDM window-1 RE-SELECTION grid (user-directed 2026-08-12): the w1 numbers
   # so far reuse w3-selected winners; this searches amax x mw x lr x expand
