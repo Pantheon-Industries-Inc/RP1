@@ -10,6 +10,8 @@ window_frames: 1
 window_lag: 1
 near_frac: 0.0         # td: fraction of in-episode hindsight goals drawn 1..near_max steps ahead
 near_max: 3
+subgrid: 0.0           # td: fraction of queries interpolated between frames t and t+1, target
+                       # reduced by the same alpha (continuous targets inside the last step)
 learner: td
 output:
   checkpoint: value

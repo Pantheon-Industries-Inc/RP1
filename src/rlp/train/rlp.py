@@ -122,11 +122,12 @@ def _run(cfg: DictConfig) -> None:
         value_depth = value_overrides.pop("depth", None)
         if value_depth is not None:
             value_overrides["core.value.depth"] = value_depth
+        learner = str(value_overrides.pop("learner", "td"))
         run_stage(
             "value",
             "train/metric",
             cache=cache_fs1,
-            learner="td",
+            learner=learner,
             device=cfg.device,
             seed=cfg.seed,
             **{"output.checkpoint": "value_td"},

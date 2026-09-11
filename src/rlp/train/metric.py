@@ -88,6 +88,7 @@ def _run(cfg: DictConfig) -> None:
             rank_margin=args.rank_margin,
             near_frac=float(args.get("near_frac", 0.0) or 0.0),
             near_max=int(args.get("near_max", 3) or 3),
+            subgrid=float(args.get("subgrid", 0.0) or 0.0),
         )
         module = learners.td.fit(cache, td_cfg, device)
     else:  # contrastive

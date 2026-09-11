@@ -61,6 +61,14 @@ class TDConfig:
     # 1..near_max steps ahead (see NStepGoalSampler)
     near_frac: float = 0.0
     near_max: int = 3
+    # sub-step resolution: fraction of queries placed BETWEEN two logged
+    # frames, z_q = (1-alpha) z_t + alpha z_{t+1} with the target reduced by
+    # alpha. Integer steps-to-go targets make V a staircase, so grad V ~ 0
+    # across the whole final step -- exactly where the PushT near misses sit
+    # (E22: four failures at 20-30 px against a 20 px threshold, V in
+    # [1.4, 4.4]). CEM does not care (it ranks 9000 samples); a gradient
+    # refiner has nothing to descend. 0 = off.
+    subgrid: float = 0.0
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
@@ -124,6 +132,9 @@ def fit(
     )
     if cfg.near_frac > 0:
         logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
+    sub_rng = np.random.default_rng(cfg.seed + 13)
+    if cfg.subgrid > 0:
+        logger.info(f"TD sub-step queries: frac={cfg.subgrid} interpolated between frames t and t+1")
     g = cfg.gamma
     step_norm = 1.0
     episodes = cache.episodes()
@@ -170,6 +181,13 @@ def fit(
             b["reached"].to(device),
             b["dist"].to(device),
         )
+        if cfg.subgrid > 0:
+            # place a fraction of the queries alpha of the way from frame t to
+            # frame t+1; every remaining-distance term shrinks by exactly alpha
+            take = torch.from_numpy(sub_rng.random(cfg.batch_size) < cfg.subgrid).to(device)
+            alpha = torch.from_numpy(sub_rng.random(cfg.batch_size)).float().to(device) * take
+            z_t = z_t + alpha.unsqueeze(-1) * (b["z_t1"].to(device) - z_t)
+            ne, dist = ne - alpha, (dist - alpha).clamp_min(0.0)
         with torch.no_grad():
             d_next = target(z_tn, z_g)
             if g >= 1.0:
