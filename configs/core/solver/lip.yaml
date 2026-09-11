@@ -7,9 +7,6 @@ n_steps: 0
 topk: 30
 lam: 1.0
 actor_path: ???
-restarts: 1
-restart_noise: 0.5
-robust_m: 0
 reuse_trajectory: true  # 9-unroll reuse, bit-exact (default since 2026-08-12)
 graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
 record_probes: false
@@ -32,13 +29,3 @@ init_scale: 1.5
 # diagnostic only -- the shipped protocol is the checkpoint's K, zero init.
 cem_init_steps: 30
 iters_override: null
-# Contact-consistency penalty added to the refinement energy (PushT; E16/E17).
-# weight 0 = off, i.e. the shipped objective.
-contact:
-  weight: 0.0
-  probe: null
-  move_eps: 15.0
-  gap_eps: 0.0
-  contact_radius: null
-  angle_scale: 40.0
-  gap_norm: 50.0

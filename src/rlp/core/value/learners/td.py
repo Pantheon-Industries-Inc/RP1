@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 import torch
@@ -58,70 +57,19 @@ class TDConfig:
     rank_weight: float = 0.0
     rank_margin: float = 0.5
     rank_max_delta: int = 200
-    # counterfactual agent augmentation (PushT): with prob ``aug_p`` the query
-    # state z_t is swapped for its agent-displaced re-render and the label
-    # grows by ``aug_transit_scale * transit`` (steps to walk the agent back)
-    aug_p: float = 0.0
-    aug_transit_scale: float = 1.0
     # near-goal resolution: fraction of in-episode hindsight goals drawn
     # 1..near_max steps ahead (see NStepGoalSampler)
     near_frac: float = 0.0
     near_max: int = 3
-    # distance-dependent expectile: targets below ``near_steps`` use
-    # ``expectile_near`` (e.g. 0.5 = neutral) instead of the optimistic
-    # ``expectile``; None = one expectile everywhere
-    expectile_near: float | None = None
-    near_steps: float = 3.0
-    # near-goal loss weighting: per-sample weight (1 + target)^-near_weight,
-    # normalised to mean 1 over the batch (0 = off)
-    near_weight: float = 0.0
-    # deploy-matched goals for window critics: the goal is the goal FRAME tiled
-    # to the window width (what LIPSolver / MetricCost feed at plan time),
-    # not the goal frame's own motion window from the cache
-    goal_tile: bool = False
 
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
 
 
-def near_goal_terms(
-    target: torch.Tensor,
-    expectile: float,
-    expectile_near: float | None,
-    near_steps: float,
-    near_weight: float,
-) -> tuple[torch.Tensor | float, torch.Tensor | None]:
-    """Per-sample expectile and loss weight for the near-goal resolution knobs."""
-    tau: torch.Tensor | float = expectile
-    if expectile_near is not None:
-        tau = torch.where(
-            target < float(near_steps),
-            torch.full_like(target, float(expectile_near)),
-            torch.full_like(target, float(expectile)),
-        )
-    weights = None
-    if near_weight > 0:
-        weights = (1.0 + target.clamp_min(0.0)).pow(-float(near_weight))
-        weights = weights / weights.mean().clamp_min(1e-8)
-    return tau, weights
-
-
-# (z_aug, transit): row-aligned agent-displaced latents (already windowed like
-# the training cache) and the per-row free-transit cost in primitive steps
-type AugCache = tuple[torch.Tensor, torch.Tensor]
-
-
-def _expectile_loss(
-    diff: torch.Tensor,
-    expectile: float | torch.Tensor,
-    beta: float,
-    weights: torch.Tensor | None = None,
-) -> torch.Tensor:
-    """Expectile-weighted Huber loss; ``expectile`` may be per-sample, ``weights`` rescale samples."""
+def _expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
+    """Expectile-weighted Huber loss."""
     huber = torch.nn.functional.smooth_l1_loss(diff, torch.zeros_like(diff), beta=beta, reduction="none")
     weight = torch.where(diff > 0, 1.0 - expectile, expectile)  # diff=pred-target
-    if weights is not None:
-        weight = weight * weights
     return (weight * huber).mean()
 
 
@@ -154,42 +102,9 @@ def fit(
     cache: LatentCache,
     cfg: TDConfig,
     device: str = "cpu",
-    aug: AugCache | None = None,
-    state: np.ndarray | None = None,
-    tolerance: dict[str, Any] | None = None,
-    goal_frames: torch.Tensor | None = None,
 ) -> MetricHead:
-    """Train and return a temporal-distance (quasi)metric head.
-
-    ``aug`` enables the counterfactual agent augmentation: ``(z_aug, transit)``
-    row-aligned with ``cache`` (see :mod:`rlp.tools.data.cache_agent_aug`).
-    A fraction ``cfg.aug_p`` of every batch's query states is replaced by the
-    displaced-agent latent; its target is the original label plus the transit
-    cost — the cost of walking the agent back and then following the data.
-
-    ``state`` + ``tolerance`` switch on success-tolerance relabeling of the
-    Monte-Carlo targets (see :class:`NStepGoalSampler`).
-
-    ``goal_frames`` (``(N, D)`` single-frame latents row-aligned with the
-    windowed ``cache``) + ``cfg.goal_tile`` replace every goal input by the
-    goal frame tiled to the window width, matching what the planner feeds a
-    window critic at plan time.
-    """
+    """Train and return a temporal-distance (quasi)metric head."""
     torch.manual_seed(cfg.seed)
-    tile_frames = 0
-    if cfg.goal_tile:
-        if goal_frames is None:
-            raise ValueError("goal_tile=True requires goal_frames (the unwindowed cache latents)")
-        if cache.latent_dim % goal_frames.shape[1]:
-            raise ValueError("window width is not a multiple of the goal frame width")
-        tile_frames = cache.latent_dim // goal_frames.shape[1]
-        logger.info(f"TD deploy-matched goals: goal frame tiled x{tile_frames}")
-    use_aug = aug is not None and cfg.aug_p > 0
-    if use_aug and aug is not None and (len(aug[0]) != len(cache.z) or len(aug[1]) != len(cache.z)):
-        raise ValueError("aug latents/transit must be row-aligned with the training cache")
-    aug_rng = np.random.default_rng(cfg.seed + 7)
-    if use_aug:
-        logger.info(f"TD counterfactual agent augmentation: p={cfg.aug_p} transit_scale={cfg.aug_transit_scale}")
     value = _make_head(cfg, cache.latent_dim).to(device)
     target = copy.deepcopy(value).to(device)
     for p in target.parameters():
@@ -204,21 +119,11 @@ def fit(
         balanced=cfg.balanced,
         seed=cfg.seed,
         max_delta=cfg.max_delta,
-        state=state,
-        tolerance=tolerance,
         near_frac=cfg.near_frac,
         near_max=cfg.near_max,
     )
-    if state is not None:
-        logger.info(f"TD success-tolerance relabeling on: {tolerance}")
     if cfg.near_frac > 0:
         logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
-    if cfg.expectile_near is not None:
-        logger.info(
-            f"TD distance-dependent expectile: {cfg.expectile_near} below {cfg.near_steps} steps, else {cfg.expectile}"
-        )
-    if cfg.near_weight > 0:
-        logger.info(f"TD near-goal loss weighting: (1+d)^-{cfg.near_weight}")
     g = cfg.gamma
     step_norm = 1.0
     episodes = cache.episodes()
@@ -255,43 +160,26 @@ def fit(
     log_interval = max(1, cfg.steps // 20)
     for step in range(cfg.steps):
         b = sampler.sample(cfg.batch_size)
-        z_t_cpu = b["z_t"]
-        transit = torch.zeros(cfg.batch_size)
-        if use_aug and aug is not None:
-            z_aug, transit_all = aug
-            mask = torch.from_numpy(aug_rng.random(cfg.batch_size) < cfg.aug_p)
-            if bool(mask.any()):
-                t_aug = b["t_idx"][mask]
-                z_t_cpu = z_t_cpu.clone()
-                z_t_cpu[mask] = z_aug[t_aug].float()
-                transit[mask] = transit_all[t_aug].float() * cfg.aug_transit_scale
-        z_g_cpu = b["z_g"]
-        if tile_frames > 1 and goal_frames is not None:
-            z_g_cpu = goal_frames[b["g_idx"]].float().repeat(1, tile_frames)
         z_t, z_tn, z_g = (
-            z_t_cpu.to(device),
+            b["z_t"].to(device),
             b["z_tn"].to(device),
-            z_g_cpu.to(device),
+            b["z_g"].to(device),
         )
         ne, reached, dist = (
             b["n_eff"].to(device),
             b["reached"].to(device),
             b["dist"].to(device),
         )
-        transit = transit.to(device)
         with torch.no_grad():
             d_next = target(z_tn, z_g)
-            ne_total = ne + transit  # displaced queries first walk the agent back
             if g >= 1.0:
-                c, disc = ne_total, torch.ones_like(ne)
+                c, disc = ne, torch.ones_like(ne)
             else:
-                disc = g**ne_total
+                disc = g**ne
                 c = (1.0 - disc) / (1.0 - g)
-            boot = c + disc * d_next
-            tgt = reached * (dist + transit) + (1.0 - reached) * boot
+            tgt = reached * dist + (1.0 - reached) * (c + disc * d_next)
         pred = value(z_t, z_g)
-        tau, sample_weights = near_goal_terms(tgt, cfg.expectile, cfg.expectile_near, cfg.near_steps, cfg.near_weight)
-        loss = _expectile_loss(pred - tgt, tau, cfg.huber_beta, sample_weights)
+        loss = _expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
         if cfg.rank_weight > 0:
             z_near, z_far, z_rank_goal, gap = (item.to(device) for item in rank_batch(cfg.batch_size))
             rank_loss = torch.relu(
@@ -319,4 +207,4 @@ def fit(
     return value
 
 
-__all__ = ["AugCache", "TDConfig", "fit", "near_goal_terms", "_expectile_loss"]
+__all__ = ["TDConfig", "fit", "_expectile_loss"]

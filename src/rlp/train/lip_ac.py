@@ -63,7 +63,7 @@ from rlp.core.solver.lip import ValueFunction
 from rlp.core.temporal import trajectory_value, window_pair, windowed_trajectory_value
 from rlp.core.value import load_metric
 from rlp.core.value.io import build_metric, save_metric
-from rlp.core.value.learners.td import _expectile_loss, near_goal_terms
+from rlp.core.value.learners.td import _expectile_loss
 from rlp.core.value.samplers import NStepGoalSampler
 from rlp.core.world_model import load_pretrained
 from rlp.core.world_model.protocols import LatentWorldModel
@@ -166,11 +166,6 @@ def _run(cfg: DictConfig) -> None:
     fs = 5  # primitive steps per action block
     a_dim = act.shape[-1] * fs
 
-    actor_near_frac = float(a.get("actor_near_frac", 0.0) or 0.0)
-    actor_near_max = int(a.get("actor_near_max", 2) or 2)
-    if actor_near_frac > 0:
-        logger.info(f"LIP-AC actor near-goal oversampling: frac={actor_near_frac} within 1..{actor_near_max} blocks")
-
     def blocks(e: int, t: int) -> np.ndarray:
         offset = fs * t
         if ep_len_h5 is not None:
@@ -178,11 +173,10 @@ def _run(cfg: DictConfig) -> None:
         h0 = int(ep_off[e] + offset)
         return np.asarray(act_n[h0 : h0 + fs]).reshape(-1)
 
-    def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         zh: list[torch.Tensor] = []
         ah: list[np.ndarray] = []
         zg: list[torch.Tensor] = []
-        aref: list[np.ndarray] = []
         for _ in range(B):
             e = int(ep_ids[rng.integers(len(ep_ids))])
             rows = ep_rows[e]
@@ -190,131 +184,21 @@ def _run(cfg: DictConfig) -> None:
             t = int(rng.integers(2, L - 2))
             zh.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
             ah.append(np.stack([blocks(e, t - 2), blocks(e, t - 1)]))
-            # trust-region reference: the data's next-H real action blocks from t
-            # (clamped at episode end) — where the WM knows the dynamics.
-            # Clamp to L-2, the last FULL in-episode block: block L-1 starts at
-            # the episode's final primitive step, so its 5-step read spills into
-            # the next episode (silently wrong) and runs off the array end for
-            # the dataset's last episode (ragged np.stack crash — hit on
-            # puzzle 2026-07-23 with 1001-step episodes, e=999/t=197).
-            aref.append(np.stack([blocks(e, min(t + k, L - 2)) for k in range(a.horizon)]))
             if rng.random() < a.p_cross:
                 e2 = int(ep_ids[rng.integers(len(ep_ids))])
                 r2 = ep_rows[e2]
                 zg.append(z[r2[rng.integers(len(r2))]])
             else:
-                if actor_near_frac > 0 and rng.random() < actor_near_frac:
-                    # near-goal problems for the refiner: the goal 1..actor_near_max
-                    # blocks ahead, the situation at every episode's last replans
-                    d = int(rng.integers(1, actor_near_max + 1))
-                else:
-                    d = int(rng.integers(1, a.max_delta + 1))
+                d = int(rng.integers(1, a.max_delta + 1))
                 zg.append(z[rows[min(t + d, L - 1)]])
-        return (
-            torch.stack(zh),
-            torch.from_numpy(np.stack(ah)).to(dev),
-            torch.stack(zg),
-            torch.from_numpy(np.stack(aref)).to(dev).float(),
-        )
-
-    # ------------------------------------------------------------ imagination-MC critic term
-    # The critic is evaluated on WORLD-MODEL latents at plan time but trained on
-    # encoder latents; near the goal its resolution on imagined states is what
-    # the refiner sees (PushT resolution probe / E5, 2026-09-09). This term
-    # rolls the frozen WM along the DATA's own next m action blocks from a real
-    # history and labels the imagined endpoint with the exact remaining
-    # distance to an in-episode goal delta >= m blocks ahead: (delta - m) * fs
-    # primitive steps, 0 when the imagined endpoint is the goal frame. Unlike
-    # value expansion (planner actions, bootstrapped optimistic targets) the
-    # labels are ground truth and the actions are on-manifold.
-    imag_mc_weight = float(a.get("imag_mc_weight", 0.0) or 0.0)
-    imag_mc_batch = int(a.get("imag_mc_batch", 128) or 128)
-    imag_rng = np.random.default_rng(a.seed + 11)
-    if imag_mc_weight > 0:
-        logger.info(f"LIP-AC imagination-MC critic term: weight={imag_mc_weight} batch={imag_mc_batch}")
-
-    def sample_imag(B: int, m: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """(z_hist, a_hist, next m real action blocks, goal latent, label steps) for imagination-MC."""
-        zh_l: list[torch.Tensor] = []
-        ah_l: list[np.ndarray] = []
-        ab_l: list[np.ndarray] = []
-        zg_l: list[torch.Tensor] = []
-        lab: list[float] = []
-        for _ in range(B):
-            e = int(ep_ids[imag_rng.integers(len(ep_ids))])
-            rows = ep_rows[e]
-            L = len(rows)
-            t = int(imag_rng.integers(2, L - 2 - m))  # blocks t..t+m-1 stay full in-episode blocks
-            zh_l.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
-            ah_l.append(np.stack([blocks(e, t - 2), blocks(e, t - 1)]))
-            ab_l.append(np.stack([blocks(e, t + k) for k in range(m)]))
-            hi = min(a.max_delta, L - 1 - t)
-            d = int(imag_rng.integers(m, max(hi, m) + 1))
-            zg_l.append(z[rows[min(t + d, L - 1)]])
-            lab.append(float((d - m) * fs))
-        return (
-            torch.stack(zh_l),
-            torch.from_numpy(np.stack(ah_l)).to(dev),
-            torch.from_numpy(np.stack(ab_l)).to(dev).float(),
-            torch.stack(zg_l),
-            torch.tensor(lab, device=dev),
-        )
+        return torch.stack(zh), torch.from_numpy(np.stack(ah)).to(dev), torch.stack(zg)
 
     # ------------------------------------------------------------ critic (fs1 cache)
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
-    # counterfactual agent augmentation: a row-aligned cache of the same frames
-    # re-rendered with the agent displaced (rlp.tools.data.cache_agent_aug);
-    # a fraction aug_p of critic queries use it, labelled d + transit
-    c_aug: LatentCache | None = None
-    aug_transit: torch.Tensor | None = None
-    aug_p = float(a.get("aug_p", 0.0) or 0.0)
-    if c_td is not None and a.get("cache_aug") and aug_p > 0:
-        c_aug = LatentCache.load(str(a.cache_aug), mmap=bool(a.cache_mmap))
-        if (
-            len(c_aug.z) != len(c_td.z)
-            or not torch.equal(c_aug.episode_idx, c_td.episode_idx)
-            or not torch.equal(c_aug.step_idx, c_td.step_idx)
-        ):
-            raise ValueError("cache_aug rows do not align with cache_td")
-        if c_aug.state is None:
-            raise ValueError("cache_aug carries no state column (transit steps expected in its last column)")
-        aug_transit = c_aug.state[:, -1].float()
-        logger.info(
-            f"LIP-AC critic counterfactual agent augmentation: p={aug_p} "
-            f"transit_scale={float(a.aug_transit_scale)} mean transit {aug_transit.mean().item():.2f} steps"
-        )
-    aug_rng = np.random.default_rng(a.seed + 7)  # separate stream: the actor sampler's RNG stays frozen
-    # success-tolerance relabeling of the co-critic's MC targets (row-aligned logged state)
-    td_state: np.ndarray | None = None
-    td_tol: dict[str, object] | None = None
-    if a.get("tol_relabel"):
-        if c_td is None:
-            raise ValueError("tol_relabel needs the dense TD cache")
-        if not a.get("state_cache"):
-            raise ValueError("tol_relabel=true requires state_cache (tools/cache_state output)")
-        sc = LatentCache.load(str(a.state_cache), mmap=False)
-        if (
-            len(sc.z) != len(c_td.z)
-            or not torch.equal(sc.episode_idx, c_td.episode_idx)
-            or not torch.equal(sc.step_idx, c_td.step_idx)
-        ):
-            raise ValueError("state_cache rows do not align with cache_td")
-        td_state = sc.z.numpy()
-        td_tol = cast(dict[str, object], OmegaConf.to_container(a.tol, resolve=True))
-        logger.info(f"LIP-AC co-critic success-tolerance relabeling on: {td_tol}")
-    goal_tile = bool(a.get("goal_tile"))
-    if goal_tile:
-        logger.info("LIP-AC co-critic deploy-matched goals: goal frame tiled to the window width")
     td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
     td_near_max = int(a.get("near_max", 3) or 3)
     if td_near_frac > 0:
         logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
-    if a.get("expectile_near") is not None:
-        logger.info(
-            f"LIP-AC co-critic distance-dependent expectile: {a.expectile_near} below {a.get('near_steps', 3.0)} steps"
-        )
-    if float(a.get("near_weight", 0.0) or 0.0) > 0:
-        logger.info(f"LIP-AC co-critic near-goal loss weighting: (1+d)^-{a.near_weight}")
     base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
     if a.init_value:
         critic = load_metric(a.init_value, device=dev)
@@ -373,8 +257,6 @@ def _run(cfg: DictConfig) -> None:
             balanced=True,
             seed=a.seed,
             max_delta=a.td_max_delta,
-            state=td_state,
-            tolerance=td_tol,
             near_frac=td_near_frac,
             near_max=td_near_max,
         )
@@ -421,16 +303,10 @@ def _run(cfg: DictConfig) -> None:
         b = td_sampler.sample(a.td_batch)
         if vframes > 1:
             # window critics: every query is an m-frame stack rebuilt from the
-            # dense cache; the goal side is the sampled goal frame's own window,
-            # or (goal_tile) the goal frame tiled as the planner feeds it
+            # dense cache; the goal side is the sampled goal frame's own window
             z_t = _window_rows(b["t_idx"]).to(dev)
             z_tn = _window_rows(b["tn_idx"]).to(dev)
-            if goal_tile:
-                if c_td is None:
-                    raise RuntimeError("goal tiling needs the dense TD cache")
-                z_g = c_td.z[b["g_idx"]].float().repeat(1, vframes).to(dev)
-            else:
-                z_g = _window_rows(b["g_idx"]).to(dev)
+            z_g = _window_rows(b["g_idx"]).to(dev)
         else:
             z_t, z_tn, z_g = b["z_t"].to(dev), b["z_tn"].to(dev), b["z_g"].to(dev)
         ne, reached, dist = (
@@ -438,58 +314,23 @@ def _run(cfg: DictConfig) -> None:
             b["reached"].to(dev),
             b["dist"].to(dev),
         )
-        transit = torch.zeros(a.td_batch, device=dev)
-        if c_aug is not None and aug_transit is not None:
-            # displaced-agent queries: same frames, agent elsewhere; the label
-            # gains the steps needed to walk the agent back first
-            mask = torch.from_numpy(aug_rng.random(a.td_batch) < aug_p)
-            if bool(mask.any()):
-                t_aug = b["t_idx"][mask]
-                z_aug = _window_rows(t_aug, c_aug) if vframes > 1 else c_aug.z[t_aug]
-                z_t = z_t.clone()
-                z_t[mask.to(dev)] = z_aug.to(dev).float()
-                transit[mask.to(dev)] = (aug_transit[t_aug] * float(a.aug_transit_scale)).to(dev)
         with torch.no_grad():
             d_next = teacher_fn(z_tn, z_g)
-            ne_total = ne + transit
             if a.gamma >= 1.0:
-                cost, disc = ne_total, torch.ones_like(ne)
+                cost, disc = ne, torch.ones_like(ne)
             else:
-                disc = a.gamma**ne_total
+                disc = a.gamma**ne
                 cost = (1.0 - disc) / (1.0 - a.gamma)
-            tgt = reached * (dist + transit) + (1.0 - reached) * (cost + disc * d_next)
-        tau_t, sample_weights = near_goal_terms(
-            tgt,
-            tau,
-            None if a.get("expectile_near") is None else float(a.expectile_near),
-            float(a.get("near_steps", 3.0) or 3.0),
-            float(a.get("near_weight", 0.0) or 0.0),
-        )
-        # td_weight 0 keeps the warm-start teacher's TD fit untouched: the critic then
-        # moves only through the imagination terms (pessimistic-only co-training)
-        td_weight = float(a.get("td_weight", 1.0))
-        loss = td_weight * _expectile_loss(critic_fn(z_t, z_g) - tgt, tau_t, a.huber_beta, sample_weights)
+            tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
+        loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau, a.huber_beta)
         if expand is not None:  # value expansion on planner rollouts
             z0e, traje, zge = expand
             # windowed values receive pre-stacked endpoint windows (2-D);
             # single-frame values the full trajectory (endpoint = last frame)
             endpoint = traje if vframes > 1 else traje[:, -1]
-            if str(a.get("expand_mode", "optimistic")) == "pessimistic":
-                # pessimistic imagination (2026-09-09): the refiner's imagined terminal
-                # may not be rated closer to the goal than the quasimetric triangle
-                # bound allows, d(zT, g) >= (d(z0, g) - c(n)) / gamma^n, with d(z0, g)
-                # the data-anchored start value from the EMA teacher. One-sided hinge:
-                # imagination can only make the critic MORE conservative on the
-                # refiner's own states, never certify "impossible progress" (the
-                # optimistic expansion target is what the K-step update exploits).
-                with torch.no_grad():
-                    bound = ((teacher_fn(z0e, zge) - plan_cost) / plan_disc).clamp_min(0.0)
-                gap = torch.relu(bound - critic_fn(endpoint, zge))
-                loss_e = torch.nn.functional.smooth_l1_loss(gap, torch.zeros_like(gap), beta=a.huber_beta)
-            else:
-                with torch.no_grad():
-                    tgt_e = plan_cost + plan_disc * teacher_fn(endpoint, zge)
-                loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
+            with torch.no_grad():
+                tgt_e = plan_cost + plan_disc * teacher_fn(endpoint, zge)
+            loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
             if a.expand_traj:
                 # single-block backups along the reused refinement rollout:
                 # consecutive imagined latents are one fs-step block apart
@@ -500,18 +341,6 @@ def _run(cfg: DictConfig) -> None:
                     tgt_t = block_cost + block_disc * teacher_fn(traje.reshape(-1, De), zg_rep)
                 loss_e = loss_e + _expectile_loss(critic_fn(src, zg_rep) - tgt_t, tau, a.huber_beta)
             loss = loss + a.expand_weight * loss_e
-        if imag_mc_weight > 0:
-            # imagination-MC: imagined latents along the data's actions, exact labels
-            m_blocks = int(imag_rng.integers(1, a.horizon + 1))
-            zh_i, ah_i, ab_i, zg_i, lab_i = sample_imag(imag_mc_batch, m_blocks)
-            with torch.no_grad():
-                traj_i = rollout_traj(wm, zh_i, ah_i, ab_i)  # (B, m, D) imagined, newest last
-                full_i = torch.cat([zh_i, traj_i], dim=1)
-            if vframes > 1:
-                q_i, g_i = window_pair(full_i, zg_i, vframes)
-            else:
-                q_i, g_i = full_i[:, -1], zg_i
-            loss = loss + imag_mc_weight * _expectile_loss(critic_fn(q_i, g_i) - lab_i, tau, a.huber_beta)
         c_opt.zero_grad(set_to_none=True)
         loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature here.
         c_opt.step()
@@ -595,7 +424,7 @@ def _run(cfg: DictConfig) -> None:
     }  # previous step's final imagined windows
 
     def actor_step() -> tuple[float, float, ExpandBatch]:
-        zh, ah, zg, aref = sample(a.batch)
+        zh, ah, zg = sample(a.batch)
         replay_zh = replay_buf["zh"]
         replay_zg = replay_buf["zg"]
         if a.replay_prob > 0 and replay_zh is not None and replay_zg is not None:
@@ -670,28 +499,7 @@ def _run(cfg: DictConfig) -> None:
                 raise RuntimeError("actor produced no rollout trajectory")
             replay_buf["zh"] = tr[:, -3:].detach()
             replay_buf["zg"] = zg.detach()
-        smooth_m = int(a.get("smooth_samples", 0) or 0)
-        if smooth_m > 0:
-            # randomized smoothing (2026-09-09): the final plan's energy averaged over M
-            # noisy copies -- plan noise in z-scored action units, optional history-latent
-            # noise. Exploits of critic/WM error are sharp minima of the energy landscape
-            # and average away; real progress toward the goal does not. Deployment is
-            # unchanged (one deterministic K=8 pass).
-            s_act = float(a.get("smooth_action_std", 0.1) or 0.0)
-            s_lat = float(a.get("smooth_latent_std", 0.0) or 0.0)
-            A_s = A.repeat(smooth_m, 1, 1) + s_act * torch.randn(smooth_m * a.batch, a.horizon, a_dim, device=dev)
-            A_s = A_s.clamp(-a.amax, a.amax)
-            zh_s, ah_s, zg_s = zh.repeat(smooth_m, 1, 1), ah.repeat(smooth_m, 1, 1), zg.repeat(smooth_m, 1)
-            if s_lat > 0:
-                zh_s = zh_s + s_lat * torch.randn_like(zh_s)
-            tr_s = rollout_traj(wm, zh_s, ah_s, A_s)
-            if vframes > 1:
-                e_s = windowed_trajectory_value(teacher_fn, tr_s, zg_s, zh_s, vframes, a.temporal_objective)
-            else:
-                e_s = trajectory_value(teacher_fn, tr_s, zg_s, zh_s[:, -1], a.temporal_objective)
-            loss = e_s.mean() + a.mean_weight * torch.stack(e_path).mean()
-        else:
-            loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
+        loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
         if a.get("ac_weight", 0.0) > 0:
             # anti-constancy: penalize batch-level constancy of net plan
             # displacement, ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0,1].
@@ -701,8 +509,6 @@ def _run(cfg: DictConfig) -> None:
             _disp = A.sum(1)
             _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
             loss = loss + a.ac_weight * _const
-        if a.bc_weight > 0:  # trust-region toward data actions
-            loss = loss + a.bc_weight * ((A - aref) ** 2).mean()
         a_opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)

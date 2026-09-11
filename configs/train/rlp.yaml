@@ -1,7 +1,12 @@
 # @package _global_
 # Composed RLP replication pipeline: latent caches -> offline value -> planner.
-# Stage defaults are the paper's OGBench Cube recipe; override per environment
-# through the value.* / planner.* subtrees (see docs/replication/REPLICATION_RLP.md).
+# Stage defaults are **config B** (docs/campaigns/2026-08-27/HANDOFF_CONFIGS_20260903.md):
+# gamma 0.98, teacher n-step 1, expectile 0.03, amax 2.5, max-delta 20, K 8,
+# depth 2 at 1x budgets, acr 0.5, fine ES, ema 0.005 -- the single recipe that
+# covers TwoRoom, Cube, Reacher and PushT. Per-environment properties that
+# config B does not unify (window frames, step budgets, replay_prob,
+# expand_weight) are overridden through the value.* / planner.* subtrees; see
+# docs/replication/REPLICATION_RLP.md.
 defaults:
   - /logging: default
   - _self_
@@ -14,53 +19,28 @@ state_key: null    # optional ground-truth state column cached for diagnostics
 train_episodes: 8000  # value/planner train on episodes [0, N); eval draws the rest (paper split)
 train_res: null
 cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
-skip: []           # stages to skip, e.g. skip=[cache,subsample,actions,cache_aug]
+skip: []           # stages to skip, e.g. skip=[cache,subsample,actions]
 device: auto
 seed: 0
 
-# Optional stage 3b — counterfactual agent augmentation for the critic (PushT;
-# docs/campaigns/2026-09-03/PUSHT_DIAG.md E9). Re-renders every train frame
-# with the agent displaced (tools/cache_agent_aug) and hands the row-aligned
-# cache to the value and planner stages: a fraction `p` of critic TD queries
-# use the displaced latent with label d + transit_scale * (steps to walk the
-# agent back). p = 0 disables the stage entirely.
-agent_aug:
-  p: 0.0
-  transit_scale: 1.0
-  seed: 0
-  workers: 12
-  cache: null        # explicit cache path (null = <cache_directory>/<name>_fs1_agentaug.pt)
-
-# Stage 4 — offline quasimetric critic (train/metric, learner=td).
+# Stage 4 -- offline quasimetric critic (train/metric, learner=td).
 # Keys are forwarded verbatim onto configs/train/metric.yaml.
 value:
   steps: 12000
   batch_size: 1024
   gamma: 0.98
   expectile: 0.03
-  n_step: 50
+  n_step: 1
   p_cross: 0.3
   depth: null           # MRN value-head depth (null = core default 2)
   window_frames: null   # m-frame window teacher (null = single frame); the
                         # planner stage inherits the window automatically
   window_lag: null      # window frame spacing in primitive steps; required
                         # (= frameskip) whenever window_frames >= 2
-  tol_relabel: null     # success-tolerance relabeling of MC targets (needs the
-                        # `state` stage; see train/metric.yaml)
-  tol: null             # success-set spec override (dict), null = stage default
   near_frac: null       # near-goal hindsight oversampling fraction
   near_max: null
-  expectile_near: null  # distance-dependent expectile below near_steps
-  near_steps: null
-  near_weight: null     # near-goal loss weighting exponent
-  goal_tile: null       # window critics: deploy-matched tiled goal frames
 
-# Optional stage 3c — logged-state cache for tolerance relabeling
-# (tools/cache_state), built when value.tol_relabel or planner.tol_relabel.
-tol_state_key: state
-tol_state_cache: null   # explicit path (null = <cache_directory>/<name>_state.pt)
-
-# Stage 5 — RLP plan refiner (train/lip_ac, actor-critic tandem).
+# Stage 5 -- RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.
 planner:
   steps: 6000
@@ -68,46 +48,28 @@ planner:
   actor_lr: 3e-4
   actor_lr_final: 3e-5
   mean_weight: 0.1
-  max_delta: 10
+  max_delta: 20
   p_cross: 0.3
   replay_prob: 0.5
   gamma: 0.98
   n_step: 50
   expectile: 0.1
   expectile_final: 0.03
-  ac_weight: 0.0        # anti-constancy regularizer (forwarded to lip_ac)
+  ac_weight: 0.5        # anti-constancy regularizer (forwarded to lip_ac)
   layers: null          # refiner transformer_layers (null = core default 2)
   width: null           # refiner transformer_width (null = core default 256)
   critic_lr: 1e-3
   critic_lr_final: 1e-4
   td_batch: 1024
   freeze_critic_frac: 0.5   # critic live for the first 3,000 of 6,000 steps
-  expand_weight: 1.0        # value expansion on planner rollouts (Cube recipe; set 0 on Reacher)
+  expand_weight: 1.0        # value expansion on planner rollouts (cube/pusht; set 0 on tworoom/reacher)
   temporal_objective: terminal
-  amax: 1.6   # residual clip range — the one per-base knob (LeWM 1.6, PLDM 4.5)
+  amax: 2.5   # residual clip range
   iterations: null  # refinement iterations K (null = the planner group's
                     # LIPv4 default, 8); trained unrolled, so eval matches
                     # automatically via the checkpoint
-  bc_weight: null   # behavior-cloning anchor toward dataset actions
-                    # (null = trainer default 0). On expert datasets this
-                    # biases the refiner toward demonstrated contact modes.
   ckpt_every: null  # save a deployable planner snapshot every N steps so a
                     # selection pass can early-stop on held-out success
                     # (null/0 = off; forwarded to train/lip_ac)
-  tol_relabel: null # co-critic success-tolerance relabeling (see train/lip_ac.yaml)
-  tol: null
   near_frac: null   # co-critic near-goal hindsight oversampling
   near_max: null
-  expectile_near: null  # co-critic distance-dependent expectile below near_steps
-  near_steps: null
-  near_weight: null     # co-critic near-goal loss weighting exponent
-  actor_near_frac: null # actor near-goal problems (fraction of goals 1..actor_near_max blocks ahead)
-  actor_near_max: null
-  goal_tile: null       # co-critic: deploy-matched tiled goal frames
-  imag_mc_weight: null  # co-critic imagination-MC term (WM rollouts along logged actions, exact labels)
-  imag_mc_batch: null
-  smooth_samples: null  # actor randomized smoothing (M noisy plan copies in the loss)
-  smooth_action_std: null
-  smooth_latent_std: null
-  expand_mode: null     # optimistic | pessimistic value expansion
-  td_weight: null       # co-critic TD loss weight (0 = imagination terms only)

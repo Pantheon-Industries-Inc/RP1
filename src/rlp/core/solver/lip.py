@@ -135,10 +135,9 @@ class LIPSolver(CEMSolver):
     """Plan with a trained LIP checkpoint; optionally refine with MPPI.
 
     With ``n_steps=0`` (the benchmarked configuration) the solver is fully
-    deterministic: K learned refinement iterations, execute the plan. With
-    ``restarts=R > 1`` it runs R noisy-initialized refinements per env and
-    picks by terminal value (argmin-V; ``robust_m > 0`` averages the value of
-    m perturbed copies instead). ``n_steps > 0`` additionally runs MPPI
+    deterministic: one pass of K learned refinement iterations from a single
+    initialization, then execute the plan -- there are no deploy-time restarts
+    (2026-09-04 directive). ``n_steps > 0`` additionally runs MPPI
     (softmax-weighted, temperature ``lam``) seeded from the LIP plan.
 
     The plan length (horizon) always comes from the actor checkpoint.
@@ -150,10 +149,7 @@ class LIPSolver(CEMSolver):
         actor_path: str = "",
         value_path: str | None = None,
         lam: float = 1.0,
-        restarts: int = 1,
-        restart_noise: float = 0.5,
         lip_select: str = "last",
-        robust_m: int = 0,
         init_mode: str = "zero",
         init_samples: int = 64,
         init_scale: float = 1.5,
@@ -163,23 +159,18 @@ class LIPSolver(CEMSolver):
         graphed: bool | str = False,
         record_probes: bool = False,
         probe_directory: str | None = None,
-        contact: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         from rlp.core.value import load_metric
 
         self.lam = lam
-        self.restarts = int(restarts)
-        self.restart_noise = restart_noise
         self.lip_select = lip_select
-        self.robust_m = int(robust_m)
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
-        # before refinement. Unlike `restarts` (noise around zero, argmin over
-        # REFINED plans — the configuration that hurt on v2WM), selection here
-        # happens on unrefined samples, exactly CEM's iteration-0, and the
-        # refinement trajectory stays single and deterministic.
+        # before refinement. Selection happens on UNREFINED samples, exactly
+        # CEM's iteration-0, so the refinement trajectory itself stays single
+        # and deterministic (no deploy-time restarts).
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
@@ -211,16 +202,6 @@ class LIPSolver(CEMSolver):
         self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
         if self.probe_directory is not None:
             self.probe_directory.mkdir(parents=True, exist_ok=True)
-        # contact-consistency penalty: added to the refinement objective, so the
-        # learned update descends the CONSTRAINED energy (see rlp.core.value.contact)
-        from rlp.core.value import ContactPenalty
-
-        self.contact = ContactPenalty.from_config(contact, device=self.device)
-        if self.contact is not None and self.graphed:
-            raise ValueError(
-                "graphed refinement captures the unconstrained energy; disable graphed with a contact penalty"
-            )
-
         raw_checkpoint = torch.load(actor_path, map_location=self.device, weights_only=False)
         if not isinstance(raw_checkpoint, dict):
             raise TypeError("LIP checkpoint must contain a mapping")
@@ -354,10 +335,6 @@ class LIPSolver(CEMSolver):
     def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
         """Trajectory score; stacks the last ``vframes`` imagined frames and
         duplicates the observed goal frame when the value is windowed.
-
-        With a contact penalty configured the score is the critic energy PLUS
-        the penalty, so the refiner descends both: the gradient it follows is
-        the gradient of the constrained objective.
         """
         if self.vframes > 1:
             energy = windowed_trajectory_value(
@@ -365,8 +342,6 @@ class LIPSolver(CEMSolver):
             )
         else:
             energy = trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
-        if self.contact is not None:
-            energy = energy + self.contact(trajectory, start=history[:, -1])
         return energy
 
     def _value_init(
@@ -409,17 +384,6 @@ class LIPSolver(CEMSolver):
                     cand.reshape(B * C, H, adim),
                 )
                 E = self.lip_value(*window_pair(trajectory.float(), zg_c, self.vframes)).view(B, C)
-                if self.contact is not None:
-                    E = E + self.contact(trajectory.float()).view(B, C)
-            elif self.contact is not None:
-                # the penalty needs the whole imagined path, not just its terminal
-                trajectory = rollout_traj(
-                    wm,
-                    z_hist.repeat_interleave(C, dim=0),
-                    a_hist.repeat_interleave(C, dim=0),
-                    cand.reshape(B * C, H, adim),
-                )
-                E = (self.lip_value(trajectory[:, -1].float(), zg_c) + self.contact(trajectory.float())).view(B, C)
             else:
                 term = rollout_terminal(
                     wm,
@@ -524,23 +488,14 @@ class LIPSolver(CEMSolver):
         # planning. The split matters: only the refinement is graph-captured,
         # so a whole-decision number is not comparable to a refinement number.
         self._last_encode_seconds = time.time() - encode_start
-        R = max(1, self.restarts)
         B = n_envs
-        zh_r = z_hist.repeat_interleave(R, dim=0)
-        zg_r = zg.repeat_interleave(R, dim=0)
+        zh_r, zg_r = z_hist, zg
         z0_r = zh_r[:, -1]
-        a_hist = torch.zeros(B * R, 2, self.action_dim, device=self.device)
-        A = self.restart_noise * torch.randn(
-            B * R,
-            self.horizon,
-            self.action_dim,
-            device=self.device,
-            generator=self.torch_gen,
-        )
-        A[::R] = 0.0  # one zero-init restart per env
-        if self.init_mode == "value" and R == 1:
+        a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
+        A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
+        if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
-        elif self.init_mode == "cem" and R == 1:
+        elif self.init_mode == "cem":
             A = self._cem_init(info_dict, B).clamp(-float(self.actor.amax), float(self.actor.amax))
         A_init = A.detach().clone()
         e_iters: list[torch.Tensor] = []  # E(A_k) before the k-th update, k = 0..K-1
@@ -610,26 +565,18 @@ class LIPSolver(CEMSolver):
                 buf = [A.detach().clone()]
             cands = torch.stack(buf if self.lip_select == "buffer" else buf[-1:], dim=1)
             C = cands.shape[1]
-            cf = cands.reshape(B * R * C, self.horizon, self.action_dim)
+            cf = cands.reshape(B * C, self.horizon, self.action_dim)
             zh_c = zh_r.repeat_interleave(C, dim=0)
             ah_c = a_hist.repeat_interleave(C, dim=0)
             zg_c = zg_r.repeat_interleave(C, dim=0)
-            if self.robust_m > 0:  # value of m perturbed copies (robust argmin)
-                scores = torch.zeros(cf.shape[0], device=cf.device)
-                amax = self.actor.amax
-                for _ in range(self.robust_m):
-                    pert = (cf + 0.1 * torch.randn_like(cf)).clamp(-amax, amax)
-                    perturbed = rollout_traj(wm, zh_c, ah_c, pert)
-                    scores = scores + self._score(perturbed, zg_c, zh_c)
-                Ef = (scores / self.robust_m).view(B, R * C)
-            elif graphed_ref is not None and C == 1:
+            if graphed_ref is not None and C == 1:
                 # selection unroll through the same captured graph (shape matches)
-                Ef = graphed_ref.score(cf).view(B, R * C)
+                Ef = graphed_ref.score(cf).view(B, C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
-                Ef = self._score(final_trajectory, zg_c, zh_c).view(B, R * C)
+                Ef = self._score(final_trajectory, zg_c, zh_c).view(B, C)
             best = Ef.argmin(dim=1)
-            A = cands.view(B, R * C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
+            A = cands.view(B, C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
         if self.probe_directory is not None:
             global _LIP_PROBE_N
             with torch.no_grad():
@@ -639,7 +586,7 @@ class LIPSolver(CEMSolver):
                 # candidate population under both objectives (probe-only rollout;
                 # Ef is the critic energy the deployed argmin actually used)
                 traj_c = rollout_traj(wm, zh_c, ah_c, cf)
-                lat_pop = (traj_c[:, -1] - zg_c).norm(dim=-1).view(B, R * C)
+                lat_pop = (traj_c[:, -1] - zg_c).norm(dim=-1).view(B, C)
                 lat_traj = (z_traj - zg.unsqueeze(1)).norm(dim=-1)  # (B,H)
             torch.save(
                 {
@@ -653,7 +600,7 @@ class LIPSolver(CEMSolver):
                     "lat_pop": lat_pop.detach().cpu(),
                     "best": best.detach().cpu(),
                     "lat_traj": lat_traj.detach().cpu(),
-                    "cands": cands.view(B, R * C, self.horizon, self.action_dim).detach().cpu(),
+                    "cands": cands.view(B, C, self.horizon, self.action_dim).detach().cpu(),
                     # diagnostics (2026-09-08): refinement trajectory per iteration
                     "A_init": A_init.cpu(),
                     "E_iters": torch.stack(e_iters).cpu() if e_iters else torch.zeros(0),
