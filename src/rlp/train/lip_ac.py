@@ -132,6 +132,12 @@ def _run(cfg: DictConfig) -> None:
     z = c.z.to(dev).float()
     eps = c.episodes()
     keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]
+    if not keys:
+        longest = max((len(v) for v in eps.values()), default=0)
+        raise ValueError(
+            f"no episode in {a.cache} is longer than max_delta+4 = {a.max_delta + 4} blocks "
+            f"(longest is {longest}); lower planner.max_delta or use a cache with longer episodes"
+        )
     ep_rows = {e: np.asarray(eps[e]) for e in keys}
     ep_ids = np.array(keys)
     with h5py.File(a.h5, "r") as h:
