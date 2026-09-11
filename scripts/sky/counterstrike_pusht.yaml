@@ -78,6 +78,7 @@ envs:
   ACTOR_TAG: ""          # reuse another tag's train_checkpoints/ (eval-only job)
   HYB_LAMS: "1.0"        # blend weights for the cem_hybrid / cem_hybrid_td conditions (E11)
   PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
+  GD_LRS: "0.03"         # gd_* conditions: space-separated learning rates for the plain step
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
   RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
@@ -258,7 +259,7 @@ run: |
     local extra="${EVAL_EXTRA:-}"
     extra="${extra//__SEED__/$seed}"; extra="${extra//__LABEL__/$label}"
     if [ "${RECORD:-0}" = 1 ]; then case " ${RECORD_CONDS:-rlp cem_latent} " in *" $label "*) extra="$extra environment.record_path=$D/rec_${label}_s${seed}.lance";; esac; fi
-    case "$label" in rlp*) [ "${PROBES:-0}" = 1 ] && extra="$extra core.solver.record_probes=true core.solver.probe_directory=$D/probes_${label}_s${seed}";; esac
+    case "$label" in rlp*|gd_*) [ "${PROBES:-0}" = 1 ] && extra="$extra core.solver.record_probes=true core.solver.probe_directory=$D/probes_${label}_s${seed}";; esac
     # episode_range 16000:18685 and h25 (goal_offset 25 / budget 50) are the
     # shipped config defaults; the run exercises them rather than overriding.
     pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
@@ -293,11 +294,26 @@ run: |
         rlp_ceminit)
           run_eval rlp_ceminit $ES core/solver=lip core.solver.init_mode=cem \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
-        rlp_ceminit_k0)
-          run_eval rlp_ceminit_k0 $ES core/solver=lip core.solver.init_mode=cem core.solver.iters_override=0 \
+        rlp_ceminit_k*)   # K ladder from the CEM plan: rlp_ceminit_k0 is E1's control
+          run_eval "$COND" $ES core/solver=lip core.solver.init_mode=cem \
+            core.solver.iters_override=${COND#rlp_ceminit_k} \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
-        rlp_k64)
-          run_eval rlp_k64 $ES core/solver=lip core.solver.iters_override=64 \
+        gd_ceminit_k*)    # same loop, same energy, plain gradient step instead of the learned rule
+          for LR in ${GD_LRS:-0.03}; do
+            run_eval "${COND}_lr${LR/./p}" $ES core/solver=lip core.solver.init_mode=cem \
+              core.solver.update_rule=gradient core.solver.gd_lr=$LR \
+              core.solver.iters_override=${COND#gd_ceminit_k} \
+              core.solver.actor_path="$D/train_checkpoints/planner.pt"
+          done;;
+        gd_k*)            # plain gradient from zero init
+          for LR in ${GD_LRS:-0.03}; do
+            run_eval "${COND}_lr${LR/./p}" $ES core/solver=lip \
+              core.solver.update_rule=gradient core.solver.gd_lr=$LR \
+              core.solver.iters_override=${COND#gd_k} \
+              core.solver.actor_path="$D/train_checkpoints/planner.pt"
+          done;;
+        rlp_k*)           # K ladder from zero init (rlp_k64 = E2's divergence check)
+          run_eval "$COND" $ES core/solver=lip core.solver.iters_override=${COND#rlp_k} \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_value)   # E4: CEM driven by the co-trained critic energy (windowed) instead of latent L2
           run_eval cem_value $ES core/solver=cem core/value=metric core.value.mode=replacement \

@@ -159,6 +159,8 @@ class LIPSolver(CEMSolver):
         graphed: bool | str = False,
         record_probes: bool = False,
         probe_directory: str | None = None,
+        update_rule: str = "learned",
+        gd_lr: float = 0.03,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -166,6 +168,16 @@ class LIPSolver(CEMSolver):
 
         self.lam = lam
         self.lip_select = lip_select
+        # update_rule="gradient" replaces the LEARNED update with a plain
+        # gradient step of the same energy, inside the same loop: same init,
+        # same _score, same K, same clip, so the only difference is the rule.
+        # It answers whether the exploitation E1 measured (a CEM plan worth
+        # 79.6 refined down to 68.9) belongs to the learned rule or to the
+        # energy landscape any descent direction would follow.
+        if update_rule not in {"learned", "gradient"}:
+            raise ValueError(f"unsupported update rule: {update_rule}")
+        self.update_rule = update_rule
+        self.gd_lr = float(gd_lr)
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
         # before refinement. Selection happens on UNREFINED samples, exactly
@@ -551,7 +563,10 @@ class LIPSolver(CEMSolver):
                         traj_f.reshape(Bh * H, -1),
                         zg_r.repeat_interleave(H, dim=0),
                     ).view(Bh, H)
-                if self.kind == "lip4r":
+                if self.update_rule == "gradient":
+                    amax = float(self.actor.amax)
+                    A = (A - self.gd_lr * gA).clamp(-amax, amax)
+                elif self.kind == "lip4r":
                     if not isinstance(self.actor, PlannerNetRec) or s is None:
                         raise RuntimeError("lip4r checkpoint did not create a recurrent actor state")
                     A, s = self.actor(A, gA, E, z0_r, zg_r, s, traj_f, k=k_it, vtraj=vtraj)

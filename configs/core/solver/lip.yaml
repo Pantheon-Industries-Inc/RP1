@@ -29,3 +29,8 @@ init_scale: 1.5
 # diagnostic only -- the shipped protocol is the checkpoint's K, zero init.
 cem_init_steps: 30
 iters_override: null
+# Probe: swap the learned update for a plain gradient step of the same energy
+# (same init, same score, same K, same clip) to tell an exploitable LANDSCAPE
+# apart from a rule that learned to exploit it.
+update_rule: learned   # learned | gradient
+gd_lr: 0.03
