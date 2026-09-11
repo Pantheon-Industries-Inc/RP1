@@ -14,7 +14,13 @@ import os, numpy as np, torch
 from rlp.data import LatentCache
 from rlp.core.value.learners.td import TDConfig, fit
 
-cache = LatentCache.load(os.environ.get("CACHE", os.path.expanduser("~/.cache/rlp/caches/tworoom_mixed_fs1.pt")), mmap=True)
+CACHE = os.environ.get("CACHE") or (
+    os.path.join(os.environ["CD"], "counterstrike_fs1.pt")
+    if os.environ.get("CD")
+    else os.path.expanduser("~/.cache/rlp/caches/tworoom_mixed_fs1.pt")
+)
+print(f"cache: {CACHE}", flush=True)
+cache = LatentCache.load(CACHE, mmap=True)
 rng = np.random.default_rng(0); eps = cache.episodes()
 ids = [e for e in eps if len(eps[e]) > 40]
 P = []

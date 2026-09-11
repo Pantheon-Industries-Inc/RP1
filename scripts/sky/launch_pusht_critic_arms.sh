@@ -17,13 +17,18 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.sky/bin:$PATH"
 
-ARM=${1:?arm BASE|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3}; shift
+ARM=${1:?arm BASE|LATENT|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260911}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
 VEXP=0.03; EXTRA=""; NEAR=0; VNSTEP=1; NMAX=${NEAR_MAX:-3}; EXPAND=1.0
 case $ARM in
   BASE)    ;;                                      # config B exactly, no critic change
+  # The control that separates "the critic is a bad objective" from "the refiner is a bad
+  # optimizer": the deployed critic IS the single-frame latent distance, i.e. exactly the
+  # objective CEM scores 79.3 with. Reach ~79 and RLP matches CEM at ~1000x less compute;
+  # stay ~70 and the deficit is optimizer-generic and no critic will fix it.
+  LATENT)  WF=1; EXTRA="value.learner=l2 planner.freeze_critic_frac=0"; CONDS=${CONDS:-"rlp cem_latent cem_value"};;
   E01)     VEXP=0.1; EXTRA="planner.expectile=0.1 planner.expectile_final=0.1";;
   NEAR)    NEAR=${NEAR_FRAC:-0.3};;                # near-goal oversampling 0.3 of goals at 1..3 steps
   NEAR5)   NEAR=0.5;;                              # dose: half of the goals near
@@ -56,7 +61,7 @@ for S in $SEEDS; do
     --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="50 51"
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
-    --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="rlp cem_value cem_tdvalue" --env SMOKE=0
+    --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="${CONDS:-rlp cem_value cem_tdvalue}" --env SMOKE=0
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)
   if [ "${DRY:-0}" = 1 ]; then printf '%q ' "${cmd[@]}"; echo; else "${cmd[@]}" 2>&1 | grep -c "Submitted\|Check logs" || true; fi
