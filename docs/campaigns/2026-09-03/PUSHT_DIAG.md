@@ -1283,3 +1283,85 @@ descends through: Dyna on PushT (fine-tune the WM where the deployed planner
 actually goes -- never run, and the mechanism this result points at),
 descent/selection decoupling (score the K+1 iterates with a function the
 refiner did not descend), and variance reduction on the seed lottery.
+
+## E25 -- three probes into E1: the refiner is a working optimizer with a capped reach, and its corrections are chatter (2026-09-11)
+
+Actor `pusht-w1near_frz-s0-20260909` (the best recipe), draws 42/43/44, 50
+episodes. Jobs `rlp-pusht-p{1,2,3}-*`.
+
+### Probe 2 -- the K ladder (job 22679)
+
+| K | from zero init (`rlp_k`) | from the CEM plan (`rlp_ceminit_k`) |
+|---|---|---|
+| 0 | 1.3 | 76.7 |
+| 1 | 4.7 | 74.0 |
+| 2 | 18.0 | 77.3 |
+| 4 | 48.0 | 76.7 |
+| 8 | **72.7** | **77.3** |
+
+Two readings, and the first corrects the campaign's working story:
+
+1. **From zero the refiner is essential and strongly monotone in K**: 1.3 (the
+   noop floor) -> 72.7. It is a working optimizer, not a broken one.
+2. **From the CEM plan refinement is FLAT within noise** (76.7 -> 77.3), not
+   monotonically destructive.
+
+### Probe 1 -- learned rule vs plain gradient (job 22681)
+
+| condition | mean | vs its own control |
+|---|---|---|
+| `rlp_ceminit_k0` | 78.7 | -- |
+| `gd_ceminit_k8` lr 0.01 | 77.3 | -1.4 |
+| `gd_ceminit_k8` lr 0.03 | 76.0 | -2.7 |
+| `rlp_ceminit_k8` | 75.3 | -3.4 |
+| `gd_ceminit_k8` lr 0.1 | 58.7 | **-20.0** |
+
+Plain gradient descent degrades the CEM plan too, in proportion to step size,
+so the landscape punishes large moves regardless of who makes them. But note
+the **measurement-noise caveat**: `rlp_ceminit_k0` scored 78.7 here and 76.7 in
+job 22679 -- the same condition, actor and draws, 2 points apart. At 150
+episodes and p ~ 0.77 the binomial sd is ~3.4 points, so the k0-vs-k8 deltas in
+this table (-3.4) and in probe 2 (+0.6) are both inside one sd and disagree in
+sign. **The honest statement is that refinement from a good plan is flat, not
+that it destroys it.** E1's -10.7 was measured on the config-B BASE actor and
+with a paired per-episode ledger (fixes 55, loses 76), which is far more
+sensitive than these aggregates; the better critic has evidently shrunk the
+effect, but only the paired analysis can resolve its sign now. Only the lr 0.1
+collapse (-20.0) is safely outside noise.
+
+### Probe 3 -- what the refiner changes (job 22680)
+
+Per-replan decomposition of (refined - init), ~70 replans per draw:
+
+| plans built | delta norm / init norm | late/early | **high/low DCT power** | frac at clip |
+|---|---|---|---|---|
+| from zero (`rlp`) | 4.9 / 0.0 | 1.21-1.27 | **0.45 - 0.62** | 0.003 |
+| from the CEM plan (`rlp_ceminit`) | 3.1 / 7.0 | 1.07-1.16 | **1.66 - 1.94** | 0.023 - 0.044 |
+
+**The refiner's own plans are smooth and its corrections are chatter.** Building
+from scratch it emits a low-frequency action sequence (high/low power ~0.5),
+which is what a real trajectory looks like. Handed a CEM plan it applies a
+correction that is high-frequency dominated (~1.9), perturbs ~45% of the plan's
+norm, and hits the action clip 10x more often -- and buys nothing (probe 2).
+Horizon position is nearly flat (late/early ~1.1), so this is a temporal-BAND
+effect, not a late-plan effect: E16's late-plan fabrication does not show up in
+where the update is spent.
+
+### What this changes
+
+The story is no longer "the refiner destroys good plans". It is:
+
+* the refiner **reaches ~72.7 from zero** and **cannot improve a 77 plan**, so
+  its reachable plan quality is capped below CEM's rather than actively
+  harmful;
+* the budget it spends trying is mostly high-frequency chatter that no real
+  action sequence contains.
+
+That is a concrete, cheap lever that touches neither the objective nor the
+world model: **band-limit the update** -- project each refinement step onto the
+low-frequency DCT modes its own from-scratch plans already occupy. It is not a
+behaviour-cloning anchor (no data, no imitation), just a bandwidth constraint.
+
+Still open and one eval away: `gd_k8` from ZERO init, i.e. whether the learned
+rule beats plain descent in the deployed setting. The ladder says the rule is
+doing real work; it does not say the learned part is what does it.
