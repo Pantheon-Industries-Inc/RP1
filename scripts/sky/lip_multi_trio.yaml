@@ -1,0 +1,156 @@
+# One refiner across TwoRoom + Reacher + PushT (the "2-D trio": all three plan
+# horizon 5 with a_dim 10, so a single checkpoint needs no padding and deploys
+# unchanged). See src/rlp/train/lip_multi.py and PUSHT_DIAG E1/E24 for why:
+# the refiner's loss is the energy of an IMAGINED rollout, so it learns the
+# errors of the one world model it trains against. A rule that must serve three
+# landscapes cannot spend its budget on any single one's holes.
+#
+#   sky jobs launch scripts/sky/lip_multi_trio.yaml -n rlp-trio --priority p1 \
+#       --env EXPERIMENT_TAG=rlp-trio-20260911 -y
+#
+# Stages, each persisted to /checkpoints so a preemption resumes:
+#   per env: dataset -> fs1/fs5 caches + action h5 -> frozen critic (value_td)
+#   shared:  model=lip_multi over the three sources -> planner_<env>.pt each
+#   eval:    every per-env checkpoint on its own environment, draws 42/43/44
+#
+# The per-env critics are each that environment's config-B recipe (TwoRoom w1,
+# Reacher w2, PushT w1 + near-goal oversampling, the W1NEAR_FRZ teacher), so a
+# regression against the per-env RLP rows is attributable to the SHARED rule
+# rather than to a changed critic.
+
+name: rlp-trio
+
+envs:
+  MULTI_STEPS: "18000"     # round robin over 3 sources = 6000 updates each,
+                           # matching a per-environment RLP actor budget
+  MULTI_BATCH: "128"
+  AMAX: "2.5"
+  MAX_DELTA: "20"
+  AC_WEIGHT: "0.5"
+  ARCH: v4                 # shapes match across the trio, so the flat rule is fine
+  VALUE_STEPS: "12000"
+  EVAL_SEEDS: "42 43 44"
+  EVAL_N: "50"
+  SMOKE: "0"
+  CACHE_TAG: ""
+  PANTHEON_USER: armin@pantheon.inc
+  EXPERIMENT_TAG: rlp-trio
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  /checkpoints: checkpoints
+  /newcheckpoints: armin-rlp-checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  ROOT=/newcheckpoints
+  D=$ROOT/$PANTHEON_USER/$EXPERIMENT_TAG; mkdir -p "$D" && chmod 777 "$D"
+  CD=$ROOT/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
+
+  VS=$VALUE_STEPS; MS=$MULTI_STEPS; MB=$MULTI_BATCH; EN=$EVAL_N; ES="$EVAL_SEEDS"
+  if [ "$SMOKE" = 1 ]; then VS=60; MS=12; MB=4; EN=2; ES=42; fi
+
+  # ---------------------------------------------------------------- per-env sources
+  build_source () {  # build_source <env>
+    local E=$1 NAME WM DATASET VEXTRA TRAIN_EPISODES
+    case $E in
+      tworoom)
+        pixi run tool tool=fetch_dataset dataset=tworoom
+        DATASET="$RLP_DATA_HOME/datasets/tworoom/tworoom.h5"
+        WM="$PWD/assets/core/world_model/lejepa_tworoom"
+        VEXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=1"
+        TRAIN_EPISODES=10000;;
+      reacher)
+        pixi run tool tool=fetch_dataset dataset=reacher
+        DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.lance' | head -1 || true)
+        [ -n "$DATASET" ] || DATASET=$(find "$RLP_DATA_HOME/datasets/reacher" -maxdepth 3 -name '*.h5' | head -1)
+        WM="$PWD/assets/core/world_model/lejepa_reacher"
+        # config B reacher is the w=2 window (minimal velocity observability)
+        VEXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=1 +value.window_frames=2 +value.window_lag=5"
+        TRAIN_EPISODES=8000;;
+      pusht)
+        pixi run tool tool=fetch_dataset dataset=pusht
+        DATASET="$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5"
+        WM=$D/lewm_pusht_official
+        if [ ! -f "$WM/weights.pt" ]; then
+          mkdir -p "$WM"; RAW=$RLP_DATA_HOME/wm_raw
+          pixi run hf download quentinll/lewm-pusht weights.pt config.json --local-dir "$RAW"
+          pixi run tool tool=convert_pldm src="$RAW/weights.pt" dst="$WM/weights.pt"
+          cp "$RAW/config.json" "$WM/config.json"
+        fi
+        # W1NEAR_FRZ's teacher: single frame + near-goal oversampling (+4 median)
+        VEXTRA="value.gamma=0.98 value.expectile=0.03 value.n_step=1 value.near_frac=0.3 value.near_max=3"
+        TRAIN_EPISODES=8000;;
+    esac
+    NAME="trio_${E}"
+    local SKIP="planner"
+    [ -f "$CD/${NAME}_fs1.pt" ] && SKIP="$SKIP,cache"
+    [ -f "$CD/${NAME}_fs5.pt" ] && SKIP="$SKIP,subsample"
+    [ -f "$CD/${NAME}_actions.h5" ] && SKIP="$SKIP,actions"
+    if [ ! -d "$D/value_${E}" ]; then
+      pixi run train model=rlp wm="$WM" dataset="$DATASET" name="$NAME" \
+        cache_directory="$CD" train_episodes=$TRAIN_EPISODES seed=0 \
+        "skip=[$SKIP]" value.steps=$VS $VEXTRA
+      RUN=$(ls -dt logs/*/* | head -1)
+      rm -rf "$D/value_${E}"; cp -r "$RUN/checkpoints/value_td" "$D/value_${E}"
+    fi
+    echo "$WM"
+  }
+
+  WM_TW=$(build_source tworoom | tail -1)
+  WM_RE=$(build_source reacher | tail -1)
+  WM_PT=$(build_source pusht   | tail -1)
+  echo "[sources] tworoom=$WM_TW reacher=$WM_RE pusht=$WM_PT"
+
+  # ------------------------------------------------------------------ shared rule
+  SRC="[{name:tworoom,wm:$WM_TW,cache:$CD/trio_tworoom_fs5.pt,h5:$CD/trio_tworoom_actions.h5,value:$D/value_tworoom}"
+  SRC="$SRC,{name:reacher,wm:$WM_RE,cache:$CD/trio_reacher_fs5.pt,h5:$CD/trio_reacher_actions.h5,value:$D/value_reacher}"
+  SRC="$SRC,{name:pusht,wm:$WM_PT,cache:$CD/trio_pusht_fs5.pt,h5:$CD/trio_pusht_actions.h5,value:$D/value_pusht}]"
+  if [ ! -f "$D/planner_pusht.pt" ]; then
+    pixi run train model=lip_multi "sources=$SRC" arch=$ARCH \
+      steps=$MS batch=$MB amax=$AMAX max_delta=$MAX_DELTA ac_weight=$AC_WEIGHT seed=0
+    RUN=$(ls -dt logs/*/* | head -1)
+    cp "$RUN"/checkpoints/planner_*.pt "$D/"
+  fi
+
+  # ------------------------------------------------------------------------ eval
+  for CELL in "tworoom tworoom_lewm_h5" "reacher reacher_lewm" "pusht pusht_lewm"; do
+    set -- $CELL; E=$1; MODEL=$2
+    EXTRA=""; [ "$E" = pusht ] && EXTRA="core.world_model.checkpoint=$WM_PT"
+    for S in $ES; do
+      echo "===== EVAL $E seed=$S ====="
+      pixi run eval model=$MODEL core/solver=lip \
+        core.solver.actor_path="$D/planner_${E}.pt" $EXTRA \
+        runtime.seed=$S evaluation.num_episodes=$EN 2>&1 | tail -25 \
+        || echo "[eval-failed] $E seed=$S"
+      RUN=$(ls -dt logs/*/* | head -1)
+      find "$RUN" -name '*results*.txt' -exec cp {} "$D/results_${E}_s${S}.txt" \;
+      echo "----- RESULT $E seed=$S -----"; cat "$D/results_${E}_s${S}.txt" 2>/dev/null || true
+    done
+  done
+  echo "TRIO_DONE tag=$EXPERIMENT_TAG"

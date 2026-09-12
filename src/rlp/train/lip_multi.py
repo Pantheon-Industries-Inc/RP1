@@ -32,6 +32,7 @@ source has the largest raw energy.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import cast
 
 import h5py
@@ -243,21 +244,50 @@ def _run(cfg: DictConfig) -> None:
         if step % log_every == 0:
             logger.info(f"multi step {step}/{a.steps} [{src.name}] E_final {e_final:.3f} (ema {src.e_ema:.3f})")
 
-    out = {
-        "state_dict": {k: v.detach().cpu().clone() for k, v in net.state_dict().items()},
-        "arch": str(a.arch),
-        "a_dim": a_dim,
-        "horizon": horizon,
-        "amax": float(a.amax),
-        "iterations": int(a.iters),
-        "z_dim": z_dim,
-        "sources": [s.name for s in sources],
-        # per-source plan widths: a deployed solver slices the padded plan
-        "source_shapes": {s.name: [s.horizon, s.a_dim] for s in sources},
-    }
-    path = str(cfg.run.checkpoints) + "/planner_multi.pt"
-    torch.save(out, path)
-    logger.success(f"Saved multi-source planner to {path} (sources {[s.name for s in sources]})")
+    # One SHARED rule, one deployable checkpoint per source: the state dict is
+    # identical in all of them and only the critic path and plan shape differ,
+    # so each environment deploys through the ordinary LIPSolver contract.
+    sd = {k: v.detach().cpu().clone() for k, v in net.state_dict().items()}
+    ckpt_dir = Path(str(cfg.run.checkpoints))
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    written = []
+    for src, spec in zip(sources, a.sources, strict=True):
+        payload: dict[str, object] = {
+            "kind": "lip3" if str(a.arch) == "traj" else "lip4",
+            "feed": "none",
+            "sd": sd,
+            "z_dim": z_dim,
+            "horizon": horizon,
+            "iters": int(a.iters),
+            "a_dim": a_dim,
+            "amax": float(a.amax),
+            "width": int(a.width),
+            "layers": int(a.layers),
+            "goal_mode": "diff",
+            "iter_mode": "scalar",
+            "head_mode": "gate",
+            "cond_mode": "token",
+            "use_gate": getattr(net, "use_gate", True),
+            "use_zg": getattr(net, "use_zg", False),
+            "use_z0": getattr(net, "use_z0", False),
+            "use_grad": getattr(net, "use_grad", True),
+            "head_scale": 1.0,
+            "pre_ln": False,
+            "value": str(spec.value),
+            "temporal_objective": str(a.temporal_objective),
+            "window_frames": src.vframes,
+            "window_lag": 5 if src.vframes > 1 else None,
+            # provenance: which sources the shared rule was trained on, and the
+            # plan width this environment actually consumes out of the padded plan
+            "multi_sources": [s.name for s in sources],
+            "source_name": src.name,
+            "source_a_dim": src.a_dim,
+        }
+        path = ckpt_dir / f"planner_{src.name}.pt"
+        torch.save(payload, path)
+        written.append(str(path))
+    torch.save({"sd": sd, "sources": [s.name for s in sources]}, ckpt_dir / "planner_multi.pt")
+    logger.success(f"Saved shared rule for {[s.name for s in sources]}: " + ", ".join(written))
 
 
 def run() -> None:
