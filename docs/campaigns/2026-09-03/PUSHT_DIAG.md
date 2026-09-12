@@ -1365,3 +1365,53 @@ behaviour-cloning anchor (no data, no imitation), just a bandwidth constraint.
 Still open and one eval away: `gd_k8` from ZERO init, i.e. whether the learned
 rule beats plain descent in the deployed setting. The ladder says the rule is
 doing real work; it does not say the learned part is what does it.
+
+## E26 -- band-limiting is negative; plain descent from zero is at the floor (2026-09-11)
+
+Job `rlp-pusht-bandlimit` (22850), actor `pusht-w1near_frz-s0-20260909`, all ten
+conditions in ONE job so every comparison is within-job. `bl<N>` keeps the first
+N of 5 temporal DCT modes of each refinement step.
+
+| condition | 42 / 43 / 44 | mean |
+|---|---|---|
+| `rlp` (baseline) | 74 / 84 / 60 | **72.7** |
+| `rlp_bl3` | 76 / 84 / 54 | 71.3 |
+| `rlp_bl2` | 66 / 70 / 58 | 64.7 |
+| `rlp_bl1` (DC only) | 34 / 44 / 20 | 32.7 |
+| `gd_k8` lr 0.03 (plain descent, zero init) | 10 / 8 / 0 | **6.0** |
+| `rlp_ceminit_k0` | 78 / 82 / 74 | 78.0 |
+| `rlp_ceminit_k8` | 74 / 86 / 72 | 77.3 |
+| `rlp_ceminit_bl3` | 74 / 84 / 72 | 76.7 |
+| `rlp_ceminit_bl2` | 78 / 80 / 70 | 76.0 |
+| `rlp_ceminit_bl1` | 72 / 78 / 74 | 74.7 |
+
+**Band-limiting closed negative**, monotone in how much bandwidth is removed:
+from zero init -1.4 / -8.0 / -40.0 for N = 3 / 2 / 1. E25's measurement stands
+(corrections to a good plan ARE chatter-dominated) but the inference drawn from
+it does not: the high-frequency content is not spare capacity, it is load
+bearing. The asymmetry is informative -- removing bandwidth costs 40 points when
+the refiner must CONSTRUCT a plan from zero and only 3 when it is correcting a
+good one, which is what one would expect if the modes are doing real work rather
+than exploiting.
+
+**`gd_k8` from zero init scores 6.0** against the learned rule's 72.7 and a noop
+floor near 1. This is the campaign's first direct measurement of what the
+LEARNED part of the refiner contributes, and it is nearly all of it. Caveat
+before quoting: lr 0.03 was chosen because it was harmful from a CEM init, and
+from zero the plan must travel to norm ~5, which 8 steps at that rate may simply
+not reach -- a fair version needs an lr sweep from zero (0.1 / 0.3 / 1.0).
+
+**Reproducibility, localised.** `rlp` here is 74/84/60 = 72.7, identical to
+`rlp_k8` in job 22679 and consistent with the campaign's 72.0 for this actor.
+The ~2-point wobble noted in E25 is confined to the `init_mode=cem` conditions
+(`rlp_ceminit_k0`: 78.7 / 76.7 / 78.0 across three jobs), which is expected --
+that init runs a stochastic CEM search. Zero-init conditions reproduce exactly,
+so within-job zero-init comparisons need no noise allowance and CEM-init ones
+need ~2 points.
+
+**Draw 44 is where the gap lives.** Per draw, RLP vs CEM-latent: 74 vs 78 (-4),
+84 vs 84 (0), 60 vs 76 (-16). RLP ties CEM on draw 43 and the entire 6.6-point
+mean deficit is draw 44 -- so the target is not a uniform shortfall but one
+draw where the refiner collapses. E22's per-episode attribution was run on draw
+43, the draw where RLP is already at parity; redoing it on draw 44 is the
+better-aimed diagnostic.
