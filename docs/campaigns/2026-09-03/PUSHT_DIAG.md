@@ -1471,3 +1471,44 @@ finding is therefore not "add more data" but "the refiner is still
 data-limited at the data we have", which makes data efficiency, not critic
 quality, the live axis. Dyna is the one lever that manufactures more on-policy
 data without touching the eval range, and it remains unrun on PushT.
+
+## E28 -- 5x the actor's data changes nothing: the teacher is the data-limited learner (2026-09-12)
+
+E27's ladder capped BOTH learners and found +13.4 over 8x data. This isolates
+the actor: the fs5 cache kept only steps 0, 5, 10, ... of each episode; keeping
+all five residue classes of the stride (`actor_phases=5`) gives the actor 5x
+the block-aligned start states, goals and histories from the same 16k episodes,
+while the teacher -- already on fs1, every step -- is untouched. Same recipe,
+same three seeds, so the read is per-seed paired.
+
+Verified in-job: `fs5 cache (phases=5): 2002226 latents, 80000 episodes`
+(= every fs1 row; 16k x 5 phase-episodes, median 25 blocks) and `LIP-AC actor
+cache is phase-multiplexed x5` on all three runs.
+
+| seed | stride-0 (E27) | all-phase (p5) | delta |
+|---|---|---|---|
+| s0 | 72.7 | 72.0 / 90.0 / 54.0 = **72.0** | -0.7 |
+| s1 | 70.7 | 74.0 / 74.0 / 62.0 = **70.0** | -0.7 |
+| s2 | 67.3 | 76.0 / 80.0 / 54.0 = **70.0** | +2.7 |
+| median | 70.7 | **70.0** | -0.7 |
+
+Critic-as-sampler-objective is unchanged (cem_value 78.0 / 78.0 / 76.0,
+cem_tdvalue 78.0 / 76.7 / 76.7), as it must be -- the teacher saw the same data.
+
+**Null.** Five times the actor's start states moves nothing outside seed noise.
+Since capping both learners cost 13.4 points and feeding only the actor gains
+nothing, the data sensitivity E27 measured lives in the TD TEACHER. Caveat on
+the strength of that inference: adjacent phases are one primitive step apart,
+so this is denser sampling of the same trajectories, not new episodes -- it
+shows the actor does not want more coverage of the data it has, which is
+consistent with it already sitting at ~4 passes with 2x budget on record as
+harmful. The clean confirmation is the 2x2's off-diagonal: teacher at 2k with
+the actor at 16k, and the reverse. Two jobs.
+
+Side observation: s0 draw 43 = 90.0 is the highest single-draw RLP number in the
+campaign (stride-0 s0 was 84 there), offset by 54 on draw 44 (was 60) -- a
+redistribution across draws, not a gain, and the same draw-44 collapse E26
+identified as where the whole RLP-CEM gap lives.
+
+The all-phase cache stays available (`actor_phases`, separate artefact); it
+costs nothing at eval and may matter for recipes that are actor-limited.
