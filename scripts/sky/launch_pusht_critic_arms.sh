@@ -49,8 +49,15 @@ case $ARM in
   *) echo "unknown arm $ARM" >&2; exit 1;;
 esac
 BASE_OVR="value.window_frames=$WF value.window_lag=5 planner.ac_weight=0.5 planner.ckpt_every=2000"
+# DATA=N: data-volume ladder. Caps BOTH learners at episodes [0, N) of the shared
+# 16k cache -- no re-encode, and the held-out eval range (16000+) is untouched.
+SUF=""
+if [ -n "${DATA:-}" ]; then
+  BASE_OVR="$BASE_OVR value.max_episodes=$DATA planner.max_episodes=$DATA"
+  SUF="-d${DATA}"
+fi
 for S in $SEEDS; do
-  TAG="pusht-${ARM,,}-s${S}-${DATE}"
+  TAG="pusht-${ARM,,}${SUF}-s${S}-${DATE}"
   cmd=(sky jobs launch scripts/sky/counterstrike_pusht.yaml
     -n "rlp-$TAG" --priority p1 -y --async
     --env EXPERIMENT_TAG="$TAG"

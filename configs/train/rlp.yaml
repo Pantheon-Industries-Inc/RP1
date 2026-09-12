@@ -41,6 +41,7 @@ value:
                         # (= frameskip) whenever window_frames >= 2
   near_frac: null       # near-goal hindsight oversampling fraction
   near_max: null
+  max_episodes: null    # data-volume ablation: cap the critic's episodes without re-encoding
 
 # Stage 5 -- RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.
@@ -75,3 +76,4 @@ planner:
                     # (null/0 = off; forwarded to train/lip_ac)
   near_frac: null   # co-critic near-goal hindsight oversampling
   near_max: null
+  max_episodes: null # data-volume ablation: cap the actor's episodes without re-encoding

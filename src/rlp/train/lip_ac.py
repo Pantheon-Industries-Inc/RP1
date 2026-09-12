@@ -129,6 +129,10 @@ def _run(cfg: DictConfig) -> None:
 
     # ------------------------------------------------------------ actor data (fs5 + h5)
     c = LatentCache.load(a.cache, mmap=bool(a.cache_mmap))
+    cap = a.get("max_episodes")
+    if cap:
+        c = c.first_episodes(int(cap))
+        logger.info(f"Data-volume cap: actor training on episodes [0, {int(cap)})")
     z = c.z.to(dev).float()
     eps = c.episodes()
     keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]
@@ -201,6 +205,8 @@ def _run(cfg: DictConfig) -> None:
 
     # ------------------------------------------------------------ critic (fs1 cache)
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
+    if cap and c_td is not None:
+        c_td = c_td.first_episodes(int(cap))
     td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
     td_near_max = int(a.get("near_max", 3) or 3)
     if td_near_frac > 0:

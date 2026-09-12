@@ -40,6 +40,10 @@ def _run(cfg: DictConfig) -> None:
 
     device = pick_device(args.device)
     base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap))
+    max_episodes = args.get("max_episodes")
+    if max_episodes:
+        base_cache = base_cache.first_episodes(int(max_episodes))
+        logger.info(f"Data-volume cap: training on episodes [0, {int(max_episodes)})")
     cache = base_cache.windowed(int(args.window_frames), int(args.window_lag))
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 

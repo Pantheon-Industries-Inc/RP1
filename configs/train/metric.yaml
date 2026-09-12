@@ -10,6 +10,7 @@ window_frames: 1
 window_lag: 1
 near_frac: 0.0         # td: fraction of in-episode hindsight goals drawn 1..near_max steps ahead
 near_max: 3
+max_episodes: null    # data-volume ablation: train on episodes [0, N) of the cache (null = all)
 learner: td
 output:
   checkpoint: value

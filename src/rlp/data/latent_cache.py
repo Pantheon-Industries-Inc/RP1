@@ -58,6 +58,28 @@ class LatentCache:
             out[int(e)] = rows[np.argsort(st[rows])]
         return out
 
+    def first_episodes(self, count: int | None) -> LatentCache:
+        """Keep only rows from episodes with id < ``count`` (None = all).
+
+        Data-volume ablations vary how much of a cache the learners see WITHOUT
+        re-encoding it: one cache, exactly controlled subsets, and the held-out
+        eval range (PushT draws from episode 16000 up) stays untouched because
+        the cap is a lower id range.
+        """
+        if count is None:
+            return self
+        rows = torch.nonzero(self.episode_idx < int(count)).squeeze(1)
+        if rows.numel() == 0:
+            first = int(self.episode_idx.min())
+            raise ValueError(f"max_episodes={count} selects no rows (episode ids start at {first})")
+        return type(self)(
+            self.z[rows],
+            self.episode_idx[rows],
+            self.step_idx[rows],
+            None if self.state is None else self.state[rows],
+            dict(self.meta or {}, max_episodes=int(count)),
+        )
+
     def windowed(self, frames: int, lag: int = 1) -> LatentCache:
         """Return a cache whose latent rows concatenate causal frame windows.
 
