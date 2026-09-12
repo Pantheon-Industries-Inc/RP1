@@ -1415,3 +1415,59 @@ mean deficit is draw 44 -- so the target is not a uniform shortfall but one
 draw where the refiner collapses. E22's per-episode attribution was run on draw
 43, the draw where RLP is already at parity; redoing it on draw 44 is the
 better-aimed diagnostic.
+
+## E27 -- six seeds, and the first data-volume ladder in the campaign (2026-09-12)
+
+Training seeds 0-5, eval draws 42/43/44 x 50 episodes, the protocol the other
+environments got. Seeds 0-2 are the 2026-09-09 / 2026-09-02 runs; 3-5 are new.
+
+**Poolability check first.** `w1near_frz-d16000-s0` retrains the seed-0 recipe
+under post-cleanup code at full data and returns 74.0 / 84.0 / 60.0 -- the same
+three draws as the 2026-09-09 actor, as probe 2's `rlp_k8`, and as E26's `rlp`.
+Training is reproducible across the refactor, so the two seed generations pool.
+(Those draws mean 72.7, where the E22-era table recorded seed 0 as 72.0 -- one
+episode in 150; three current measurements agree on 72.7 and the n=6 median is
+69.0 either way.)
+
+### Six seeds
+
+| arm | s0 | s1 | s2 | s3 | s4 | s5 | n=3 median | **n=6 median** | spread |
+|---|---|---|---|---|---|---|---|---|---|
+| W1NEAR_FRZ | 72.7 | 70.7 | 67.3 | 66.0 | 68.0 | 70.0 | 70.7 | **69.0** | 6.7 |
+| base (config B) | 68.0 | 64.0 | 64.7 | 66.0 | 61.3 | 65.3 | 64.7 | **65.0** | 6.7 |
+
+- **The recipe's advantage shrinks from +6.0 to +4.0.** Three of the three new
+  W1NEAR_FRZ seeds (66.0 / 68.0 / 70.0) land at or below the old worst seed, so
+  n=3 was flattering it; the base is unchanged (64.7 -> 65.0).
+- **The gap to latent-CEM widens from -8.6 to -10.3** (79.3).
+- Seed spread is 6.7 points on BOTH arms -- larger than every critic-side effect
+  this campaign chased after E12. Any future arm reported at n=3 should be read
+  with that in mind.
+
+### Data-volume ladder (W1NEAR_FRZ, seed 0, shared 16k cache capped at [0, N))
+
+| train episodes | rlp | delta per doubling |
+|---|---|---|
+| 2000 | 59.3 | -- |
+| 4000 | 63.3 | +4.0 |
+| 8000 | 70.0 | +6.7 |
+| 16000 | **72.7** | +2.7 |
+
+**Monotone and NOT saturated.** 8x the data buys +13.4 points, and the last
+doubling is still positive. This was never measured before -- the campaign
+swept step budget (2x budget: -12) and read it as "more optimisation overfits",
+but data volume itself was pinned at 16000 throughout and is the largest single
+lever measured on PushT to date, larger than every critic intervention
+(near-goal oversampling +4 being the best of them).
+
+Caveat: the ladder is n=1 and the seed spread is 6.7, so the top-rung
+deceleration (+2.7) is inside noise and the curve's shape at the top is not
+resolved. The trend across the full range (+13.4) is far outside it.
+
+**What this reframes.** PushT's dataset holds 18,685 episodes with 16000:18685
+reserved for evaluation, so the training set cannot grow without touching the
+held-out range -- this ladder is at the ceiling of the available data. The
+finding is therefore not "add more data" but "the refiner is still
+data-limited at the data we have", which makes data efficiency, not critic
+quality, the live axis. Dyna is the one lever that manufactures more on-policy
+data without touching the eval range, and it remains unrun on PushT.
