@@ -65,6 +65,8 @@ envs:
   TRAIN_OVERRIDES: ""   # extra hydra overrides for the model=rlp train call,
                         # e.g. "planner.ac_weight=0.2 core.planner.transformer_layers=3
                         # core.value.depth=3" (deepcap + anti-constancy)
+  PHASES: "1"           # actor fs5 cache: residue classes of the stride kept (5 = all; 5x the
+                        # actor's block-aligned start states from the same episodes, no re-encode)
   NEAR_FRAC: "0"        # fraction of in-episode hindsight goals drawn 1..NEAR_MAX steps
                         # ahead, teacher + co-critic (0 = balanced buckets only)
   NEAR_MAX: "3"
@@ -130,6 +132,7 @@ run: |
   D=${OUT_ROOT:-/checkpoints}/$PANTHEON_USER/$EXPERIMENT_TAG
   mkdir -p "$D" && chmod 777 "$D"
   CD=/checkpoints/$PANTHEON_USER/${CACHE_TAG:-$EXPERIMENT_TAG}/caches && mkdir -p "$CD"
+  FS5SUF=""; [ "${PHASES:-1}" != 1 ] && FS5SUF="p${PHASES}"  # phase-multiplexed actor cache is a separate artefact
 
   pixi run tool tool=fetch_dataset dataset=pusht
   H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
@@ -158,7 +161,7 @@ run: |
   # a ~2 h encode per cell. Falls back to building after the timeout.
   if [ "$WAIT_CACHE_MIN" != 0 ] && [ -n "$CACHE_TAG" ]; then
     WAITED=0
-    until [ -f "$CD/counterstrike_fs1.pt" ] && [ -f "$CD/counterstrike_fs5.pt" ] \
+    until [ -f "$CD/counterstrike_fs1.pt" ] && [ -f "$CD/counterstrike_fs5${FS5SUF}.pt" ] \
         && [ -f "$CD/counterstrike_actions.h5" ]; do
       if [ "$WAITED" -ge "$WAIT_CACHE_MIN" ]; then
         echo "cache wait timed out after ${WAITED}m; building locally"
@@ -171,7 +174,7 @@ run: |
 
   SKIP=""
   [ -f "$CD/counterstrike_fs1.pt" ] && SKIP="cache"
-  [ -f "$CD/counterstrike_fs5.pt" ] && SKIP="$SKIP,subsample"
+  [ -f "$CD/counterstrike_fs5${FS5SUF}.pt" ] && SKIP="$SKIP,subsample"
   [ -f "$CD/counterstrike_actions.h5" ] && SKIP="$SKIP,actions"
   AUG_EXTRA=""
   if [ "${NEAR_FRAC:-0}" != 0 ]; then
@@ -188,6 +191,8 @@ run: |
   else
     TRAIN_EXTRA="train_episodes=$TRAIN_EPISODES"
   fi
+  # appended AFTER the smoke/full assignment above, which replaces TRAIN_EXTRA wholesale
+  [ "${PHASES:-1}" != 1 ] && TRAIN_EXTRA="$TRAIN_EXTRA actor_phases=$PHASES"
 
   ACTOR_LR_FINAL=$(awk -v lr="$ACTOR_LR" 'BEGIN { printf "%.0e", lr / 10 }')
   ITER_EXTRA=""

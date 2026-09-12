@@ -74,14 +74,16 @@ class Source:
     # (TwoRoom tops out at 21 blocks at frameskip 5, so config B's 20 would
     # exclude every episode), so a shared cap cannot serve every source
     max_delta: int
+    phase_mult: int = 1  # tools/subsample_cache phases>1: episode id = e * P + k
     e_ema: float = 0.0
     steps: int = field(default=0)
 
     def blocks(self, e: int, t: int, fs: int) -> np.ndarray:
-        offset = fs * t
+        src_e, phase = divmod(e, self.phase_mult) if self.phase_mult > 1 else (e, 0)
+        offset = phase + fs * t
         if self.ep_len_h5 is not None:
-            offset = min(offset, max(0, int(self.ep_len_h5[e]) - fs))
-        h0 = int(self.ep_off[e] + offset)
+            offset = min(offset, max(0, int(self.ep_len_h5[src_e]) - fs))
+        h0 = int(self.ep_off[src_e] + offset)
         return np.asarray(self.act_n[h0 : h0 + fs]).reshape(-1)
 
 
@@ -124,6 +126,7 @@ def _load_source(spec: DictConfig, dev: str, fs: int, default_max_delta: int) ->
         horizon=int(spec.get("horizon", 5) or 5),
         a_dim=int(act.shape[-1]) * fs,
         max_delta=max_delta,
+        phase_mult=cache.phase_multiplex,
     )
     logger.info(
         f"source {src.name}: {len(src.ep_ids)} episodes, latent {base_dim}, vframes {vframes}, "

@@ -67,7 +67,10 @@ def _run(cfg: DictConfig) -> None:
     cache_directory = Path(str(cfg.cache_directory)).expanduser()
     cache_directory.mkdir(parents=True, exist_ok=True)
     cache_fs1 = str(cache_directory / f"{cfg.name}_fs1.pt")
-    cache_fs5 = str(cache_directory / f"{cfg.name}_fs{cfg.frameskip}.pt")
+    phases = int(cfg.get("actor_phases", 1) or 1)
+    # the phase-multiplexed cache is a different artefact from the stride-0 one
+    suffix = f"p{phases}" if phases > 1 else ""
+    cache_fs5 = str(cache_directory / f"{cfg.name}_fs{cfg.frameskip}{suffix}.pt")
     actions_h5 = str(cache_directory / f"{cfg.name}_actions.h5")
     value_checkpoint = str(Path(cfg.run.checkpoints) / "value_td")
     stage_index = 0
@@ -96,6 +99,7 @@ def _run(cfg: DictConfig) -> None:
             inp=cache_fs1,
             out=cache_fs5,
             frameskip=cfg.frameskip,
+            phases=phases,
         )
     if "actions" not in skip:
         run_stage(

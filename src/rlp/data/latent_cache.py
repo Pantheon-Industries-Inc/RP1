@@ -48,6 +48,16 @@ class LatentCache:
     def latent_dim(self) -> int:
         return self.z.shape[1]
 
+    @property
+    def phase_multiplex(self) -> int:
+        """Residue classes of the stride stored as separate episodes (1 = none).
+
+        Set by tools/subsample_cache with phases>1; then episode id = e*P + k and
+        consumers indexing per-episode arrays must map back with divmod(e, P).
+        """
+        raw = (self.meta or {}).get("phase_multiplex", 1)
+        return int(raw) if isinstance(raw, (int, float, str)) else 1
+
     def episodes(self) -> dict[int, np.ndarray]:
         """Map each episode id to its row indices, sorted by ``step_idx``."""
         ep = self.episode_idx.numpy()

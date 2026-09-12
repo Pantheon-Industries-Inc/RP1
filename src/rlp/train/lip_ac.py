@@ -131,7 +131,8 @@ def _run(cfg: DictConfig) -> None:
     c = LatentCache.load(a.cache, mmap=bool(a.cache_mmap))
     cap = a.get("max_episodes")
     if cap:
-        c = c.first_episodes(int(cap))
+        # ids are e*P+k under phase multiplexing, so cap in ORIGINAL episodes
+        c = c.first_episodes(int(cap) * c.phase_multiplex)
         logger.info(f"Data-volume cap: actor training on episodes [0, {int(cap)})")
     z = c.z.to(dev).float()
     eps = c.episodes()
@@ -176,11 +177,21 @@ def _run(cfg: DictConfig) -> None:
     fs = 5  # primitive steps per action block
     a_dim = act.shape[-1] * fs
 
+    # phase-multiplexed fs5 caches (tools/subsample_cache phases>1) store each
+    # residue class of the stride as its own episode, id = e * P + k; the h5
+    # is indexed by the ORIGINAL episode, and block t of phase k starts at
+    # primitive step k + fs*t. Hand this trainer an fs1 cache instead and it
+    # would read past the episode (h0 = ep_off + fs*t assumes block indices).
+    phase_mult = c.phase_multiplex
+    if phase_mult > 1:
+        logger.info(f"LIP-AC actor cache is phase-multiplexed x{phase_mult} (every residue class of the stride)")
+
     def blocks(e: int, t: int) -> np.ndarray:
-        offset = fs * t
+        src_e, phase = divmod(e, phase_mult) if phase_mult > 1 else (e, 0)
+        offset = phase + fs * t
         if ep_len_h5 is not None:
-            offset = min(offset, max(0, int(ep_len_h5[e]) - fs))
-        h0 = int(ep_off[e] + offset)
+            offset = min(offset, max(0, int(ep_len_h5[src_e]) - fs))
+        h0 = int(ep_off[src_e] + offset)
         return np.asarray(act_n[h0 : h0 + fs]).reshape(-1)
 
     def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

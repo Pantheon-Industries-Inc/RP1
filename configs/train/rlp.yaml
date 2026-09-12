@@ -15,6 +15,9 @@ wm: ???            # frozen pretrained world-model checkpoint (LeWM/PLDM layout)
 dataset: ???       # offline lance dataset of logged episodes
 name: rlp          # artifact prefix inside cache_directory
 frameskip: 5       # env steps per planned action block
+actor_phases: 1    # residue classes of the stride kept in the actor's fs5 cache
+                   # (frameskip = all: 5x the block-aligned start states from the
+                   # same episodes, no re-encode; the teacher is unaffected)
 state_key: null    # optional ground-truth state column cached for diagnostics
 train_episodes: 8000  # value/planner train on episodes [0, N); eval draws the rest (paper split)
 train_res: null

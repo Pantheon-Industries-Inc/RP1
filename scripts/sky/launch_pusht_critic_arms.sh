@@ -52,9 +52,10 @@ BASE_OVR="value.window_frames=$WF value.window_lag=5 planner.ac_weight=0.5 plann
 # DATA=N: data-volume ladder. Caps BOTH learners at episodes [0, N) of the shared
 # 16k cache -- no re-encode, and the held-out eval range (16000+) is untouched.
 SUF=""
+[ -n "${PHASES:-}" ] && [ "$PHASES" != 1 ] && SUF="-p${PHASES}"   # all-phase actor cache
 if [ -n "${DATA:-}" ]; then
   BASE_OVR="$BASE_OVR value.max_episodes=$DATA planner.max_episodes=$DATA"
-  SUF="-d${DATA}"
+  SUF="${SUF}-d${DATA}"
 fi
 for S in $SEEDS; do
   TAG="pusht-${ARM,,}${SUF}-s${S}-${DATE}"
@@ -67,7 +68,7 @@ for S in $SEEDS; do
     --env MAX_DELTA=20 --env MEAN_WEIGHT=0.1 --env AMAX="${AMAX_OVERRIDE:-2.5}"
     --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="50 51"
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
-    --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX"
+    --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX" --env PHASES="${PHASES:-1}"
     --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="${CONDS:-rlp cem_value cem_tdvalue}" --env SMOKE=0
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer
     --env PANTHEON_USER=armin@pantheon.inc)
