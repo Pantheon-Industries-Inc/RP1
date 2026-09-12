@@ -7,13 +7,13 @@ defaults:
   - /logging: default
   - _self_
 entrypoint: {_target_: rlp.train.lip_multi._run}
-sources: ???     # list of {name, wm, cache, h5, value[, horizon]}
+sources: ???     # list of {name, wm, cache, h5, value[, horizon][, max_delta]}
 arch: v4         # v4 (flat MLP, one plan shape only) | traj (tokenised, required when shapes differ)
 steps: 6000
 batch: 128
 iters: 8
 amax: 2.5
-max_delta: 20
+max_delta: 20    # default cap; a source may override it (episode length is per-env)
 p_cross: 0.3
 mean_weight: 0.1
 ac_weight: 0.5

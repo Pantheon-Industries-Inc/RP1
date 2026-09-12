@@ -70,6 +70,10 @@ class Source:
     vframes: int
     horizon: int
     a_dim: int
+    # hindsight-goal cap, per source: episode LENGTH is an environment property
+    # (TwoRoom tops out at 21 blocks at frameskip 5, so config B's 20 would
+    # exclude every episode), so a shared cap cannot serve every source
+    max_delta: int
     e_ema: float = 0.0
     steps: int = field(default=0)
 
@@ -81,7 +85,8 @@ class Source:
         return np.asarray(self.act_n[h0 : h0 + fs]).reshape(-1)
 
 
-def _load_source(spec: DictConfig, dev: str, fs: int, max_delta: int) -> Source:
+def _load_source(spec: DictConfig, dev: str, fs: int, default_max_delta: int) -> Source:
+    max_delta = int(spec.get("max_delta") or default_max_delta)
     wm_module = load_pretrained(str(spec.wm)).to(dev).eval()
     wm_module.requires_grad_(False)
     cache = LatentCache.load(str(spec.cache), mmap=True)
@@ -91,7 +96,7 @@ def _load_source(spec: DictConfig, dev: str, fs: int, max_delta: int) -> Source:
         longest = max((len(v) for v in eps.values()), default=0)
         raise ValueError(
             f"source {spec.name}: no episode in {spec.cache} longer than max_delta+4 = {max_delta + 4} "
-            f"(longest {longest})"
+            f"(longest {longest}); set this source's own max_delta"
         )
     with h5py.File(str(spec.h5), "r") as h:
         act = h["action"][:]
@@ -118,10 +123,11 @@ def _load_source(spec: DictConfig, dev: str, fs: int, max_delta: int) -> Source:
         vframes=vframes,
         horizon=int(spec.get("horizon", 5) or 5),
         a_dim=int(act.shape[-1]) * fs,
+        max_delta=max_delta,
     )
     logger.info(
         f"source {src.name}: {len(src.ep_ids)} episodes, latent {base_dim}, vframes {vframes}, "
-        f"horizon {src.horizon}, a_dim {src.a_dim}"
+        f"horizon {src.horizon}, a_dim {src.a_dim}, max_delta {src.max_delta}"
     )
     return src
 
@@ -188,7 +194,7 @@ def _run(cfg: DictConfig) -> None:
                 r2 = src.ep_rows[e2]
                 zg.append(src.z[r2[rng.integers(len(r2))]])
             else:
-                d = int(rng.integers(1, int(a.max_delta) + 1))
+                d = int(rng.integers(1, src.max_delta + 1))
                 zg.append(src.z[rows[min(t + d, L - 1)]])
         return (
             torch.stack(zh),

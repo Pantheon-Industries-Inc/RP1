@@ -128,7 +128,9 @@ run: |
   echo "[sources] tworoom=$WM_TW reacher=$WM_RE pusht=$WM_PT"
 
   # ------------------------------------------------------------------ shared rule
-  SRC="[{name:tworoom,wm:$WM_TW,cache:$CD/trio_tworoom_fs5.pt,h5:$CD/trio_tworoom_actions.h5,value:$D/value_tworoom}"
+  # TwoRoom episodes are ~100 steps = 21 blocks at frameskip 5, so the shared
+  # config-B cap of 20 (which needs >24) would exclude every episode there.
+  SRC="[{name:tworoom,wm:$WM_TW,cache:$CD/trio_tworoom_fs5.pt,h5:$CD/trio_tworoom_actions.h5,value:$D/value_tworoom,max_delta:${MD_TWOROOM:-12}}"
   SRC="$SRC,{name:reacher,wm:$WM_RE,cache:$CD/trio_reacher_fs5.pt,h5:$CD/trio_reacher_actions.h5,value:$D/value_reacher}"
   SRC="$SRC,{name:pusht,wm:$WM_PT,cache:$CD/trio_pusht_fs5.pt,h5:$CD/trio_pusht_actions.h5,value:$D/value_pusht}]"
   if [ ! -f "$D/planner_pusht.pt" ]; then
