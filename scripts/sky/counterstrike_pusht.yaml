@@ -294,6 +294,13 @@ run: |
         rlp_ceminit)
           run_eval rlp_ceminit $ES core/solver=lip core.solver.init_mode=cem \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        rlp_ceminit_bl*)  # band-limited updates from the CEM plan (E25): keep N temporal DCT modes
+          run_eval "$COND" $ES core/solver=lip core.solver.init_mode=cem \
+            core.solver.band_limit=${COND#rlp_ceminit_bl} \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+        rlp_bl*)          # band-limited updates from zero init (the deployed setting)
+          run_eval "$COND" $ES core/solver=lip core.solver.band_limit=${COND#rlp_bl} \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         rlp_ceminit_k*)   # K ladder from the CEM plan: rlp_ceminit_k0 is E1's control
           run_eval "$COND" $ES core/solver=lip core.solver.init_mode=cem \
             core.solver.iters_override=${COND#rlp_ceminit_k} \

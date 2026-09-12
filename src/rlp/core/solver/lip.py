@@ -161,6 +161,7 @@ class LIPSolver(CEMSolver):
         probe_directory: str | None = None,
         update_rule: str = "learned",
         gd_lr: float = 0.03,
+        band_limit: int | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -178,6 +179,16 @@ class LIPSolver(CEMSolver):
             raise ValueError(f"unsupported update rule: {update_rule}")
         self.update_rule = update_rule
         self.gd_lr = float(gd_lr)
+        # band-limited updates (PUSHT_DIAG E25): every refinement step is
+        # projected onto the first `band_limit` temporal DCT modes before it is
+        # applied. Built from zero the refiner's plans are DC-dominated
+        # (high/low power 0.45-0.62) like a real action sequence, but the
+        # correction it applies to a good plan is high-frequency chatter
+        # (1.66-1.94) that buys nothing. This constrains only the update's
+        # temporal bandwidth -- the energy, the world model and the data are
+        # untouched, and it is not a behaviour-cloning anchor.
+        self.band_limit = None if band_limit in (None, 0) else int(band_limit)
+        self._band_proj: torch.Tensor | None = None
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
         # before refinement. Selection happens on UNREFINED samples, exactly
@@ -335,6 +346,25 @@ class LIPSolver(CEMSolver):
                 raise ValueError("lip_dino checkpoint lacks action statistics")
             self._amu = ck["amu5"].to(self.device).float()
             self._ast = ck["ast5"].to(self.device).float()
+
+    def _band_projection(self) -> torch.Tensor:
+        """P = B B^T onto the first M temporal DCT-II modes, cached."""
+        if self._band_proj is None:
+            h, m = self.horizon, int(self.band_limit or 0)
+            t = torch.arange(h, dtype=torch.float32, device=self.device)
+            k = torch.arange(m, dtype=torch.float32, device=self.device)
+            basis = torch.cos(torch.pi * (t[:, None] + 0.5) * k[None, :] / h)  # (H, M)
+            basis = basis / basis.norm(dim=0, keepdim=True)  # orthonormal columns
+            self._band_proj = basis @ basis.T  # (H, H)
+        return self._band_proj
+
+    def _apply_update(self, a_prev: torch.Tensor, a_new: torch.Tensor) -> torch.Tensor:
+        """Keep only the low-frequency part of the step, then re-clip."""
+        if self.band_limit is None:
+            return a_new
+        delta = torch.einsum("ij,bja->bia", self._band_projection(), a_new - a_prev)
+        amax = float(self.actor.amax)
+        return (a_prev + delta).clamp(-amax, amax)
 
     @property
     def horizon(self) -> int:
@@ -563,6 +593,7 @@ class LIPSolver(CEMSolver):
                         traj_f.reshape(Bh * H, -1),
                         zg_r.repeat_interleave(H, dim=0),
                     ).view(Bh, H)
+                A_prev = A
                 if self.update_rule == "gradient":
                     amax = float(self.actor.amax)
                     A = (A - self.gd_lr * gA).clamp(-amax, amax)
@@ -574,6 +605,7 @@ class LIPSolver(CEMSolver):
                     if isinstance(self.actor, PlannerNetRec):
                         raise RuntimeError("non-recurrent checkpoint created a recurrent actor")
                     A = self.actor(A, gA, E, z0_r, zg_r, traj_f, k=k_it, vtraj=vtraj)
+                A = self._apply_update(A_prev, A)
                 buf.append(A.clone())
         with torch.no_grad():
             if not buf:  # iters_override=0: emit the initial plan untouched (control arm)

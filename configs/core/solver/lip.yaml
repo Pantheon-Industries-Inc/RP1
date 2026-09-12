@@ -34,3 +34,6 @@ iters_override: null
 # apart from a rule that learned to exploit it.
 update_rule: learned   # learned | gradient
 gd_lr: 0.03
+# Keep only the first N temporal DCT modes of each refinement step (null/0 = off).
+# N=1 is the DC (constant) term alone; the horizon is 5, so N=5 is a no-op.
+band_limit: null
