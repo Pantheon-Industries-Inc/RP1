@@ -1593,4 +1593,41 @@ Readings:
 Caveats: n is small (22/15) and hallucination below ~20 px is at the ridge
 probe's own error floor (median block decode error 11 px), so the > 20 px
 threshold is the meaningful one. Per-plan data:
-docs/figures/pusht_diag/mcd43/mc_disagreement.json.
+docs/figures/pusht_diag/mcd/mc_disagreement*.json (per draw).
+
+### E30a, pooled over draws 42/43/44 -- the draw-43 signal does not replicate
+
+Job rlp-pusht-mcd4244 recorded draws 42 and 44 on the same actor and ran the
+probe per draw (n = 28 / 32 RLP, 16 / 17 CEM). Pooled with draw 43:
+
+| | RLP (n=82) | CEM-latent (n=48) |
+|---|---|---|
+| AUC(block spread -> hallucination > 20 px) | 0.69 | 0.65 |
+| AUC(V spread -> hallucination > 20 px) | **0.61** | 0.53 |
+| **AUC(block spread -> block NOT pushed)** | **0.39** | **0.25** |
+| block spread, not pushed / pushed (px) | 4.4 / 5.4 | 4.4 / 6.9 |
+| hallucination, not pushed / pushed (px) | 26 / 30 | 29 / 32 |
+
+Per draw the informative channel wandered (block on 43, V on 42, neither on
+44), and the pooled predictor of hallucination is weak: 0.69 in the block
+channel, **0.61 in V -- the quantity E30b penalises**. Draw 43's 0.80 was a
+small-n outlier.
+
+The one number stable across all three draws and both planners is the
+inversion: **the model is MORE confident where the block was not pushed** (AUC
+0.39 / 0.25; spread 4.4 px without contact vs 5.4-6.9 with it). Dropout
+uncertainty rises during real contact, where the dynamics are genuinely hard,
+and falls in the hover-near-the-block regime where the fabrication lives. This
+is E7's finding for the world model: **the fake basin is a shared, confident
+bias, not a disagreement.** Pessimism-by-disagreement therefore cannot mark it,
+and taxing the spread penalises real pushes MORE than fabricated ones.
+
+Consequences: (i) the running E30b arm (mean + std of V over K=4 dropout
+passes) is predicted null or slightly negative; the timing guard shows it is
+genuinely executing (1000 actor steps in 10.7 min vs 8.5 baseline, x1.3 --
+consistent with four extra rollouts of the final plan per step). (ii) A
+sharper variant (block-channel or critic-direction spread, larger K or beta)
+is NOT worth building: the sign of the effect is wrong, not its strength.
+(iii) What remains for the basin is changing the model where it is confidently
+wrong -- on-policy data from exactly those hover rollouts (Dyna) -- or a
+planner that does not trust the model's derivative there.
