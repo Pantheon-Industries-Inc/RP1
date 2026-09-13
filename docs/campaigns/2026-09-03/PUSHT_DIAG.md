@@ -1664,3 +1664,56 @@ corrected where it is confidently wrong, with data from exactly the hover
 rollouts that fool it (Dyna), or the planner must stop trusting the model's
 derivative there. Nothing on the critic, the inputs, the bandwidth, or the
 model's own uncertainty moves it.
+
+## E31 -- watching the failures: rendered draw-43 episodes with the imagined block overlaid (2026-09-13)
+
+Ten draw-43 tasks rendered for the W1NEAR_FRZ seed-0 actor
+(`scripts/pusht_diag/failure_videos.py`, job `rlp-pusht-vid43`): the seven
+RLP failures E22 triaged as planner (0, 8, 9, 15, 25), critic (31, 43) or
+world-model (3), plus two controls (1 both solve, 2 RLP solves and CEM does
+not). Each MP4 is three panels: the RLP rollout with the world model's
+re-imagination of the executed plan decoded to a block centre (pink ring)
+next to the true centre (yellow), CEM-latent on the same task, and the goal.
+The RLP caption prints the critic's value of the imagined and of the real
+latent for the current plan block. Assets: `docs/figures/pusht_diag/videos43/`
+(MP4 + GIF per task, `index.html` contact sheet).
+
+Budget is 50 steps = two 25-step plans, so `t=25` is the end of the first
+plan and the one replan.
+
+| task | E22 label | RLP V imag / real at t=25 | at t=49 | what the frames show |
+|---|---|---|---|---|
+| 0 | planner | **1.3 / 6.5** | 3.4 / 3.4 | WM reports the first plan as essentially solved; real block far short. Second plan lands the block on the footprint rotated ~15-20 deg, agent parked at the left tip |
+| 8 | planner | **4.7 / 10.0** | **7.2 / 9.7** | imagined centre sits at the T's tip, real centre at the crossbar: WM imagines translation while the agent is rotating the T about its tip. Hallucination persists through both plans |
+| 25 | planner | 3.2 / 5.3 | 4.4 / 4.4 | second plan flat at 4.4-4.5 from t=29; block against the bottom arena edge, agent hovering to its right. No hallucination -- a real stall |
+| 9 | planner | 3.6 / 3.7 | 0.9 / 1.4 | block visually on the goal, agent already withdrawn; tolerance near-miss |
+| 15 | planner | 2.8 / 3.0 | 2.7 / 2.2 | second plan makes no progress; block on the footprint with an angle residual, agent sitting at the stem |
+| 3 | world model | 8.3 / 8.9 | 12.0 / 12.1 | value RISES through the episode: block pushed away from the goal. CEM fails too |
+| 31 | critic | 6.0 / 6.6 | 1.4 / 2.8 | angle residual; imagined centre offset from the real one. CEM fails too |
+| 43 | critic | 6.2 / 6.3 | 3.5 / 3.7 | flat since t=29, near-miss. CEM fails too |
+| 1 | control | RLP solved at t=23 (1.0 / 0.9) | -- | CEM solves at t=47 |
+| 2 | control | RLP solved at t=44 (3.3 / 3.7) | -- | CEM fails |
+
+Two visible modes, often both in one episode:
+
+- **First-plan hallucination** (tasks 0, 8, 25). At the replan the world
+  model's value of its own imagined outcome is 2-5 units better than the
+  value of the real latent: 1.3 vs 6.5 on task 0 is "solved" vs "not
+  started". Half the budget is spent on a plan the model believed in. This
+  is E16's block hallucination seen per episode with the deployed critic as
+  the yardstick.
+- **Second-plan stall** (tasks 0, 15, 25, 43; task 9 is the tolerance edge).
+  Imagined and real values agree, the value is flat at 2.5-4.5 for the last
+  twenty steps, the block is on or beside the footprint with an angle
+  residual, and the agent parks at a tip or the stem. The model is not lying
+  here; the gradient through it simply does not produce a plan that moves the
+  real value.
+
+In every planner-labelled task CEM-latent finishes inside ITS first 25-step
+plan (t = 22-24) with the same critic. The failure is the gradient path
+through the world model, not the objective (E24) and not the critic (E23):
+sampling the same model finds the pushing plan; following its derivative
+does not. Nothing in the frames suggests a data-volume story -- the
+hallucinated block motion and the parked agent are model-side. Consistent
+with E27/E28: more TD-teacher data buys a couple of points; the mechanism on
+screen is the model at contact.
