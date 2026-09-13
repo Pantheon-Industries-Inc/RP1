@@ -1512,3 +1512,40 @@ identified as where the whole RLP-CEM gap lives.
 
 The all-phase cache stays available (`actor_phases`, separate artefact); it
 costs nothing at eval and may matter for recipes that are actor-limited.
+
+## E29 -- the deploy-time history mismatch is real and irrelevant (2026-09-12)
+
+Code review found that at every replan the LIP solver tiled the current frame
+three times and zeroed the two past action blocks: the WM was asked "three
+identical frames, ten idle steps" at the moment the agent had just been
+pushing, an input neither the WM's pretraining nor the actor's training ever
+contained (training: real histories for 50% of samples, imagined moving frames
+with zero actions for the replay 50%). `planning.history_len` existed in the
+eval config but the solver never read the history the policy published.
+
+Correction along the way: rlp.core.policy.WorldModelPolicy has had a lagged
+history mechanism all along -- frames one action block apart in `pixels_hist`,
+the last ten executed primitive actions in `action_hist`, already in the
+actor's normalised action space. The dead link was the CONSUMER. The solver now
+prefers `pixels_hist` when present (planning.history_len=3) and can take
+`action_hist` as-is (core.solver.use_action_history). A first attempt added a
+duplicate World-side buffer; removed once the policy's was found.
+
+Eval-only, all six W1NEAR_FRZ seeds, draws 42/43/44, paired per task against
+the history_len=1 arrays. At h25 / budget 50 there are two decisions per
+episode; the first has no past, so only the second is affected.
+
+| regime | per-seed delta (s0..s5) | median | fixes / breaks over 900 tasks | sign test |
+|---|---|---|---|---|
+| real lagged frames, zero actions | -2.7 +0.7 0.0 +0.7 +0.7 +1.3 | 69.0 -> 69.3 | **10 / 9** (net +1) | p = 1.00 |
+| real frames AND real actions | -1.3 +0.7 -2.7 -0.7 +1.3 -1.3 | 69.0 -> 69.0 | **10 / 16** (net -6) | p = 0.33 |
+
+Every job logged the regime switch (`action history zeros` on the first plan,
+`real` on the second), so the coherent frames+actions regime was genuinely
+exercised. **Both null.** Handing the WM its true recent past, with or without
+the actions, changes nothing outside seed noise; the frames+actions arm leans
+slightly negative but not significantly. The mismatch was worth finding and
+fixing for correctness -- planning.history_len now does what its name says --
+but the planner's inputs were never the bottleneck. Consistent with E24/E25:
+the problem is what the WM's derivative says near contact, not what the WM is
+shown.
