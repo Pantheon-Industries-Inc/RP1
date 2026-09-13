@@ -80,5 +80,3 @@ planner:
   near_frac: null   # co-critic near-goal hindsight oversampling
   near_max: null
   max_episodes: null # data-volume ablation: cap the actor's episodes without re-encoding
-  pess_passes: null  # MC-dropout pessimism at training time (K passes; deploy unchanged)
-  pess_weight: null

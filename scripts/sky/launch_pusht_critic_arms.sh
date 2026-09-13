@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.sky/bin:$PATH"
 
-ARM=${1:?arm BASE|LATENT|W1NEAR_FRZ_MCP|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3}; shift
+ARM=${1:?arm BASE|LATENT|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260911}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
@@ -41,9 +41,6 @@ case $ARM in
   # critic fell to 68.7 and the planner to 61.3 -> train the refiner against that teacher, frozen.
   # This is the campaign's best recipe: 72.0 / 70.7 / 67.3, median 70.7 vs config-B base 64.7.
   W1NEAR_FRZ)    WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0";;
-  # E30: pessimism at training time only -- the final plan re-imagined K times with the WM
-  # predictor's dropout on, loss = mean + beta*std. Deploy is the unchanged single-model solver.
-  W1NEAR_FRZ_MCP) WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0 planner.pess_passes=${PESS_K:-4} planner.pess_weight=${PESS_BETA:-1.0}";;
   W1N5NEAR_FRZ)  WF=1; NEAR=0.3; VNSTEP=5; EXTRA="planner.freeze_critic_frac=0";;
   N5NEAR_FRZ)    VNSTEP=5; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0";;
   W1NEAR_FRZ_D3) WF=1; NEAR=0.3; EXTRA="planner.freeze_critic_frac=0 value.depth=3";;
