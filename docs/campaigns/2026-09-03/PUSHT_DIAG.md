@@ -1752,7 +1752,29 @@ gradient inputs are grounded too.
    with b the decoded block position and b_0 its value at the real start
    frame; times `ground_weight` into the energy.
 
-### Calibration, in-job, on the 16k-episode cache (numbers below once the smoke lands)
+### Calibration, in-job, on the 16k-episode cache (smoke job 23279, seed 0)
+
+| quantity | value |
+|---|---|
+| probe held-out R2 agent / block / angle | 0.949 / 0.971 / 0.893 |
+| probe median error agent / block | 21.2 px / 10.9 px |
+| controller gains g0 / g1 (fit R2) | 0.296 / 0.111 (1.000) |
+| true steps in contact | 42.3 % |
+| block moves given contact / given agent > 10 px clear | 60.7 % / **0.06 %** |
+| contact margin (calibrated) | 11.0 px; 99.8 % of true pushes register |
+| dead zone (calibrated) | 22.9 px (static-block decoded displacement: mean 11.7, P95 22.9) |
+| decoded vs true displacement on push windows | 74.6 px vs 75.3 px |
+| static windows with the agent hovering < 60 px that the test flags | 62.2 % (n = 5,227) |
+
+The geometry explains the data (the block essentially never moves without
+contact under the reconstructed T), real pushes are not penalised, the probe
+tracks true motion to within a pixel on average, and the test keeps power on
+the hover states E31 showed. Note the controller lag: one command lands ~30 %
+in its own step and ~11 % in the next, so the commanded path is far shorter
+than the summed commands -- the kinematic fit, not the raw command, is what
+the contact test must see. At training step 0 (zero-init plans) the term
+reads 0.023 energy units, decoded end displacement 16.8 px, 31 % of samples
+without contact by plan end.
 
 The probe's block error is ~11 px, so fixed thresholds would misread real
 pushes. Both thresholds come from the data: the contact `margin` is the 95th
