@@ -65,6 +65,11 @@ if [ -n "${GROUND:-}" ]; then
   EXTRA="$EXTRA planner.grounding=pusht planner.ground_weight=$GROUND"
   SUF="${SUF}-g${GROUND}"
 fi
+# Hyperparameter sweeps (2026-09-13): EXTRA_OVR = extra hydra overrides appended verbatim
+# (e.g. "planner.p_cross=0.1 value.steps=24000"), TAGSUF = tag suffix naming them,
+# REPLAY = planner.replay_prob, MAX_DELTA_OVERRIDE = planner.max_delta (recipe 20).
+[ -n "${EXTRA_OVR:-}" ] && EXTRA="$EXTRA $EXTRA_OVR"
+SUF="${SUF}${TAGSUF:-}"
 for S in $SEEDS; do
   TAG="pusht-${ARM,,}${SUF}-s${S}-${DATE}"
   cmd=(sky jobs launch scripts/sky/counterstrike_pusht.yaml
@@ -73,7 +78,8 @@ for S in $SEEDS; do
     --env CACHE_TAG=counterstrike --env WAIT_CACHE_MIN=0 --env EXPAND="$EXPAND"
     --env SEED="$S" --env TD_MODE=cube --env ITERS=8
     --env VALUE_GAMMA=0.98 --env VALUE_NSTEP="$VNSTEP" --env VALUE_EXPECTILE="$VEXP"
-    --env MAX_DELTA=20 --env MEAN_WEIGHT=0.1 --env AMAX="${AMAX_OVERRIDE:-2.5}"
+    --env MAX_DELTA="${MAX_DELTA_OVERRIDE:-20}" --env MEAN_WEIGHT=0.1 --env AMAX="${AMAX_OVERRIDE:-2.5}"
+    --env REPLAY="${REPLAY:-}"
     --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="50 51"
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX" --env PHASES="${PHASES:-1}"
