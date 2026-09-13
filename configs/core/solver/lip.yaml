@@ -40,3 +40,8 @@ band_limit: null
 # Feed the WM the REAL executed action history (needs planning.history_len=3 so the
 # World publishes it). Off by default: the actor trained on zero-action replay samples.
 use_action_history: false
+# Physics-grounding term (rlp.core.grounding): checkpoints trained with
+# `grounding=pusht` carry the probe and thresholds, and the solver adds the same
+# term to its energy. null = the checkpoint's weight; 0 = deploy without the term
+# (ablation: training-time grounding only); other values rescale it.
+ground_weight: null

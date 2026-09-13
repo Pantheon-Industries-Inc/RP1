@@ -57,6 +57,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlp.config import dispatch, run_hydra
+from rlp.core.grounding import ACTION_SCALE, GroundingPenalty, calibrate_pusht_grounding
 from rlp.core.planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from rlp.core.rollout import rollout_traj
 from rlp.core.solver.lip import ValueFunction
@@ -186,25 +187,40 @@ def _run(cfg: DictConfig) -> None:
     if phase_mult > 1:
         logger.info(f"LIP-AC actor cache is phase-multiplexed x{phase_mult} (every residue class of the stride)")
 
-    def blocks(e: int, t: int) -> np.ndarray:
+    def block_row(e: int, t: int) -> int:
+        """h5 row of block ``t``'s first primitive step in (phase-multiplexed) episode ``e``."""
         src_e, phase = divmod(e, phase_mult) if phase_mult > 1 else (e, 0)
         offset = phase + fs * t
         if ep_len_h5 is not None:
             offset = min(offset, max(0, int(ep_len_h5[src_e]) - fs))
-        h0 = int(ep_off[src_e] + offset)
+        return int(ep_off[src_e] + offset)
+
+    def blocks(e: int, t: int) -> np.ndarray:
+        h0 = block_row(e, t)
         return np.asarray(act_n[h0 : h0 + fs]).reshape(-1)
 
-    def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """History windows, action history, goals -- and, for the grounding term, the
+        real agent position (px) at the plan's start and the commanded displacement
+        (px) of the primitive step before it (zeros when grounding is off)."""
         zh: list[torch.Tensor] = []
         ah: list[np.ndarray] = []
         zg: list[torch.Tensor] = []
-        for _ in range(B):
+        ag0 = np.zeros((B, 2), dtype=np.float32)
+        u_prev = np.zeros((B, act.shape[-1]), dtype=np.float32)
+        for i in range(B):
             e = int(ep_ids[rng.integers(len(ep_ids))])
             rows = ep_rows[e]
             L = len(rows)
             t = int(rng.integers(2, L - 2))
             zh.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
             ah.append(np.stack([blocks(e, t - 2), blocks(e, t - 1)]))
+            if state_all is not None:
+                h0 = block_row(e, t)
+                ag0[i] = state_all[h0, :2]
+                src_e = e // phase_mult if phase_mult > 1 else e
+                if h0 - 1 >= int(ep_off[src_e]):
+                    u_prev[i] = np.nan_to_num(act[h0 - 1]) * ACTION_SCALE
             if rng.random() < a.p_cross:
                 e2 = int(ep_ids[rng.integers(len(ep_ids))])
                 r2 = ep_rows[e2]
@@ -212,10 +228,61 @@ def _run(cfg: DictConfig) -> None:
             else:
                 d = int(rng.integers(1, a.max_delta + 1))
                 zg.append(z[rows[min(t + d, L - 1)]])
-        return torch.stack(zh), torch.from_numpy(np.stack(ah)).to(dev), torch.stack(zg)
+        return (
+            torch.stack(zh),
+            torch.from_numpy(np.stack(ah)).to(dev),
+            torch.stack(zg),
+            torch.from_numpy(ag0).to(dev),
+            torch.from_numpy(u_prev).to(dev),
+        )
 
     # ------------------------------------------------------------ critic (fs1 cache)
     c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
+    # ------------------------------------------------------------ physics grounding (PushT)
+    # Calibrated on the UNCAPPED fs1 cache plus the dataset's state column, before
+    # any data-volume cap: the probe and thresholds describe the encoder and the
+    # environment, not the ablation. The module travels in the actor checkpoint so
+    # the deployed energy is the trained one.
+    grounding: GroundingPenalty | None = None
+    state_all: np.ndarray | None = None
+    if a.get("grounding"):
+        if a.grounding != "pusht":
+            raise ValueError(f"unsupported grounding {a.grounding!r} (expected 'pusht')")
+        if c_td is None:
+            raise ValueError("grounding needs the dense fs1 cache (cache_td) to fit the state probe")
+        if not a.get("state_h5"):
+            raise ValueError("grounding=pusht needs state_h5: the dataset h5 with its 'state' column")
+        n_rows = int(c_td.z.shape[0])
+        with h5py.File(a.state_h5, "r") as hs:
+            st_epi = np.asarray(hs["episode_idx"][:n_rows]).reshape(-1)
+            if len(st_epi) != n_rows or not np.array_equal(st_epi, c_td.episode_idx.numpy()):
+                raise RuntimeError(f"{a.state_h5} rows do not align with the fs1 cache {a.cache_td}")
+            state_all = np.asarray(hs["state"][:], dtype=np.float32)
+        if state_all.shape[0] < act.shape[0]:
+            raise RuntimeError(
+                f"{a.state_h5} has fewer rows ({state_all.shape[0]}) than the action h5 ({act.shape[0]})"
+            )
+        grounding, ground_report = calibrate_pusht_grounding(
+            c_td.z,
+            state_all[:n_rows],
+            act[:n_rows],
+            c_td.episode_idx.numpy(),
+            amu=amu,
+            astd=astd,
+            fs=fs,
+            horizon=a.horizon,
+            margin=a.get("ground_margin"),
+            tau=float(a.ground_tau),
+            ref=float(a.ground_ref),
+            weight=float(a.ground_weight),
+            deadzone=a.get("ground_deadzone"),
+            quantile=float(a.ground_quantile),
+            seed=int(a.seed),
+        )
+        grounding = grounding.to(dev)
+        logger.info(
+            "LIP-AC physics grounding calibrated: " + " ".join(f"{k}={v:.4g}" for k, v in ground_report.items())
+        )
     if cap and c_td is not None:
         c_td = c_td.first_episodes(int(cap))
     td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
@@ -456,10 +523,13 @@ def _run(cfg: DictConfig) -> None:
     replay_buf: dict[str, torch.Tensor | None] = {
         "zh": None,
         "zg": None,
+        "agent": None,  # grounding: agent position at the end of the replayed rollout
+        "u_prev": None,  # grounding: last commanded displacement of that rollout
     }  # previous step's final imagined windows
+    ground_log: dict[str, float] = {}
 
     def actor_step() -> tuple[float, float, ExpandBatch]:
-        zh, ah, zg = sample(a.batch)
+        zh, ah, zg, ag0, u_prev = sample(a.batch)
         replay_zh = replay_buf["zh"]
         replay_zg = replay_buf["zg"]
         if a.replay_prob > 0 and replay_zh is not None and replay_zg is not None:
@@ -471,13 +541,26 @@ def _run(cfg: DictConfig) -> None:
                 zh[idx] = replay_zh[take]
                 zg[idx] = replay_zg[take]
                 ah[idx] = 0.0  # deployed replans query with zero action history
+                replay_agent, replay_u = replay_buf["agent"], replay_buf["u_prev"]
+                if grounding is not None and replay_agent is not None and replay_u is not None:
+                    # the replayed start is the previous rollout's imagined end: the agent
+                    # sits where that plan's commands took it (exact under the kinematics)
+                    ag0, u_prev = ag0.clone(), u_prev.clone()
+                    ag0[idx] = replay_agent[take]
+                    u_prev[idx] = replay_u[take]
         z0 = zh[:, -1]
 
-        def score_trajectory(trajectory: torch.Tensor) -> torch.Tensor:
-            """Deploy-matched trajectory score (m-frame windows when vframes > 1)."""
+        def score_trajectory(trajectory: torch.Tensor, plan: torch.Tensor) -> torch.Tensor:
+            """Deploy-matched trajectory score (m-frame windows when vframes > 1), plus
+            the physics-grounding term when enabled -- the same energy the solver
+            descends at deploy, so its gradient and value are the actor's inputs too."""
             if vframes > 1:
-                return windowed_trajectory_value(teacher_fn, trajectory, zg, zh, vframes, a.temporal_objective)
-            return trajectory_value(teacher_fn, trajectory, zg, z0, a.temporal_objective)
+                energy = windowed_trajectory_value(teacher_fn, trajectory, zg, zh, vframes, a.temporal_objective)
+            else:
+                energy = trajectory_value(teacher_fn, trajectory, zg, z0, a.temporal_objective)
+            if grounding is not None:
+                energy = energy + grounding(z0, trajectory, plan, ag0, u_prev)
+            return energy
 
         A = torch.zeros(a.batch, a.horizon, a_dim, device=dev)
         s = net.init_state(a.batch, z0) if isinstance(net, PlannerNetRec) else None
@@ -490,7 +573,7 @@ def _run(cfg: DictConfig) -> None:
         if a.reuse_refinement_rollouts:
             rollout_action = A.detach().requires_grad_(True)
             rollout_trajectory = rollout_traj(wm, zh, ah, rollout_action)
-            rollout_score = score_trajectory(rollout_trajectory)
+            rollout_score = score_trajectory(rollout_trajectory, rollout_action)
         for k in range(a.iters):
             # gradient feature (detached — input to the learned rule, not the training path)
             if a.reuse_refinement_rollouts:
@@ -503,7 +586,7 @@ def _run(cfg: DictConfig) -> None:
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
                     A_in = A.detach().requires_grad_(True)
                     traj = rollout_traj(wm, zh, ah, A_in)
-                    score = score_trajectory(traj)
+                    score = score_trajectory(traj, A_in)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
                 traj_f = traj.detach()
                 E_feat = score.detach()
@@ -525,7 +608,7 @@ def _run(cfg: DictConfig) -> None:
                 A = net(A, gA.detach(), E_feat, z0, zg, traj_f, k=k, vtraj=vtraj)
             tr = rollout_traj(wm, zh, ah, A)
             zT = tr[:, -1]
-            score = score_trajectory(tr)
+            score = score_trajectory(tr, A)
             e_path.append(score.mean())
             if a.reuse_refinement_rollouts and k + 1 < a.iters:
                 rollout_action, rollout_trajectory, rollout_score = A, tr, score
@@ -534,6 +617,16 @@ def _run(cfg: DictConfig) -> None:
                 raise RuntimeError("actor produced no rollout trajectory")
             replay_buf["zh"] = tr[:, -3:].detach()
             replay_buf["zg"] = zg.detach()
+            if grounding is not None:
+                with torch.no_grad():
+                    replay_buf["agent"] = grounding.agent_path(A.detach(), ag0, u_prev)[:, -1]
+                    replay_buf["u_prev"] = grounding.commands(A.detach())[:, -1]
+        if grounding is not None and tr is not None:
+            with torch.no_grad():
+                gt = grounding.terms(z0, tr.detach(), A.detach(), ag0, u_prev)
+                ground_log["penalty"] = float(grounding.weight * gt["penalty"].mean())
+                ground_log["disp_end"] = float(gt["displacement"][:, -1].mean())
+                ground_log["unsupported_end"] = float(gt["unsupported"][:, -1].mean())
         loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
         if a.get("ac_weight", 0.0) > 0:
             # anti-constancy: penalize batch-level constancy of net plan
@@ -608,6 +701,9 @@ def _run(cfg: DictConfig) -> None:
             "temporal_objective": a.temporal_objective,
             "window_frames": vframes,
             "window_lag": value_window_lag,
+            # physics grounding (probe + calibrated thresholds); the solver adds the
+            # same term to its energy when present
+            "grounding": grounding.export() if grounding is not None else None,
         }
 
     # ------------------------------------------------------------ schedule
@@ -655,9 +751,15 @@ def _run(cfg: DictConfig) -> None:
             )
             logger.info(f"Saved planner snapshot at step {step + 1} to {snapshot}")
         if step % 500 == 0:
+            ground_msg = (
+                f" ground {ground_log['penalty']:.3f} disp_end {ground_log['disp_end']:.1f}px"
+                f" unsupported_end {ground_log['unsupported_end']:.2f}"
+                if ground_log
+                else ""
+            )
             logger.info(
                 f"step {step}: E_final {e_final:.3f} E_first {e_first:.3f} "
-                f"td_loss {cl:.4f} tau {tau_s:.3f} clr {clr_s:.2e} alr {alr_s:.2e}"
+                f"td_loss {cl:.4f} tau {tau_s:.3f} clr {clr_s:.2e} alr {alr_s:.2e}{ground_msg}"
             )
 
     # ------------------------------------------------------------ save (teacher first;

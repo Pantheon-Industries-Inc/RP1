@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 export PATH="$HOME/.sky/bin:$PATH"
 
-ARM=${1:?arm BASE|LATENT|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3}; shift
+ARM=${1:?arm BASE|LATENT|E01|NEAR|NEAR5|NEARM5|NEARN5|N5|W1NEAR|W2NEAR|W1NEAR_FRZ|W1N5NEAR_FRZ|N5NEAR_FRZ|NEAR_NOEXP|N5NEAR_NOEXP|W1NEAR_FRZ_D3 (+ GROUND=w, DATA=N, PHASES=P env)}; shift
 SEEDS=${*:-0}
 DATE=${DATE:-20260911}
 WF=4   # critic window frames (config B: 4); W1NEAR / W2NEAR retest narrower windows with near-goal training
@@ -56,6 +56,14 @@ SUF=""
 if [ -n "${DATA:-}" ]; then
   BASE_OVR="$BASE_OVR value.max_episodes=$DATA planner.max_episodes=$DATA"
   SUF="${SUF}-d${DATA}"
+fi
+# GROUND=w: physics-grounded energy (E16's consequence): imagined block displacement
+# before the agent's commanded path touches the decoded T costs w per (px/10)^2.
+# Probe + thresholds are calibrated in-job from the dataset's state column and travel
+# in the actor checkpoint, so eval needs nothing extra.
+if [ -n "${GROUND:-}" ]; then
+  EXTRA="$EXTRA planner.grounding=pusht planner.ground_weight=$GROUND"
+  SUF="${SUF}-g${GROUND}"
 fi
 for S in $SEEDS; do
   TAG="pusht-${ARM,,}${SUF}-s${S}-${DATE}"

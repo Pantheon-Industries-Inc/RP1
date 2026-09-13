@@ -154,6 +154,9 @@ def _run(cfg: DictConfig) -> None:
         width = planner_overrides.pop("width", None)
         if width is not None:
             planner_overrides["core.planner.transformer_width"] = width
+        if planner_overrides.get("grounding"):
+            # the grounding probe is fitted on the dataset's state column
+            planner_overrides.setdefault("state_h5", str(cfg.dataset))
         run_stage(
             "planner",
             "train/lip_ac",

@@ -35,6 +35,7 @@ from stable_worldmodel.solver.cem import CEMSolver
 
 from rlp.logging import logger
 
+from ..grounding import ACTION_SCALE, GroundingPenalty
 from ..planner import PlannerNet, PlannerNetRec, PlannerNetV3
 from ..rollout import rollout_terminal, rollout_terminal_dino, rollout_traj
 from ..temporal import trajectory_value, window_pair, windowed_trajectory_value
@@ -79,6 +80,7 @@ class LIPCheckpoint(TypedDict):
     goal_mode: NotRequired[str]
     gd_init: NotRequired[float]
     feat_norm: NotRequired[bool]
+    grounding: NotRequired[dict[str, Any] | None]
     vscale: NotRequired[float]
     iter_mode: NotRequired[str]
     head_mode: NotRequired[str]
@@ -163,6 +165,7 @@ class LIPSolver(CEMSolver):
         gd_lr: float = 0.03,
         band_limit: int | None = None,
         use_action_history: bool = False,
+        ground_weight: float | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -197,6 +200,13 @@ class LIPSolver(CEMSolver):
         # action history is opt-in so the two halves can be tested separately (the actor
         # trained on zero-action replay samples, so zeros are in-distribution for it)
         self.use_action_history = bool(use_action_history)
+        # physics grounding (rlp.core.grounding): checkpoints trained with it carry
+        # the probe and thresholds; the same term joins the deployed energy. The
+        # config's ground_weight overrides the checkpoint's (0 = deploy without it).
+        self.ground_weight_override = None if ground_weight is None else float(ground_weight)
+        self.grounding: GroundingPenalty | None = None
+        self._ground_agent0: torch.Tensor | None = None
+        self._ground_u_prev: torch.Tensor | None = None
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
         # before refinement. Selection happens on UNREFINED samples, exactly
@@ -308,6 +318,23 @@ class LIPSolver(CEMSolver):
             ).to(self.device)
         self.actor.load_state_dict(ck["sd"])
         self.actor.eval()
+        ground_payload = ck.get("grounding")
+        if ground_payload:
+            grounding = GroundingPenalty.from_export(ground_payload).to(self.device)
+            if self.ground_weight_override is not None:
+                grounding.weight = self.ground_weight_override
+            if grounding.weight == 0:
+                logger.info("LIP grounding: trained with the term, deployed without it (ground_weight=0)")
+            else:
+                if self.graphed:
+                    raise ValueError("graphed LIP inference does not support the grounding term")
+                self.grounding = grounding
+                logger.info(
+                    f"LIP grounding: {ground_payload['kind']} weight {grounding.weight:g} "
+                    f"margin {grounding.margin:.1f}px deadzone {grounding.deadzone:.1f}px tau {grounding.tau:g}"
+                )
+        elif self.ground_weight_override:
+            raise ValueError("core.solver.ground_weight set, but the actor checkpoint carries no grounding")
         self._actor_horizon = ck["horizon"]  # plan length must match the trained net
         self.lip_iters = ck["iters"]
         if self.iters_override is not None:
@@ -382,9 +409,17 @@ class LIPSolver(CEMSolver):
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
 
-    def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+    def _score(
+        self,
+        trajectory: torch.Tensor,
+        goal: torch.Tensor,
+        history: torch.Tensor,
+        plan: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         """Trajectory score; stacks the last ``vframes`` imagined frames and
-        duplicates the observed goal frame when the value is windowed.
+        duplicates the observed goal frame when the value is windowed. With a
+        grounding term loaded, ``plan`` (the actions that produced ``trajectory``)
+        adds the physics penalty -- the energy the actor was trained on.
         """
         if self.vframes > 1:
             energy = windowed_trajectory_value(
@@ -392,6 +427,14 @@ class LIPSolver(CEMSolver):
             )
         else:
             energy = trajectory_value(self.lip_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        if self.grounding is not None and plan is not None:
+            if self._ground_agent0 is None or self._ground_u_prev is None:
+                raise RuntimeError("grounding term scored before the agent position was read from the observation")
+            reps = trajectory.shape[0] // self._ground_agent0.shape[0]  # candidates per env (selection unroll)
+            agent0 = self._ground_agent0.repeat_interleave(reps, dim=0)
+            u_prev = self._ground_u_prev.repeat_interleave(reps, dim=0)
+            penalty = self.grounding(history[:, -1].float(), trajectory.float(), plan.float(), agent0, u_prev)
+            energy = energy + penalty.to(energy.dtype)
         return energy
 
     def _value_init(
@@ -558,6 +601,24 @@ class LIPSolver(CEMSolver):
             # time-major within a block, zero-padded (= the mean action) at episode start.
             # Take it as-is: no stats to apply, and none exist on non-DINO checkpoints.
             a_hist = torch.as_tensor(info_dict["action_hist"], device=self.device).reshape(B, 2, -1).to(a_hist.dtype)
+        self._ground_agent0 = self._ground_u_prev = None
+        if self.grounding is not None:
+            # the agent's real position (proprio = agent xy + velocity, raw px) anchors the
+            # commanded path; the step before the plan comes from the executed history
+            # when the policy publishes it, else the mean action (zero), as in training
+            proprio = info_dict.get("proprio")
+            if proprio is None:
+                raise KeyError("grounding term needs 'proprio' (agent position) in the observation")
+            pro = torch.as_tensor(np.asarray(proprio) if not torch.is_tensor(proprio) else proprio).to(self.device)
+            pro = pro.float()
+            if pro.dim() == 3:
+                pro = pro[:, -1]
+            self._ground_agent0 = pro[:, :2]
+            u_prev = torch.zeros(B, self.grounding.act_dim, device=self.device)
+            if self.use_action_history and "action_hist" in info_dict:
+                last = a_hist[:, -1].float().reshape(B, -1, self.grounding.act_dim)[:, -1]
+                u_prev = (last * self.grounding.astd + self.grounding.amu) * ACTION_SCALE
+            self._ground_u_prev = u_prev
         A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
         if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
@@ -590,7 +651,7 @@ class LIPSolver(CEMSolver):
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
                     A_in = A.detach().requires_grad_(True)
                     traj = rollout_traj(wm, zh_r, a_hist, A_in)
-                    score = self._score(traj, zg_r, zh_r)
+                    score = self._score(traj, zg_r, zh_r, A_in)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
                 if graphed_ref is not None:
@@ -605,7 +666,7 @@ class LIPSolver(CEMSolver):
                         traj_f = traj.detach()
                     else:
                         traj_f = rollout_traj(wm, zh_r, a_hist, A)
-                    E = self._score(traj_f, zg_r, zh_r)
+                    E = self._score(traj_f, zg_r, zh_r, A)
                 if self.probe_directory is not None:
                     e_iters.append(E.detach().float().clone())
                     lat_iters.append((traj_f[:, -1].float() - zg_r).norm(dim=-1).detach())
@@ -645,7 +706,7 @@ class LIPSolver(CEMSolver):
                 Ef = graphed_ref.score(cf).view(B, C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
-                Ef = self._score(final_trajectory, zg_c, zh_c).view(B, C)
+                Ef = self._score(final_trajectory, zg_c, zh_c, cf).view(B, C)
             best = Ef.argmin(dim=1)
             A = cands.view(B, C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
         if self.probe_directory is not None:
@@ -653,7 +714,7 @@ class LIPSolver(CEMSolver):
             with torch.no_grad():
                 z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
                 z_imag = z_traj[:, -1]
-                e_imag = self._score(z_traj, zg, z_hist)
+                e_imag = self._score(z_traj, zg, z_hist, A)
                 # candidate population under both objectives (probe-only rollout;
                 # Ef is the critic energy the deployed argmin actually used)
                 traj_c = rollout_traj(wm, zh_c, ah_c, cf)

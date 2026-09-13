@@ -296,6 +296,9 @@ run: |
             run_eval "rlp_${DTAG}" $ES core/solver=lip \
               core.solver.actor_path="$D/train_checkpoints/planner_${DTAG}.pt"
           done;;
+        rlp_ng)  # grounding-trained actor deployed WITHOUT the grounding term (training-time-only ablation)
+          run_eval rlp_ng $ES core/solver=lip core.solver.ground_weight=0 \
+            core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         rlp_ceminit)
           run_eval rlp_ceminit $ES core/solver=lip core.solver.init_mode=cem \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;

@@ -80,3 +80,11 @@ planner:
   near_frac: null   # co-critic near-goal hindsight oversampling
   near_max: null
   max_episodes: null # data-volume ablation: cap the actor's episodes without re-encoding
+  grounding: null   # `pusht`: physics-grounded energy (train/lip_ac `grounding`); the
+                    # dataset h5 is forwarded as state_h5 for the probe calibration
+  ground_weight: null
+  ground_margin: null
+  ground_tau: null
+  ground_ref: null
+  ground_deadzone: null
+  ground_quantile: null

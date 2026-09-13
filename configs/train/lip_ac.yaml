@@ -52,3 +52,17 @@ expand_traj: false  # reuse the actor's final rollout as per-block TD backups (n
 replay_prob: 0.0
 seed: 0
 action_stats_pin: null
+# Physics grounding of the energy (PushT; rlp.core.grounding). Adds to the
+# refiner's training energy -- and, via the checkpoint, to the deployed one --
+# a penalty on imagined block displacement in blocks before the agent's
+# commanded path first comes within contact distance of the decoded T. Needs
+# the dataset h5 (its `state` column) to fit the latent->state probe and to
+# calibrate the contact margin / dead zone; null thresholds are calibrated.
+grounding: null           # null | pusht
+state_h5: null            # dataset h5 with `state` (agent xy, block xy, angle) rows aligned to cache_td
+ground_weight: 1.0        # energy units per (unsupported displacement / ground_ref)^2
+ground_margin: null       # px; null = calibrated so >= ground_quantile of real pushes register contact
+ground_tau: 5.0           # px; softness of the contact test
+ground_ref: 10.0          # px; displacement scale of the quadratic penalty
+ground_deadzone: null     # px; null = ground_quantile of decoded displacement on static blocks (probe noise)
+ground_quantile: 0.95
