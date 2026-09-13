@@ -10,6 +10,9 @@ cache_td: null
 near_frac: 0.0        # fraction of in-episode critic goals drawn 1..near_max steps ahead
 near_max: 3
 max_episodes: null    # data-volume ablation: train on episodes [0, N) of the cache (null = all)
+pess_passes: 0        # MC-dropout pessimism (training only): re-imagine the final plan K times with
+                      # the predictor's dropout on; loss = mean + pess_weight * std (0 = off)
+pess_weight: 1.0
 h5: ???
 wm: ???
 init_value: null

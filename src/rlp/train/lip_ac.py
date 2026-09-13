@@ -534,7 +534,29 @@ def _run(cfg: DictConfig) -> None:
                 raise RuntimeError("actor produced no rollout trajectory")
             replay_buf["zh"] = tr[:, -3:].detach()
             replay_buf["zg"] = zg.detach()
-        loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
+        pess_k = int(a.get("pess_passes", 0) or 0)
+        if pess_k > 0:
+            # Pessimism at TRAINING time only (PUSHT_DIAG E30). The refiner's loss is
+            # the energy of a rollout through the frozen WM, and on a hybrid-contact
+            # task the WM smooths the contact discontinuity into a shallow basin the
+            # gradient planner parks in (block imagined moved, nothing touched). Here
+            # the FINAL plan is re-imagined K times with the predictor's dropout
+            # active and the loss is mean + beta * std over those passes, so regions
+            # where the model is unsure of its own prediction are unattractive to
+            # descend into. The rule's inputs (gA, E) stay deterministic and the
+            # deployed solver is unchanged: one model, one gradient.
+            predictor = cast(torch.nn.Module, getattr(wm, "predictor"))  # LeWM predictor (dropout 0.1)
+            predictor.train()  # dropout on, weights still frozen
+            try:
+                e_k = torch.stack(
+                    [score_trajectory(rollout_traj(wm, zh, ah, A)).float() for _ in range(pess_k)]
+                )  # (K, B)
+            finally:
+                predictor.eval()
+            e_pess = e_k.mean(0) + float(a.get("pess_weight", 1.0)) * e_k.std(0)
+            loss = e_pess.mean() + a.mean_weight * torch.stack(e_path).mean()
+        else:
+            loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
         if a.get("ac_weight", 0.0) > 0:
             # anti-constancy: penalize batch-level constancy of net plan
             # displacement, ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0,1].
