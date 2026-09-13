@@ -1977,3 +1977,26 @@ record the refiner's own rollouts on training tasks (episodes < 16000, via
 the existing recorder), fit D to THOSE residuals, and test on held-out
 decisions exactly as here. Training-time interaction only; deploy unchanged.
 D checkpoints: `/newcheckpoints/armin@pantheon.inc/pusht-disc-20260913/discrepancy_{geo,geolat}.pt`.
+
+## E34 -- hyperparameter sweep on the W1NEAR_FRZ recipe, wave 1 (2026-09-13, in flight)
+
+User direction: find hyperparameters that improve PushT within the recipe
+(frozen world model, K = 8, no restarts, no behaviour cloning). Closed axes
+from the August campaign and E19: amax (2.5 sits on the plateau; tighter is
+monotone worse, 3.0 falls off a cliff), mean_weight (0.1 best), actor_lr
+(3e-4 >= 1e-4), actor training length (6k best, 12k/18k worse; ckpt-select
+already picks early snapshots), expand_weight (moot with a frozen critic), K
+(directive), critic window/expectile/n-step/near-goal/depth (E10-E20).
+Untested on this recipe, each with a reason to expect a gain; three seeds
+each, paired against the six-seed history-1 arrays; `cem_value` reads the
+teacher.
+
+| tag | change | why |
+|---|---|---|
+| `rp0` | `planner.replay_prob=0` | August: +5 at K=8 on the old recipe; replay samples are imagined starts (off-distribution) and E29 showed the deployed replan does not match them anyway |
+| `md6pc01` | `planner.max_delta=6 planner.p_cross=0.1` | eval goals are exactly 25 steps = 5 blocks ahead in the same episode; the actor trains on 1-20 blocks with 30 % cross-episode goals, so 75 % of its goals are farther than any eval goal |
+| `tch24k` | `value.steps=24000` | E27/E28: the TD teacher is the data-limited learner; 12k x 1024 is ~6 passes over 2M rows |
+| `tchg1e01` | `value.gamma=1.0 value.expectile=0.01` | the August offline-value corner scored TD+CEM 80.0, above the config-B teacher's 78.7 as a CEM objective |
+
+Jobs `rlp-pusht-w1near_frz-<tag>-s{0,1,2}-20260913`. Wave 2 candidates held:
+`max_delta=10`, actor batch 512, and combinations of wave-1 winners.
