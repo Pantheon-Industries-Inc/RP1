@@ -162,6 +162,7 @@ class LIPSolver(CEMSolver):
         update_rule: str = "learned",
         gd_lr: float = 0.03,
         band_limit: int | None = None,
+        use_action_history: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -189,6 +190,10 @@ class LIPSolver(CEMSolver):
         # untouched, and it is not a behaviour-cloning anchor.
         self.band_limit = None if band_limit in (None, 0) else int(band_limit)
         self._band_proj: torch.Tensor | None = None
+        # `pixels_hist` (real lagged frames) is used whenever the World publishes it;
+        # the real executed action history is opt-in so frames and actions can be
+        # tested separately (the actor was trained with zero-action replay samples)
+        self.use_action_history = bool(use_action_history)
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
         # before refinement. Selection happens on UNREFINED samples, exactly
@@ -500,7 +505,8 @@ class LIPSolver(CEMSolver):
         encode_start = time.time()
         wm = cast(EncoderWorldModel, self._base())
         with torch.no_grad():
-            px = info_dict["pixels"].to(self.device, dtype=self.dtype)
+            hist_key = "pixels_hist" if "pixels_hist" in info_dict else "pixels"
+            px = info_dict[hist_key].to(self.device, dtype=self.dtype)
             enc_in = {"pixels": px}
             if getattr(wm, "wants_proprio", False):
                 pro = info_dict.get("proprio")
@@ -510,9 +516,18 @@ class LIPSolver(CEMSolver):
                 enc_in["proprio"] = pro.reshape(px.shape[0], px.shape[1], -1)
             enc = wm.encode(enc_in)
             z_hist = enc["emb"][:, -3:].float()
-            if z_hist.shape[1] < 3:  # pad short history at episode start
+            real_frames = int(z_hist.shape[1])
+            if z_hist.shape[1] < 3:  # pad short history (episode start, or planning.history_len < 3)
                 pad = z_hist[:, :1].expand(-1, 3 - z_hist.shape[1], -1)
                 z_hist = torch.cat([pad, z_hist], dim=1)
+            if getattr(self, "_history_logged", None) != (hist_key, real_frames):
+                # logged when the regime changes: the first plan has no past, later
+                # replans have real frames only if the World publishes `pixels_hist`
+                logger.info(
+                    f"LIP history: {real_frames} real frame(s) of 3 from '{hist_key}', "
+                    f"action history {'real' if self.use_action_history and 'action_hist' in info_dict else 'zeros'}"
+                )
+                self._history_logged = (hist_key, real_frames)
             gx = info_dict["goal"].to(self.device, dtype=self.dtype)
             genc_in = {"pixels": gx}
             if getattr(wm, "wants_proprio", False):
@@ -534,6 +549,10 @@ class LIPSolver(CEMSolver):
         zh_r, zg_r = z_hist, zg
         z0_r = zh_r[:, -1]
         a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
+        if self.use_action_history and "action_hist" in info_dict:
+            # (B, 2, lag, a) raw executed actions -> the checkpoint's normalised block layout
+            raw = torch.as_tensor(np.asarray(info_dict["action_hist"]), dtype=torch.float32, device=self.device)
+            a_hist = ((raw.reshape(B, 2, -1) - self._amu) / self._ast).to(a_hist.dtype)
         A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
         if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)

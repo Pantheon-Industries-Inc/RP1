@@ -37,3 +37,6 @@ gd_lr: 0.03
 # Keep only the first N temporal DCT modes of each refinement step (null/0 = off).
 # N=1 is the DC (constant) term alone; the horizon is 5, so N=5 is a no-op.
 band_limit: null
+# Feed the WM the REAL executed action history (needs planning.history_len=3 so the
+# World publishes it). Off by default: the actor trained on zero-action replay samples.
+use_action_history: false

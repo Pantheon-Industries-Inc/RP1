@@ -12,7 +12,8 @@ runtime:
 planning:
   horizon: 5
   receding_horizon: 5
-  history_len: 1
+  history_len: 1        # WM history frames published at plan time (3 = the WM's window,
+                        # one action block apart); 1 = the pre-E29 behaviour, padded
   action_block: 5
   warm_start: true
   deadline: null
