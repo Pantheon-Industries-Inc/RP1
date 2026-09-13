@@ -1549,3 +1549,48 @@ fixing for correctness -- planning.history_len now does what its name says --
 but the planner's inputs were never the bottleneck. Consistent with E24/E25:
 the problem is what the WM's derivative says near contact, not what the WM is
 shown.
+
+## E30a -- does the world model disagree with itself where it hallucinates? (2026-09-12)
+
+Precheck for pessimism-by-disagreement (E30b, training in flight). The LeWM
+predictor carries dropout 0.1, so a free ensemble is K stochastic passes of the
+one WM. `scripts/pusht_diag/mc_disagreement.py` (job rlp-pusht-mcd43, in the
+E21 directory) re-imagines every fully executed first plan of draw 43 once
+deterministically and K=8 times with dropout on, then relates the spread to:
+hallucination = ||decoded imagined terminal block - REAL terminal block (exact
+pose)||; the V optimism gap; whether the block was actually pushed (> 10 px);
+and the minimum agent-block gap. n = 22 RLP plans, 15 CEM-latent (short
+successful episodes have no fully executed plan and are excluded).
+
+| | RLP | CEM-latent |
+|---|---|---|
+| Spearman(block spread, hallucination) | **0.53** | 0.36 |
+| AUC(block spread -> hallucination > 20 px) | **0.80** | 0.72 |
+| AUC(V spread -> hallucination > 20 px) | 0.62 | 0.60 |
+| Spearman(raw latent spread, hallucination) | -0.03 | 0.40 |
+| AUC(block spread -> block NOT pushed) | **0.51** | 0.28 |
+| block spread, not pushed / pushed (px) | 4.7 / 5.0 | 3.6 / 5.4 |
+| hallucination, not pushed / pushed (px) | **36 / 22** | 19 / 18 |
+
+Readings:
+1. **Disagreement is a real predictor of hallucination magnitude** (AUC 0.80 in
+   the decoded block channel). Unlike E7's critic ensembles, the world model
+   does not fully agree with itself where it is wrong. Pessimism has something
+   to grip.
+2. **It does not mark the fake basin specifically.** RLP's not-pushed plans --
+   imagined motion, no real push, the E1/E22 signature -- hallucinate 36 px
+   against 22 px for pushed plans, yet their spread is flat (AUC 0.51). The
+   spread tracks how far the imagination is off, not whether contact happened.
+3. **Where the signal lives matters for the training arm.** Raw latent spread
+   is uninformative (-0.03); spread in the decoded block position is the
+   strong signal; spread in V sits between (0.62). E30b penalises std of V --
+   the middle-strength quantity -- because the actor loss is E and a state
+   probe is not available at training time. If E30b is weak, the upgrade is a
+   penalty on the spread of the imagined terminal latent along the critic's
+   sensitive directions, or a larger K / beta; if it is null, this table says
+   why: the basin is a bias all dropout masks share, not a disagreement.
+
+Caveats: n is small (22/15) and hallucination below ~20 px is at the ridge
+probe's own error floor (median block decode error 11 px), so the > 20 px
+threshold is the meaningful one. Per-plan data:
+docs/figures/pusht_diag/mcd43/mc_disagreement.json.
