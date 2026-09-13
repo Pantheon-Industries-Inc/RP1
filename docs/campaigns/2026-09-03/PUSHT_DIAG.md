@@ -1631,3 +1631,36 @@ is NOT worth building: the sign of the effect is wrong, not its strength.
 (iii) What remains for the basin is changing the model where it is confidently
 wrong -- on-policy data from exactly those hover rollouts (Dyna) -- or a
 planner that does not trust the model's derivative there.
+
+## E30b -- pessimism at training time: null, as the pooled probe predicted (2026-09-13)
+
+Arm W1NEAR_FRZ_MCP: the final iterate re-imagined K=4 times with the LeWM
+predictor's dropout (0.1) active, actor loss = mean + 1.0 * std over the passes,
+inputs deterministic, deployed solver unchanged. Three seeds, paired per task
+against the same seeds of W1NEAR_FRZ on draws 42/43/44.
+
+| seed | W1NEAR_FRZ -> MCP | fixes / breaks | per draw |
+|---|---|---|---|
+| s0 | 72.7 -> 72.0 (-0.7) | 6 / 7 | 74->72, 84->86, 60->58 |
+| s1 | 70.7 -> 69.3 (-1.3) | 10 / 12 | 76->74, 72->80, 64->54 |
+| s2 | 67.3 -> 66.7 (-0.7) | 12 / 13 | 66->70, 80->70, 56->60 |
+| median | **70.7 -> 69.3 (-1.4)** | **28 / 32** of 450 (net -4) | sign test p = 0.70 |
+
+Every seed slightly negative, none outside noise. The timing guard (x1.3 per
+actor step) confirms the pessimistic loss was executing. Note the churn: 13-25
+task flips per seed against 1-6 for the E29 deploy-time arms -- retraining
+reshuffles ~4% of tasks either way (the seed lottery), the net is zero.
+
+Reading: consistent with E30a pooled. The world model is MORE confident where it
+fabricates (block not pushed: spread AUC 0.39), so a disagreement penalty taxes
+real pushes at least as much as the fake basin and has nothing to push against.
+Pessimism-by-self-disagreement is closed; a sharper spread (block channel,
+critic direction, larger K/beta) would have the wrong sign, not too little
+strength. `pess_passes`/`pess_weight` removed with this entry; the probe
+(scripts/pusht_diag/mc_disagreement.py) and per-draw data stay.
+
+What the E23-E30 sequence leaves standing for PushT's basin: the model must be
+corrected where it is confidently wrong, with data from exactly the hover
+rollouts that fool it (Dyna), or the planner must stop trusting the model's
+derivative there. Nothing on the critic, the inputs, the bandwidth, or the
+model's own uncertainty moves it.
