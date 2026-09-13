@@ -1828,3 +1828,36 @@ E16's consequence, as literally written, is closed. The remaining question is
 whether the under-contact fiction violates a pushing law the same probe can
 check (block outrunning the agent, moving against the push, moving towards
 the agent): `scripts/pusht_diag/grounding_laws.py`, next.
+
+### The under-contact fiction obeys quasi-static pushing in imagination (job 23294)
+
+Same decisions, rescored per block against the laws a pushed block must obey,
+with the decoded block displacement db and the kinematic agent displacement dp
+over each block (`scripts/pusht_diag/grounding_laws.py`; score = worst block;
+"sep" = share of failures above the successes' 90th percentile, chance 10 %):
+
+| draw, first plan | imagined block path fail / succ | agent path fail / succ | ratio |db|/(|dp|+5) sep | against-the-push sep | towards-the-agent sep | spin sep |
+|---|---|---|---|---|---|---|---|
+| 43 | 53.3 / 56.5 px | 179 / 154 px | 8 % | 17 % | 0 % | 17 % |
+| 44 | 67.3 / 72.1 px | 203 / 182 px | 14 % | 3 % | 7 % | 14 % |
+
+Failing first plans imagine slightly LESS block motion than successful ones,
+move the agent more, and never let the block outrun the agent (ratio medians
+0.5-0.8 for both classes); direction and side of the push are as plausible on
+failures as on successes; imagined rotation is the same. Second plans are
+the same picture at smaller magnitudes (one 43 % cell on 7 failures is
+noise). At the 11 px resolution of a linear probe the refiner's imagined
+plans are physically plausible pushes -- the model's error is the response
+of the T to a plausible push, which a decoded-position prior cannot
+adjudicate.
+
+**E32 verdict (mechanism; aggregate over six jobs to follow).** Grounding the
+energy with physics priors read from imagined latents is closed on PushT:
+(i) the refiner never fabricates motion without contact, so E16's proposed
+penalty has nothing to act on (0.01 energy units in training, no separation
+at deploy at any threshold); (ii) under contact, the fabricated motion
+satisfies the quasi-static pushing laws. What separates fabricated from real
+pushes is not in the imagined positions; it is in the real outcome. The lever
+this leaves on the RLP side with a frozen model is a discrepancy detector
+trained on real rollouts (E32's arm 2 in the 2026-09-13 proposal), not a
+prior.
