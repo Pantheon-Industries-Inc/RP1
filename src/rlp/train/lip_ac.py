@@ -50,7 +50,7 @@ import h5py
 
 with suppress(ImportError):
     import hdf5plugin  # noqa: F401  (registers HDF5 compression filters, e.g. cube h5)
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -545,7 +545,7 @@ def _run(cfg: DictConfig) -> None:
             # where the model is unsure of its own prediction are unattractive to
             # descend into. The rule's inputs (gA, E) stay deterministic and the
             # deployed solver is unchanged: one model, one gradient.
-            predictor = cast(torch.nn.Module, getattr(wm, "predictor"))  # LeWM predictor (dropout 0.1)
+            predictor = cast(torch.nn.Module, cast(Any, wm).predictor)  # LeWM predictor (dropout 0.1)
             predictor.train()  # dropout on, weights still frozen
             try:
                 e_k = torch.stack(
