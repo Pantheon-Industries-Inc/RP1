@@ -552,9 +552,12 @@ class LIPSolver(CEMSolver):
         z0_r = zh_r[:, -1]
         a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
         if self.use_action_history and "action_hist" in info_dict:
-            # (B, 2, lag, a) raw executed actions -> the checkpoint's normalised block layout
-            raw = torch.as_tensor(np.asarray(info_dict["action_hist"]), dtype=torch.float32, device=self.device)
-            a_hist = ((raw.reshape(B, 2, -1) - self._amu) / self._ast).to(a_hist.dtype)
+            # rlp.core.policy buffers the solver's OUTPUT actions before it inverse-transforms
+            # them for the env, so `action_hist` (B, 2, a_dim) is already in the normalised
+            # space the actor trained in (dataset action mean/std), oldest block first,
+            # time-major within a block, zero-padded (= the mean action) at episode start.
+            # Take it as-is: no stats to apply, and none exist on non-DINO checkpoints.
+            a_hist = torch.as_tensor(info_dict["action_hist"], device=self.device).reshape(B, 2, -1).to(a_hist.dtype)
         A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
         if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
