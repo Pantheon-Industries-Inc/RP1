@@ -1791,3 +1791,40 @@ Arms: W1NEAR_FRZ + `GROUND=1.0` and `GROUND=0.3`, seeds 0-2, draws 42/43/44;
 `rlp_ng` deploys the grounded actor with the term switched off
 (training-time-only ablation); `cem_value` checks the teacher is unchanged.
 Read: paired per-task ledgers against the six-seed history-1 arrays.
+
+### First seed and the deploy-time rescoring: the term is blind by construction
+
+`w1near_frz-g1.0-s1`: rlp 76 / 76 / 44 = **65.3** (term on) and 76 / 72 / 46 =
+64.7 with the term switched off at deploy (`rlp_ng`); baseline seed 1 is
+76 / 72 / 64 = 70.7; `cem_value` 78 / 80 / 78 = 78.7, the teacher unchanged.
+The draw-44 drop is seed lottery, not the term: through the whole run the
+grounding term contributed 0.005-0.018 energy units against a plan energy of
+~7, i.e. training was effectively the baseline recipe with a different random
+trajectory.
+
+Why it never fired (`scripts/pusht_diag/grounding_terms.py`, job 23293: the
+seed-1 actor re-evaluated on draws 43/44 with probe dumps, every deployed
+decision rescored and joined with its outcome):
+
+| draw, decision | fails imagining > 30 px of block motion | of which no-contact (term sees) | under contact (term blind) | median closest approach, fails |
+|---|---|---|---|---|
+| 43, first plan | 5 / 12 | **0** | 5 | -10.9 px (inside the T) |
+| 44, first plan | 15 / 29 | **0** | 15 | -15.0 px |
+| 43, second plan | 0 / 7 | 0 | 0 | -4.6 px |
+| 44, second plan | 3 / 20 | 0 | 3 | -1.8 px |
+
+**The refiner's plans DO put the agent on the block.** Every failed first plan
+with fabricated motion has the commanded path in contact with the decoded T;
+the fiction is the motion contact produces (E31 task 8: rotating the tip,
+imagining translation), not motion without contact. A penalty on
+unsupported motion therefore has nothing to penalise, and no threshold
+rescues it: rescoring the same decisions with dead zones down to 5 px and
+margins down to 0 leaves the share of failures above the successes' 90th
+percentile at 0-29 % (chance 10 %), and at tight settings the successes pay
+more than the failures. Second plans are the stall class from E31: failures
+imagine 12-16 px of motion, the model is honest and the plan passive.
+
+E16's consequence, as literally written, is closed. The remaining question is
+whether the under-contact fiction violates a pushing law the same probe can
+check (block outrunning the agent, moving against the push, moving towards
+the agent): `scripts/pusht_diag/grounding_laws.py`, next.
