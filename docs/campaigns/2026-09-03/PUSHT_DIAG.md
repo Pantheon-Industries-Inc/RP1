@@ -1717,3 +1717,55 @@ does not. Nothing in the frames suggests a data-volume story -- the
 hallucinated block motion and the parked agent are model-side. Consistent
 with E27/E28: more TD-teacher data buys a couple of points; the mechanism on
 screen is the model at contact.
+
+## E32 -- physics grounding of the energy: E16's untried consequence (2026-09-13, in flight)
+
+The world model stays frozen (user decision 2026-09-13: improve RLP only).
+E16 ended with the one lever that follows from its mechanism and had never
+been built: a plan-time penalty on imagined block displacement that no agent
+contact supports, computable from the imagined latents alone. E31's videos put
+half the RLP-only failures in exactly that class (first-plan hallucination,
+V imagined 1.3 vs real 6.5 on task 0).
+
+### The term (`src/rlp/core/grounding.py`)
+
+Everything is a fixed linear read plus a few dozen scalar ops; nothing is
+sampled and no second model is run. Training and deploy use the identical
+term (it travels in the actor checkpoint), so the refiner's energy and
+gradient inputs are grounded too.
+
+1. **State probe.** Ridge regression latent -> (agent xy, block xy, cos, sin)
+   fitted on 200k rows of the fs1 cache against the dataset's `state` column
+   (E16's probe, now an exported (193 x 6) matrix).
+2. **Agent path from the plan.** PushT's action is a relative position command
+   (target = position + action x 100 px, PD-tracked over ten 10 ms substeps),
+   so the commanded path is known exactly from the plan and the real agent
+   position (`proprio`, raw px). A two-tap gain
+   dp_t = g0 u_t + g1 u_{t-1} fitted on the data absorbs the controller lag.
+3. **Contact test.** Distance from every commanded agent position to the T
+   (two rectangles in the block body frame, `add_tee` geometry, verified
+   against pymunk's own point query in the unit tests) minus the agent radius,
+   against the block pose decoded at the start of each block. Soft contact
+   c_k = sigmoid((margin - gap_k) / tau); "no contact yet" through block k is
+   the cumulative product of (1 - c_j).
+4. **Penalty.** sum_k (no contact yet)_k x relu(|b_k - b_0| - deadzone)^2 / ref^2,
+   with b the decoded block position and b_0 its value at the real start
+   frame; times `ground_weight` into the energy.
+
+### Calibration, in-job, on the 16k-episode cache (numbers below once the smoke lands)
+
+The probe's block error is ~11 px, so fixed thresholds would misread real
+pushes. Both thresholds come from the data: the contact `margin` is the 95th
+percentile of the closest approach the penalty itself sees on true-push
+windows (block moved > 30 px over 25 steps) plus 2.2 tau, so 95 % of real
+pushes register contact >= 0.9; the `deadzone` is the 95th percentile of
+decoded displacement over 25 steps on windows where the true block is static
+(the probe's noise floor). A geometry self-check on true states reports how
+often the block moves with the agent > 10 px clear of the T (must be rare),
+and the test's power is reported as the share of static windows with the
+agent hovering within 60 px that the test still flags.
+
+Arms: W1NEAR_FRZ + `GROUND=1.0` and `GROUND=0.3`, seeds 0-2, draws 42/43/44;
+`rlp_ng` deploys the grounded actor with the term switched off
+(training-time-only ablation); `cem_value` checks the teacher is unchanged.
+Read: paired per-task ledgers against the six-seed history-1 arrays.
