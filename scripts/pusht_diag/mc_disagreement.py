@@ -71,8 +71,10 @@ def successes(label: str):
     return None if not m else np.array([v == "True" for v in re.findall(r"\b(True|False)\b", m.group(1))], dtype=bool)
 
 
-def run_draw(DRAW: int) -> None:
-    global s_goal, starts, amu, asd, wm, predictor, critic, W, tf, cache, Wt, z_goal_all
+def run_draw(draw: int) -> None:
+    # rebind the MODULE-level DRAW: helpers defined above (successes) read it as a global
+    global DRAW, s_goal, starts, amu, asd, wm, predictor, critic, W, tf, cache, Wt, z_goal_all
+    DRAW = draw
     # ---------------------------------------------------------------- eval tasks (same draw rule as the eval)
     with h5py.File(H5, "r") as h:
         epi = np.asarray(h["episode_idx"][:]).reshape(-1)
