@@ -1895,3 +1895,41 @@ mechanism gives no reason to expect a real effect either way. Code stays
 (`planner.grounding`, off by default; `rlp_ng` eval condition), since the
 probe, kinematics and rescoring scripts are the tooling any outcome-based
 detector will reuse.
+
+## E33 -- an offline block-level discrepancy model: does the data know where the model lies? (2026-09-13, in flight)
+
+E32 located the fiction: physically plausible pushes whose real response the
+frozen model gets wrong, at the level of a single five-step action block. The
+question this entry asks is whether that response error is *learnable from the
+logged data alone* -- no environment interaction, no world-model retraining --
+because if it is, a learned correction can enter the refiner's energy and
+bypass the one derivative the model gets wrong.
+
+### D (`scripts/pusht_diag/discrepancy_fit.py`)
+
+Every 25-step window of training episodes 0-15999 (300k sampled of ~1.3M) is
+re-imagined through the frozen model from its REAL three-frame history,
+free-running over the five blocks (so blocks 2-5 start from imagined states, as
+at deploy). The target for block k is the decoded block pose of the real frame
+at the block's end minus the decoded pose of the imagined one, in the body
+frame of the block's start pose: position (2) and angle (1). Same probe on both
+sides, so probe noise largely cancels and the residual is the latent fiction
+as the probe sees it. Features per block, all differentiable w.r.t. the plan at
+deploy: decoded imagined pose at block start, the agent's position relative to
+the block in the body frame (real at the plan start via proprio, kinematic
+thereafter), the five commanded displacements in the body frame, the imagined
+block motion over the block, the closest kinematic approach to the T, and the
+end gap (21 features); variant `geolat` adds the imagined latent (192).
+MLP 3 x 256 SiLU, Huber loss, AdamW, 8 epochs; validation = episodes 14000-15999.
+
+### The test
+
+D is then evaluated where it has to work: along the refiner's own imagined
+trajectories on the recorded E32 decisions (seed-1 grounded actor, draws 43/44,
+probe dumps with start latent, imagined trajectory, plan, agent anchor). Per
+decision: the predicted fiction magnitude summed over blocks, and the terminal
+block error to the decoded goal after adding D's correction, each compared
+between failed and successful episodes (AUC and share of failures above the
+successes' P90; the critic's own energy and the uncorrected terminal error as
+references). Separation here, which no physics prior achieved, is the
+go/no-go for wiring D into the training energy.
