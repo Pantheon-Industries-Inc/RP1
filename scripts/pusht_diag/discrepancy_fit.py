@@ -333,7 +333,16 @@ models["geolat"], _ = train_variant("geolat", slice(0, X.shape[1]))
 log(f"training done in {time.time() - t0:.0f}s")
 
 # ------------------------------------------------------------ the decisive test: rescore the E32 decisions
-PD = Path(f"/checkpoints/armin@pantheon.inc/{PROBE_TAG}")
+ROOTS = (Path("/newcheckpoints"), Path("/checkpoints"))
+PD = next(
+    (
+        r / "armin@pantheon.inc" / PROBE_TAG
+        for r in ROOTS
+        if (r / "armin@pantheon.inc" / PROBE_TAG / "probes_rlp_s43").exists()
+    ),
+    ROOTS[1] / "armin@pantheon.inc" / PROBE_TAG,
+)
+log(f"rescoring probes under {PD}")
 
 
 def successes(draw: int) -> np.ndarray:
@@ -398,6 +407,7 @@ for draw in (43, 44):
                 z_prev = traj[:, k]
         log(
             f"draw {draw} decision {kdec}: n={nb} fails={int(fail.sum())} | uncorrected terminal block error to goal fail/succ {base_err[fail].mean():.1f}/{base_err[~fail].mean():.1f} px"  # noqa: E501
+            f" | commands > 100 px: {(u_all.norm(dim=-1) > ACTION_SCALE).float().mean() * 100:.0f}% (dataset 0%)"
         )
         sep("critic energy E (probe)", p["E"][:nb].float().numpy(), fail)
         sep("uncorrected terminal error", base_err.cpu().numpy(), fail)
