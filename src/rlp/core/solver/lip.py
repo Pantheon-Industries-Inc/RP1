@@ -739,6 +739,10 @@ class LIPSolver(CEMSolver):
                     "lat_iters": torch.stack(lat_iters).cpu() if lat_iters else torch.zeros(0),
                     "init_mode": self.init_mode,
                     "iters": int(self.lip_iters),
+                    # grounding inputs (E32): the real agent position and previous command
+                    # that anchored the term, so the decision can be rescored offline
+                    "ground_agent0": None if self._ground_agent0 is None else self._ground_agent0.detach().cpu(),
+                    "ground_u_prev": None if self._ground_u_prev is None else self._ground_u_prev.detach().cpu(),
                 },
                 self.probe_directory / f"probe_{_LIP_PROBE_N:04d}.pt",
             )
