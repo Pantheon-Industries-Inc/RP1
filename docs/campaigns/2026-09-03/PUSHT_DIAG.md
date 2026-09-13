@@ -1718,7 +1718,7 @@ hallucinated block motion and the parked agent are model-side. Consistent
 with E27/E28: more TD-teacher data buys a couple of points; the mechanism on
 screen is the model at contact.
 
-## E32 -- physics grounding of the energy: E16's untried consequence (2026-09-13, in flight)
+## E32 -- physics grounding of the energy: E16's untried consequence is a null, by mechanism (2026-09-13)
 
 The world model stays frozen (user decision 2026-09-13: improve RLP only).
 E16 ended with the one lever that follows from its mechanism and had never
@@ -1861,3 +1861,37 @@ pushes is not in the imagined positions; it is in the real outcome. The lever
 this leaves on the RLP side with a frozen model is a discrepancy detector
 trained on real rollouts (E32's arm 2 in the 2026-09-13 proposal), not a
 prior.
+
+### Aggregate: six jobs, paired against the same-seed baselines
+
+W1NEAR_FRZ recipe, seeds 0-2, draws 42/43/44 x 50; `rlp` = term on at deploy,
+`rlp_ng` = the same actor with the term off, `cem_value` = the teacher as CEM's
+objective (unchanged, 75-79). Jobs 23280-23285.
+
+| arm | seed | baseline | rlp (42/43/44) | rlp_ng | cem_value | ground term in training (median / max) |
+|---|---|---|---|---|---|---|
+| lambda 1.0 | 0 | 72.7 | 68/78/54 = 66.7 | 65.3 | 78.7 | 0.010 / 0.039 |
+| lambda 1.0 | 1 | 70.7 | 76/76/44 = 65.3 | 64.7 | 78.7 | 0.011 / 0.018 |
+| lambda 1.0 | 2 | 67.3 | 78/74/54 = 68.7 | 66.7 | 76.0 | 0.010 / 0.053 |
+| **lambda 1.0 median** | | **70.7** | **66.7** | 65.3 | 78.7 | |
+| lambda 0.3 | 0 | 72.7 | 74/80/62 = 72.0 | 72.7 | 78.0 | 0.007 / 0.013 |
+| lambda 0.3 | 1 | 70.7 | 72/72/64 = 69.3 | 70.0 | 75.3 | 0.008 / 0.013 |
+| lambda 0.3 | 2 | 67.3 | 68/78/52 = 66.0 | 64.7 | 76.7 | 0.005 / 0.022 |
+| **lambda 0.3 median** | | **70.7** | **69.3** | 70.0 | 76.7 | |
+
+Paired per-task ledgers against the six-seed history-1 arrays (150 tasks per
+seed): lambda 1.0 fixes 33 / breaks 48 (sign test p = 0.12), its no-term deploy
+28 / 49 (p = 0.02); lambda 0.3 fixes 27 / breaks 32 (p = 0.60), no-term deploy
+28 / 33 (p = 0.61). Switching the term off at deploy changes at most one
+episode in 150 per seed on average -- as it must for a term worth 0.01 units.
+
+**Closed: null at lambda 0.3, null-to-negative at lambda 1.0, and the two
+rescorings say why.** The penalty had nothing to act on (no fabricated motion
+without contact in any failed plan) and the under-contact fiction obeys the
+pushing laws a decoded-position prior can check. The negative lean at
+lambda 1.0 is three fresh lottery tickets (energy traces and validation
+values track the baselines); n = 3 cannot separate it from noise and the
+mechanism gives no reason to expect a real effect either way. Code stays
+(`planner.grounding`, off by default; `rlp_ng` eval condition), since the
+probe, kinematics and rescoring scripts are the tooling any outcome-based
+detector will reuse.
