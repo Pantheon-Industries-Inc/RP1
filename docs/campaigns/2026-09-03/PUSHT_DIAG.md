@@ -1896,7 +1896,7 @@ mechanism gives no reason to expect a real effect either way. Code stays
 probe, kinematics and rescoring scripts are the tooling any outcome-based
 detector will reuse.
 
-## E33 -- an offline block-level discrepancy model: does the data know where the model lies? (2026-09-13, in flight)
+## E33 -- an offline block-level discrepancy model: the data does not know where the model lies for the refiner's plans (2026-09-13)
 
 E32 located the fiction: physically plausible pushes whose real response the
 frozen model gets wrong, at the level of a single five-step action block. The
@@ -1933,3 +1933,47 @@ between failed and successful episodes (AUC and share of failures above the
 successes' P90; the critic's own energy and the uncorrected terminal error as
 references). Separation here, which no physics prior achieved, is the
 go/no-go for wiring D into the training energy.
+
+### Fit (job 23317 / 23326, 300k windows = 1.5M block samples, validation = episodes 14000-15999)
+
+| real minus imagined block motion | value |
+|---|---|
+| per block, before D | 9.9 px mean; 7.5 px at block 1 rising to 12.4 px at block 5 (free-running compounding) |
+| block 1, contact vs no-contact blocks | 7.3 px vs 7.8 px -- **no contact dependence** |
+| after D, `geo` / `geolat` | 6.9 px / 6.5 px |
+| variance explained, position / angle | 0.35 / 0.11 (`geo`), 0.37 / 0.11 (`geolat`) |
+
+On the logged random play the frozen model's block-level error is small,
+diffuse and no larger at contact than away from it. D learns about a third of
+what structure there is.
+
+### The test: the refiner's recorded decisions (seed-1 grounded actor, draws 43/44)
+
+AUC = P(score of a failed episode > score of a successful one); chance 0.5.
+None of the refiner's commands exceeds the dataset's 100 px per-step range.
+
+| draw, first plan | critic energy E | uncorrected terminal error | `geo` predicted fiction | `geo` corrected terminal error | `geolat` predicted fiction | `geolat` corrected error |
+|---|---|---|---|---|---|---|
+| 43 (12 fails / 50) | **0.81** | 0.69 | 0.60 | 0.67 | 0.55 | 0.58 |
+| 44 (29 fails / 50) | **0.77** | **0.81** | 0.54 | 0.57 | 0.48 | 0.59 |
+
+Second plans: every D score 0.34-0.66, i.e. chance both ways. D predicts about
+40-48 px of summed fiction for failed AND successful plans alike (its
+average-drift prior), and its correction moves every terminal estimate 20-25
+px away from the goal regardless of outcome: on the refiner's plans the
+offline model carries no information about failure and adds noise. The two
+references are the telling part: the refiner's own imagined energy already
+ranks failures above successes (AUC 0.8) -- failures are the harder tasks and
+imagination is optimistic on them, as E16 measured -- and nothing learned from
+random play improves on it.
+
+**Closed.** The block-level response error the refiner exploits is not present
+in the logged data at a learnable level: on random play the model is accurate
+to ~10 px per block with no contact signature, so an offline discrepancy
+model has nothing to learn that transfers to sustained, goal-directed pushes.
+The fiction lives in the tail of the refiner's own action distribution. That
+leaves exactly one version of the outcome-grounding lever: on-policy --
+record the refiner's own rollouts on training tasks (episodes < 16000, via
+the existing recorder), fit D to THOSE residuals, and test on held-out
+decisions exactly as here. Training-time interaction only; deploy unchanged.
+D checkpoints: `/newcheckpoints/armin@pantheon.inc/pusht-disc-20260913/discrepancy_{geo,geolat}.pt`.
