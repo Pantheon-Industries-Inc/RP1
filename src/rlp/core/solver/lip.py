@@ -190,9 +190,12 @@ class LIPSolver(CEMSolver):
         # untouched, and it is not a behaviour-cloning anchor.
         self.band_limit = None if band_limit in (None, 0) else int(band_limit)
         self._band_proj: torch.Tensor | None = None
-        # `pixels_hist` (real lagged frames) is used whenever the World publishes it;
-        # the real executed action history is opt-in so frames and actions can be
-        # tested separately (the actor was trained with zero-action replay samples)
+        # rlp.core.policy.WorldModelPolicy publishes `pixels_hist` (frames one action
+        # block apart) and `action_hist` (the primitive actions between them) on every
+        # replan once planning.history_len > 1; before E29 this solver ignored both and
+        # tiled the current frame. Frames are used whenever present; the real executed
+        # action history is opt-in so the two halves can be tested separately (the actor
+        # trained on zero-action replay samples, so zeros are in-distribution for it)
         self.use_action_history = bool(use_action_history)
         # value-guided initialization: A(0) = argmin-E over a candidate set of
         # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
@@ -520,14 +523,13 @@ class LIPSolver(CEMSolver):
             if z_hist.shape[1] < 3:  # pad short history (episode start, or planning.history_len < 3)
                 pad = z_hist[:, :1].expand(-1, 3 - z_hist.shape[1], -1)
                 z_hist = torch.cat([pad, z_hist], dim=1)
-            if getattr(self, "_history_logged", None) != (hist_key, real_frames):
-                # logged when the regime changes: the first plan has no past, later
-                # replans have real frames only if the World publishes `pixels_hist`
-                logger.info(
-                    f"LIP history: {real_frames} real frame(s) of 3 from '{hist_key}', "
-                    f"action history {'real' if self.use_action_history and 'action_hist' in info_dict else 'zeros'}"
-                )
-                self._history_logged = (hist_key, real_frames)
+            act_regime = "real" if self.use_action_history and "action_hist" in info_dict else "zeros"
+            if getattr(self, "_history_logged", None) != (hist_key, real_frames, act_regime):
+                # logged whenever the regime changes: the first plan of an episode has no
+                # past (the policy pads the frame stack and omits action_hist), later
+                # replans carry real lagged frames and, if opted in, real actions
+                logger.info(f"LIP history: {real_frames} frame(s) from '{hist_key}', action history {act_regime}")
+                self._history_logged = (hist_key, real_frames, act_regime)
             gx = info_dict["goal"].to(self.device, dtype=self.dtype)
             genc_in = {"pixels": gx}
             if getattr(wm, "wants_proprio", False):

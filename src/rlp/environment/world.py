@@ -56,18 +56,6 @@ class World(_World):
         self.success_key: str = kwargs.pop("success_key", "qpos")
         if self.success_threshold is not None:
             self.success_threshold = float(self.success_threshold)
-        # World-model history at plan time. Upstream infos carry ONE frame, so a
-        # planner that wants the WM's 3-frame window pads by tiling the current
-        # frame and zeroing the action history -- at every replan, not just the
-        # episode start (PUSHT_DIAG E29). With history_frames=K this publishes
-        # `pixels_hist` (n, K, H, W, C): the frames at lags 0, lag, 2*lag, ...
-        # (lag = the action block, so they are one WM step apart), and
-        # `action_hist` (n, K-1, lag, a): the primitive actions of the K-1 past
-        # blocks. Both are padded with the earliest available frame / zeros at
-        # the episode start. Separate keys, so the upstream CEM path -- which
-        # splits `pixels.size(2)` actions off its own candidate -- is untouched.
-        self.history_frames: int = int(kwargs.pop("history_frames", 0) or 0)
-        self.history_lag: int = int(kwargs.pop("history_lag", 5) or 5)
         super().__init__(env_name, *args, **kwargs)
 
     @staticmethod
@@ -144,37 +132,9 @@ class World(_World):
             "seeds": init_state.get("seed"),
         }
         frames: defaultdict[int, list[np.ndarray]] | None = defaultdict(list) if video else None
-        # lagged history buffers: the last (K-1)*lag+1 frames and (K-1)*lag actions per env
-        hist_k, hist_lag = self.history_frames, self.history_lag
-        hist_px: list[list[np.ndarray]] = [[] for _ in range(n)]
-        hist_ac: list[list[np.ndarray]] = [[] for _ in range(n)]
-
-        def publish_history(world: World) -> None:
-            px_now = self._final_frame(np.asarray(world.infos["pixels"]))  # (n, H, W, C)
-            ac_now = np.asarray(world.infos["action"])
-            ac_now = ac_now[:, -1] if ac_now.ndim > 2 else ac_now  # (n, a)
-            span = (hist_k - 1) * hist_lag
-            out_px = np.empty((n, hist_k) + px_now.shape[1:], dtype=px_now.dtype)
-            out_ac = np.zeros((n, hist_k - 1, hist_lag, ac_now.shape[-1]), dtype=np.float32)
-            for i in range(n):
-                hist_px[i].append(px_now[i])
-                hist_px[i] = hist_px[i][-(span + 1) :]
-                hist_ac[i].append(ac_now[i])
-                hist_ac[i] = hist_ac[i][-span:] if span else []
-                buf = hist_px[i]
-                for j in range(hist_k):  # j = 0 oldest ... K-1 newest, lagged by `lag`
-                    idx = len(buf) - 1 - (hist_k - 1 - j) * hist_lag
-                    out_px[i, j] = buf[max(idx, 0)]
-                acs = np.asarray(hist_ac[i], dtype=np.float32)
-                if len(acs):  # right-align the primitive actions we have into the block slots
-                    out_ac[i].reshape(-1, ac_now.shape[-1])[-len(acs) :] = acs
-            world.infos["pixels_hist"] = out_px
-            world.infos["action_hist"] = out_ac
 
         def on_step(world: World) -> None:
             world.infos.update(deepcopy(goal_snapshot))
-            if hist_k > 1 and "pixels" in world.infos and "action" in world.infos:
-                publish_history(world)
             if record_buffers is not None:
                 for column in record_cols:
                     if column not in world.infos:

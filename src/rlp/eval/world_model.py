@@ -90,20 +90,12 @@ def _run(cfg: DictConfig) -> None:
     # create world environment
     environment = cast(dict[str, Any], OmegaConf.to_container(cfg.environment, resolve=True))
     environment["max_episode_steps"] = 2 * cfg.evaluation.budget
-    world = World(
-        **environment,
-        image_shape=(cfg.evaluation.image_size, cfg.evaluation.image_size),
-        # planning.history_len used to be a dead key (nothing stacked frames from it);
-        # it now sets the WM history published as `pixels_hist`, one action block apart
-        history_frames=int(cfg.planning.get("history_len", 1) or 1),
-        history_lag=int(cfg.planning.action_block),
-    )
+    world = World(**environment, image_shape=(cfg.evaluation.image_size, cfg.evaluation.image_size))
 
     # create the transform
     img_dtype = torch.bfloat16 if cfg.runtime.bfloat16 else torch.float32
     transform: dict[str, Callable[[object], torch.Tensor]] = {
         "pixels": img_transform(cfg, img_dtype),
-        "pixels_hist": img_transform(cfg, img_dtype),  # same normalise + CHW permute as `pixels`
         "goal": img_transform(cfg, img_dtype),
     }
 
