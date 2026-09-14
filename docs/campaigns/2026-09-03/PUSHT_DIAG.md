@@ -2161,3 +2161,18 @@ world model's derivative is least trustworthy.
 environments (TwoRoom already uses 0). This result is PushT-only; whether
 cube and reacher also prefer 0 is untested and is a cheap follow-up, but the
 global default is NOT changed on the strength of one environment.
+
+### Wave 4/5 on top of replay-off (partial)
+
+| arm | seeds | base (matched) | rlp | rp0 alone, same seeds | read |
+|---|---|---|---|---|---|
+| `rp0ac0` (drop anti-constancy, ac_weight 0) | 2 | 71.7 | **65.7** | 73.0 | **negative, p = 0.01** |
+| `rp0tch6k` (teacher 6000 steps) | 1 | 70.7 | 73.3 | 72.7 | +0.6 vs rp0, direction as predicted |
+
+**`ac_weight=0.5` is load-bearing on PushT and my rationale for dropping it was
+wrong.** The argument was that `RESULTS.md` falsified the TwoRoom constancy
+basin here (probe constancy <= 0.13 vs 0.77+ on TwoRoom), so the regulariser
+guards against a pathology this environment does not have. The ablation says
+otherwise: removing it costs ~7 points against replay-off at the same seeds,
+12 fixes to 30 breaks, p = 0.01. Correct reading of the probe: constancy stays
+low *because* the regulariser is holding it there. Keep acr 0.5.
