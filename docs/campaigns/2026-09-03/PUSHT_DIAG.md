@@ -1998,5 +1998,10 @@ teacher.
 | `tch24k` | `value.steps=24000` | E27/E28: the TD teacher is the data-limited learner; 12k x 1024 is ~6 passes over 2M rows |
 | `tchg1e01` | `value.gamma=1.0 value.expectile=0.01` | the August offline-value corner scored TD+CEM 80.0, above the config-B teacher's 78.7 as a CEM objective |
 
-Jobs `rlp-pusht-w1near_frz-<tag>-s{0,1,2}-20260913`. Wave 2 candidates held:
-`max_delta=10`, actor batch 512, and combinations of wave-1 winners.
+Jobs `rlp-pusht-w1near_frz-<tag>-s{0,1,2}-20260913`. Wave 2, launched behind
+wave 1 on the user's go (2026-09-14): `md10` (`planner.max_delta=10`, the
+horizon axis between 6 and the recipe's 20) and `ab512` (`planner.batch=512`,
+actor batch doubled at fixed steps). Combinations of winners follow the read.
+Ops note: twelve rapid-fire `sky jobs launch` calls all failed silently at
+the API; sequential submission with per-job retries and a 15 s pause
+succeeded on the first attempt every time.
