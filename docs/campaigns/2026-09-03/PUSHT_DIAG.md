@@ -2079,3 +2079,48 @@ recipe's 12000. The prediction is explicit and falsifiable -- if a less
 converged teacher presents a better gradient field, 6k/3k should be >= 12k;
 if instead they also lose, 12k is a genuine optimum and tch24k's loss is
 specifically about over-sharpening.
+
+## E35 -- audit of the whole record: no earlier RLP PushT number survives the protocol (2026-09-14)
+
+Prompted by "didn't we get higher for some RLP version?". Six blind searches
+(campaign docs, the persistent memory notes, git history including deleted and
+revised files, the SkyPilot job history, session scratchpads and sibling
+repos, plus the local session transcripts found by a completeness critic)
+collected every PushT number attributable to the refiner. **38 distinct
+candidates at or above 69.0 were each audited by two independent agents, one
+checking protocol compliance and one trying to refute it from the primary
+source. None survived.** Seventy-seven agents, zero errors on the resumed run.
+
+The disqualification classes, with the best example of each:
+
+| class | best value | why it is not reportable |
+|---|---|---|
+| single DRAW of a single seed | 90 (actor_phases=5, s0, draw 43) | one 50-episode cell; that arm's own median is 70.0 |
+| deploy-time restarts + argmin-V | 88 (LIP v2, R=8, draw 42) | restarts are vetoed; R=32 reaches CEM's compute |
+| oracle union of two planners | 86.2 | not a planner |
+| old stack, no held-out split | 84.7 (LIP + 8 restarts) | trained on the episodes it was scored on |
+| **one-shot K=8, but selected on a report draw** | **80.7** (LIP v2, deep teacher tau 0.01/n1) | actor chosen by its own s42 score; its teacher won a 46-config sweep on the same draws; osmesa render |
+| selection draws 50/51 | 78 (K=24 counterstrike winner) | same actor = 70.0 on report draws |
+| K != 8 | 78 (K=24), 75 (K=32) | three to four times the shipped refinement budget |
+| CEM-initialised hybrid | 77.3 (`rlp_ceminit_k8`) | a 9,000-rollout CEM search picks the plan; the refiner only polishes it, and the K=0 control scores the same |
+| single seed, otherwise clean | 73.3 / 72.7 (W1NEAR_FRZ s0) | best of six; the n=6 median is 69.0 |
+
+Two arms surfaced that appear in **no repo document, results table or launch
+script** -- `pusht-rs8-w4-s0` (74.7) and `pusht-rs32-w4-s0` (74.0) -- recovered
+only from session transcripts. Both are restart arms, so both are vetoed, but
+they are a reminder that the cluster's raw output lives in transcripts and job
+logs, not in the repo.
+
+**Closest honest miss: 80.7.** The July LIP v2 one-shot (K=8, no restarts) is
+the only historical number that is simultaneously above 69 and free of
+restarts. It fails on selection contamination (the actor and its teacher were
+both chosen on report draw 42) and predates the held-out split. It is not
+comparable to anything in this campaign, but it is the reason the one-shot
+ceiling was once believed to be ~80.
+
+Ops note from the critic: `logs/`, the in-repo `scratchpad/`, the Synology
+version store, and W&B (entity armin-sommer, projects scanned incl. 400 newest
+RLP runs) contain NO PushT eval output. Evals never logged to W&B. The only
+complete local record of cluster output is the session transcripts under
+`~/.claude/projects/-Users-arminsommer-SynologyDrive-1privat-RLP-original/*.jsonl`
+(463 `RESULT rlp` blocks at the time of the audit).
