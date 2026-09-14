@@ -2005,3 +2005,38 @@ actor batch doubled at fixed steps). Combinations of winners follow the read.
 Ops note: twelve rapid-fire `sky jobs launch` calls all failed silently at
 the API; sequential submission with per-job retries and a 15 s pause
 succeeded on the first attempt every time.
+
+### Wave-1/2 read (2026-09-14, partial: arms with >= 1 finished seed)
+
+Medians over the seeds finished so far; `base` is the same-seed median of the
+six-seed history-1 baseline arrays, so every comparison is seed-matched. Paired
+per-task ledger vs those arrays in the last column.
+
+| arm | seeds done | base (matched) | rlp | cem_value | paired fixes/breaks (sign p) |
+|---|---|---|---|---|---|
+| **`rp0`** (replay_prob 0) | 3 | 70.7 | **72.7** | 77.3 | 31 / 26 (0.60) |
+| `md6pc01` (max_delta 6, p_cross 0.1) | 2 | 69.0 | 70.3 | 77.0 | 23 / 19 (0.64) |
+| `md10` (max_delta 10) | 1 | 67.3 | 68.7 | 75.3 | 13 / 11 (0.84) |
+| `ab512` (actor batch 512) | 1 | 72.7 | 67.3 | 78.0 | 3 / 11 (0.06) |
+| `tch24k` (teacher 24k steps) | 1 | 72.7 | 64.0 | 75.3 | 8 / 21 (0.02) |
+| `tchg1e01` (teacher gamma 1.0, expectile 0.01) | 3 | 70.7 | **65.3** | 76.7 | 26 / 49 (0.01) |
+
+**`rp0` is the winner and it is monotone across seeds**: 73.3 / 72.7 / 68.0
+against the matched baselines 72.7 / 70.7 / 67.3 -- +0.6 / +2.0 / +0.7, three
+of three positive, median +2.0. This reproduces the August K=8 finding
+(replay_prob 0 was +5 on the old recipe) on the current recipe, and E29 gives
+the mechanism: replay samples hand the actor an IMAGINED start window with
+zeroed action history, which is not what the deployed replan ever sees. Note
+the per-task ledger is not significant (p = 0.60) -- the gain is a consistent
+small shift, not a clean set of fixes -- so it needs the remaining three seeds
+before it becomes the recipe.
+
+**Both teacher arms are negative**, and `tchg1e01` clearly so (-5.4 median,
+p = 0.01), even though its teacher scores 76.7-79.3 as a CEM objective: the
+August offline-value corner does not transfer to the co-trained-then-frozen
+teacher of the current recipe. `tch24k` says the teacher is not
+step-limited either, which sharpens E27/E28: the teacher is DATA-limited, not
+optimisation-limited.
+
+Wave 3 (launched on this read): `rp0` at seeds 3-5 for the six-seed median,
+and `rp0md6` (replay off + the eval-matched goal horizon) at seeds 0-2.
