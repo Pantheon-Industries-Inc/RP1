@@ -2194,3 +2194,26 @@ loses. So the low end is a capacity failure that any planner would feel, and
 the high end is E24's inversion: further optimisation of the critic degrades
 the gradient field it presents while leaving the values it ranks with intact.
 The recipe's 12,000 is a genuine optimum, not a budget compromise.
+
+### `rp0md6` -- replay-off PLUS the eval-matched goal horizon is superadditive (3 seeds)
+
+| seed | baseline | `rp0` alone | **`rp0md6`** | per-draw 42/43/44 |
+|---|---|---|---|---|
+| 0 | 72.7 | 73.3 | 71.3 | 70 / 82 / 62 |
+| 1 | 70.7 | 72.7 | 74.7 | 78 / 82 / 64 |
+| 2 | 67.3 | 68.0 | **76.7** | 84 / 88 / 58 |
+| **median** | **70.7** | 72.7 | **74.7** | |
+
+Paired vs the baseline arrays: 41 fixes / 23 breaks, **sign test p = 0.03**.
+Seed 2's 76.7 is the highest standard-protocol seed value in the campaign, and
+its draw-42 cell (84) and draw-43 cell (88) are both campaign records.
+
+**Superadditive, and that is the interesting part.** Alone, the goal-horizon
+change (`max_delta=6 p_cross=0.1`) is a median NULL (70.7 vs 70.7) and
+replay-off is +2.0; together they are +4.0. Both edits do the same kind of
+thing -- they remove training samples whose start state or goal distance the
+deployed replan never encounters (imagined starts; goals 6-20 blocks away when
+every eval goal is 5). Neither alone changes the sample distribution enough to
+matter; together they concentrate the actor's training on the deployed
+regime. The n=3 caveat is real (seed 0 is -2.0 against `rp0`), so seeds 3-5
+are running before this displaces `rp0` in the config sheet.
