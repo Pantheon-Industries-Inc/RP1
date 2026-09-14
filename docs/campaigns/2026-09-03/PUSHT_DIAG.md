@@ -2012,14 +2012,14 @@ Medians over the seeds finished so far; `base` is the same-seed median of the
 six-seed history-1 baseline arrays, so every comparison is seed-matched. Paired
 per-task ledger vs those arrays in the last column.
 
-| arm | seeds done | base (matched) | rlp | cem_value | paired fixes/breaks (sign p) |
-|---|---|---|---|---|---|
-| **`rp0`** (replay_prob 0) | 3 | 70.7 | **72.7** | 77.3 | 31 / 26 (0.60) |
-| `md6pc01` (max_delta 6, p_cross 0.1) | 2 | 69.0 | 70.3 | 77.0 | 23 / 19 (0.64) |
-| `md10` (max_delta 10) | 1 | 67.3 | 68.7 | 75.3 | 13 / 11 (0.84) |
-| `ab512` (actor batch 512) | 1 | 72.7 | 67.3 | 78.0 | 3 / 11 (0.06) |
-| `tch24k` (teacher 24k steps) | 1 | 72.7 | 64.0 | 75.3 | 8 / 21 (0.02) |
-| `tchg1e01` (teacher gamma 1.0, expectile 0.01) | 3 | 70.7 | **65.3** | 76.7 | 26 / 49 (0.01) |
+| arm | seeds done | base (matched) | rlp | per-seed rlp | cem_value | paired fixes/breaks (sign p) |
+|---|---|---|---|---|---|---|
+| **`rp0`** (replay_prob 0) | 3 | 70.7 | **72.7** | 73.3 / 72.7 / 68.0 | 77.3 | 31 / 26 (0.60) |
+| `md6pc01` (max_delta 6, p_cross 0.1) | 3 | 70.7 | 70.7 | 74.0 / 70.0 / 70.7 | 76.7 | 33 / 27 (0.52) |
+| `md10` (max_delta 10) | 1 | 67.3 | 68.7 | 68.7 | 75.3 | 13 / 11 (0.84) |
+| `ab512` (actor batch 512) | 3 | 70.7 | 68.0 | 67.3 / 71.3 / 68.0 | 77.3 | 26 / 32 (0.51) |
+| `tch24k` (teacher 24k steps) | 1 | 72.7 | 64.0 | 64.0 | 75.3 | 8 / 21 (0.02) |
+| `tchg1e01` (teacher gamma 1.0, expectile 0.01) | 3 | 70.7 | **65.3** | 65.3 / 65.3 / 64.7 | 76.7 | 26 / 49 (0.01) |
 
 **`rp0` is the winner and it is monotone across seeds**: 73.3 / 72.7 / 68.0
 against the matched baselines 72.7 / 70.7 / 67.3 -- +0.6 / +2.0 / +0.7, three
@@ -2038,5 +2038,19 @@ teacher of the current recipe. `tch24k` says the teacher is not
 step-limited either, which sharpens E27/E28: the teacher is DATA-limited, not
 optimisation-limited.
 
+`md6pc01` completed at three seeds and is a MEDIAN NULL (70.7 vs 70.7) though
+its mean is +1.3 and its best seed is the campaign's highest single-seed value
+under standard protocol (74.0 = 66/88/68 at seed 0, draw 43 = 88 the highest
+report-draw cell any RLP actor has produced). `ab512` completed negative
+(68.0 vs 70.7). So the actor-side axes split cleanly: what the actor is
+trained ON (replay distribution, goal horizon) moves the number; how much of
+it (batch, teacher steps) does not.
+
 Wave 3 (launched on this read): `rp0` at seeds 3-5 for the six-seed median,
 and `rp0md6` (replay off + the eval-matched goal horizon) at seeds 0-2.
+Wave 4, both on top of replay-off: `rp0ac0` drops the anti-constancy
+regulariser -- `docs/campaigns/2026-08-27/RESULTS.md` falsified the TwoRoom
+constancy basin on PushT (probe constancy <= 0.13 vs 0.77+ on TwoRoom, all
+checkpoints), so acr 0.5 is a regulariser against a pathology this
+environment does not have -- and `rp0md10` retests the milder goal horizon
+unbundled from `p_cross`.
