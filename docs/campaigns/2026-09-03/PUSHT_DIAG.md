@@ -2018,7 +2018,7 @@ per-task ledger vs those arrays in the last column.
 | `md6pc01` (max_delta 6, p_cross 0.1) | 3 | 70.7 | 70.7 | 74.0 / 70.0 / 70.7 | 76.7 | 33 / 27 (0.52) |
 | `md10` (max_delta 10) | 1 | 67.3 | 68.7 | 68.7 | 75.3 | 13 / 11 (0.84) |
 | `ab512` (actor batch 512) | 3 | 70.7 | 68.0 | 67.3 / 71.3 / 68.0 | 77.3 | 26 / 32 (0.51) |
-| `tch24k` (teacher 24k steps) | 1 | 72.7 | 64.0 | 64.0 | 75.3 | 8 / 21 (0.02) |
+| `tch24k` (teacher 24k steps) | 3 | 70.7 | **63.3** | 64.0 / 62.7 / 63.3 | 75.3 | 31 / 63 (**0.00**) |
 | `tchg1e01` (teacher gamma 1.0, expectile 0.01) | 3 | 70.7 | **65.3** | 65.3 / 65.3 / 64.7 | 76.7 | 26 / 49 (0.01) |
 
 **`rp0` is the winner and it is monotone across seeds**: 73.3 / 72.7 / 68.0
@@ -2031,12 +2031,19 @@ the per-task ledger is not significant (p = 0.60) -- the gain is a consistent
 small shift, not a clean set of fixes -- so it needs the remaining three seeds
 before it becomes the recipe.
 
-**Both teacher arms are negative**, and `tchg1e01` clearly so (-5.4 median,
-p = 0.01), even though its teacher scores 76.7-79.3 as a CEM objective: the
-August offline-value corner does not transfer to the co-trained-then-frozen
-teacher of the current recipe. `tch24k` says the teacher is not
-step-limited either, which sharpens E27/E28: the teacher is DATA-limited, not
-optimisation-limited.
+**Both teacher arms are significantly negative, and that is the sharpest
+result of the wave.** `tch24k` (double the teacher's optimisation, nothing
+else) lands at 63.3 vs 70.7 with a paired ledger of 31 fixes to 63 breaks,
+p = 0.00 -- the most significant per-task effect this campaign has measured on
+any arm. `tchg1e01` (the August offline-value corner) is -5.4, p = 0.01.
+In both arms the teacher itself stays healthy AS A RANKING OBJECTIVE
+(cem_value 75.3-76.7, cem_tdvalue 76.0), so a teacher that is equally good for
+sampling is measurably worse for descent. That is E24's inversion again, now
+with a knob attached: **optimising the critic further makes it a worse
+gradient field while leaving its ranking intact.** Practical consequence for
+the recipe: the teacher's 12k steps is not a budget compromise to be relaxed,
+it is near a ceiling, and E27/E28's "the teacher is the data-limited learner"
+should be read strictly as DATA, not optimisation.
 
 `md6pc01` completed at three seeds and is a MEDIAN NULL (70.7 vs 70.7) though
 its mean is +1.3 and its best seed is the campaign's highest single-seed value
