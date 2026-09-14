@@ -2016,7 +2016,7 @@ per-task ledger vs those arrays in the last column.
 |---|---|---|---|---|---|---|
 | **`rp0`** (replay_prob 0) | 3 | 70.7 | **72.7** | 73.3 / 72.7 / 68.0 | 77.3 | 31 / 26 (0.60) |
 | `md6pc01` (max_delta 6, p_cross 0.1) | 3 | 70.7 | 70.7 | 74.0 / 70.0 / 70.7 | 76.7 | 33 / 27 (0.52) |
-| `md10` (max_delta 10) | 1 | 67.3 | 68.7 | 68.7 | 75.3 | 13 / 11 (0.84) |
+| `md10` (max_delta 10) | 3 | 70.7 | 68.7 | 67.3 / 72.0 / 68.7 | 77.3 | 27 / 31 (0.69) |
 | `ab512` (actor batch 512) | 3 | 70.7 | 68.0 | 67.3 / 71.3 / 68.0 | 77.3 | 26 / 32 (0.51) |
 | `tch24k` (teacher 24k steps) | 3 | 70.7 | **63.3** | 64.0 / 62.7 / 63.3 | 75.3 | 31 / 63 (**0.00**) |
 | `tchg1e01` (teacher gamma 1.0, expectile 0.01) | 3 | 70.7 | **65.3** | 65.3 / 65.3 / 64.7 | 76.7 | 26 / 49 (0.01) |
@@ -2061,3 +2061,21 @@ constancy basin on PushT (probe constancy <= 0.13 vs 0.77+ on TwoRoom, all
 checkpoints), so acr 0.5 is a regulariser against a pathology this
 environment does not have -- and `rp0md10` retests the milder goal horizon
 unbundled from `p_cross`.
+
+### Wave-1/2 complete: one winner, one null, four negatives
+
+All six wave-1/2 arms are now at three seeds. Only `rp0` is positive
+(72.7 vs 70.7, three of three seeds up). `md6pc01` is a median null,
+`md10` is -2.0, `ab512` -2.7, `tchg1e01` -5.4 (p = 0.01) and `tch24k`
+-7.4 (p = 0.00). **The goal-horizon axis is closed**: 6 blocks (bundled with
+p_cross 0.1) is a null and 10 blocks is negative, so matching the actor's
+training goals to the eval's 5-block horizon does not help -- the wide
+1-20 band is not a handicap. `rp0md10` (wave 4) was cancelled on this read
+since its motivating single-seed value did not survive.
+
+Wave 5, launched on the tch24k finding: the teacher-optimisation ladder
+DOWNWARD on top of replay-off, `value.steps` 6000 and 3000 against the
+recipe's 12000. The prediction is explicit and falsifiable -- if a less
+converged teacher presents a better gradient field, 6k/3k should be >= 12k;
+if instead they also lose, 12k is a genuine optimum and tch24k's loss is
+specifically about over-sharpening.
