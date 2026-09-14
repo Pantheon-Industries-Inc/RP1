@@ -2176,3 +2176,21 @@ guards against a pathology this environment does not have. The ablation says
 otherwise: removing it costs ~7 points against replay-off at the same seeds,
 12 fixes to 30 breaks, p = 0.01. Correct reading of the probe: constancy stays
 low *because* the regulariser is holding it there. Keep acr 0.5.
+
+### The teacher-budget ladder, on top of replay-off
+
+| `value.steps` | rlp (median) | seeds | teacher as CEM objective | read |
+|---|---|---|---|---|
+| 3,000 | **63.3** | 3 | 74.0 (degraded) | -7.4, p = 0.03; all three seeds land on 63.3 |
+| 6,000 | 73.3 | 1 | 75.3 | +0.6 over replay-off at the same seed |
+| **12,000 (recipe)** | **72.7** | 6 | 77.3 | the shipped value |
+| 24,000 | 63.3 | 3 | 75.3 (intact) | -7.4, p = 0.00 (measured without replay-off) |
+
+**An inverted U with a flat top at 6k-12k and both ends falling by the same
+7.4 points -- but the two ends fail for opposite reasons.** At 3k the teacher
+is simply undertrained and its own ranking score drops with it (74.0 vs 77.3).
+At 24k the teacher's ranking score is untouched (75.3) and only the refiner
+loses. So the low end is a capacity failure that any planner would feel, and
+the high end is E24's inversion: further optimisation of the critic degrades
+the gradient field it presents while leaving the values it ranks with intact.
+The recipe's 12,000 is a genuine optimum, not a budget compromise.
