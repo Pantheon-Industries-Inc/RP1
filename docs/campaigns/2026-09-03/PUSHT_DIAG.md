@@ -2124,3 +2124,40 @@ RLP runs) contain NO PushT eval output. Evals never logged to W&B. The only
 complete local record of cluster output is the session transcripts under
 `~/.claude/projects/-Users-arminsommer-SynologyDrive-1privat-RLP-original/*.jsonl`
 (463 `RESULT rlp` blocks at the time of the audit).
+
+### E34 HEADLINE -- `replay_prob=0` is a real +3.3 at the full six seeds
+
+| seed | baseline W1NEAR_FRZ | + replay off | delta | per-draw 42/43/44 |
+|---|---|---|---|---|
+| 0 | 72.7 | 73.3 | +0.6 | 74 / 84 / 62 |
+| 1 | 70.7 | 72.7 | +2.0 | 74 / 82 / 62 |
+| 2 | 67.3 | 68.0 | +0.7 | 74 / 76 / 54 |
+| 3 | 66.0 | 70.0 | +4.0 | 78 / 78 / 54 |
+| 4 | 68.0 | 72.0 | +4.0 | 74 / 82 / 60 |
+| 5 | 70.0 | 75.3 | +5.3 | 80 / 84 / 62 |
+| **median** | **69.0** | **72.3** | **+3.3** | |
+| mean | 69.1 | 71.9 | +2.8 | |
+
+**Six of six seeds positive; paired per-task ledger 73 fixes / 48 breaks,
+sign test p = 0.03.** This is the first arm in the campaign to move the n=6
+median at all, and the first with a significant paired ledger. The teacher is
+untouched (cem_value 77.3, cem_tdvalue 77.0 -- unchanged from the baseline
+recipe), so the gain is entirely on the actor side.
+
+**Gap to latent-CEM: -10.3 -> -7.0.** New standing numbers for PushT:
+RLP 72.3 (n=6) vs latent-CEM 79.3.
+
+**Mechanism** (August found the same effect at K=8 on the old recipe, +5, and
+it was dropped when the recipe changed): with `replay_prob=0.5` half of every
+actor batch starts from an IMAGINED window -- the previous rollout's last
+three imagined latents -- with the action history zeroed. E29 established that
+the deployed replan never sees that input: it sees real frames, and (since
+E29) real action history. Replay was training the actor on a state
+distribution that does not occur at deploy, and on PushT, where imagined
+latents diverge fastest at contact, that distribution is exactly where the
+world model's derivative is least trustworthy.
+
+**Scope caveat:** `replay_prob=0.5` is the shared config-B default across
+environments (TwoRoom already uses 0). This result is PushT-only; whether
+cube and reacher also prefer 0 is untested and is a cheap follow-up, but the
+global default is NOT changed on the strength of one environment.
