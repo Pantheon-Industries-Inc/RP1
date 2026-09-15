@@ -2166,7 +2166,7 @@ global default is NOT changed on the strength of one environment.
 
 | arm | seeds | base (matched) | rlp | rp0 alone, same seeds | read |
 |---|---|---|---|---|---|
-| `rp0ac0` (drop anti-constancy, ac_weight 0) | 2 | 71.7 | **65.7** | 73.0 | **negative, p = 0.01** |
+| `rp0ac0` (drop anti-constancy, ac_weight 0) | 3 | 70.7 | **66.0** | 72.7 | **negative, -6.7 vs rp0; 24/40, p = 0.06** |
 | `rp0tch6k` (teacher 6000 steps) | 1 | 70.7 | 73.3 | 72.7 | +0.6 vs rp0, direction as predicted |
 
 **`ac_weight=0.5` is load-bearing on PushT and my rationale for dropping it was
