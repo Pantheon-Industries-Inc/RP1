@@ -20,7 +20,7 @@ restarts, no behaviour cloning.
 | Cube | PLDM | 87.3 | 85.3 | 3 | latent+CEM 62.7 (h25) |
 | Reacher (w2) | LeWM | 100.0 (τ 0.1) | 96.3 (τ 0.05) | 6 | latent+CEM 88.0 (τ 0.05) |
 | Reacher (w2) | PLDM | 99.3 | 90.7 | 3 | latent+CEM 88.0 (τ 0.05) |
-| **PushT** | LeWM | **72.3** (h25) | — | **6** | **latent+CEM 79.3** |
+| **PushT** | LeWM | **73.7** (h25) | — | **6** | **latent+CEM 79.3** |
 
 PushT is the only environment where RLP trails the sampler, and the only one
 with a single horizon column and a single world-model base.
@@ -52,17 +52,23 @@ pixi run train model=rlp \
   value.gamma=0.98 value.expectile=0.03 value.n_step=1 \
   value.window_frames=1 value.window_lag=5 \
   value.near_frac=0.3 value.near_max=3 \
-  planner.amax=2.5 planner.mean_weight=0.1 planner.expand_weight=1.0 \
+  planner.amax=2.5 planner.mean_weight=0.1 \
   planner.actor_lr=3e-4 planner.actor_lr_final=3e-05 \
-  planner.iterations=8 planner.max_delta=20 \
-  planner.replay_prob=0 \
-  planner.freeze_critic_frac=0 planner.ac_weight=0.5 planner.ckpt_every=2000 \
-  planner.near_frac=0.3 planner.near_max=3
+  planner.iterations=8 \
+  planner.replay_prob=0 planner.max_delta=6 planner.p_cross=0.1 \
+  planner.freeze_critic_frac=0 planner.ac_weight=0.5 planner.ckpt_every=2000
 ```
+
+**Updated 2026-09-14 (E36).** Three changes from the version first published
+today. `planner.max_delta=6 planner.p_cross=0.1` joins `replay_prob=0`: the
+pair is **73.7 at n=6**, paired 90 fixes / 47 breaks, p = 0.00, against 72.3
+for replay-off alone. `planner.expand_weight` and `planner.near_frac` were
+removed because they are **inert** here (see §7a). Consider also
+`value.steps=6000`, which is +1.3 at three seeds and is being confirmed.
 
 Equivalently, via the launcher: `REPLAY=0 TAGSUF=-rp0 scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ 0 1 2 3 4 5`.
 
-**`planner.replay_prob=0` is the 2026-09-14 result**: 69.0 → **72.3** on the
+**`planner.replay_prob=0` was the first 2026-09-14 result**: 69.0 → **72.3** on the
 six-seed median, six of six seeds positive, paired sign test p = 0.03, teacher
 unchanged. At the shipped 0.5, half of every actor batch starts from an
 *imagined* window with zeroed action history — a state distribution the
@@ -183,6 +189,28 @@ second-order system; w=3, the paper's choice, adds world-model noise.
    producing harness. The hydra pipeline trains one per seed, so seed spread
    will differ from the banked table.
 
+## 7a. Inert settings — passing them changes nothing
+
+`planner.freeze_critic_frac=0` makes `freeze_at = 0`, so the in-loop
+`critic_step()` never runs, and `pretrain = -1` with `init_value` set skips the
+warmup loop too. No critic is ever updated in stage 5; the teacher is a verbatim
+copy of the stage-4 checkpoint. Every knob whose only use site is inside
+`critic_step`, its schedules, or the sampler it consumes is therefore dead:
+
+`planner.expand_weight`, `planner.expand_traj`, `planner.gamma`,
+`planner.n_step`, `planner.expectile`, `planner.expectile_final`,
+`planner.td_batch`, `planner.td_p_cross`, `planner.td_max_delta`,
+`planner.critic_lr`, `planner.critic_lr_final`, `planner.critic_wd`,
+`planner.ema_tau`, `planner.huber_beta`, `planner.critic_ratio`,
+`planner.pretrain`, `planner.near_frac`, `planner.near_max`.
+
+Near-goal oversampling still matters, but only through **`value.near_frac`**,
+which reaches the offline teacher. The launcher's `EXPAND` and the
+`planner.near_frac` half of `NEAR_FRAC` have been dead in every run of this
+family. This applies only where the critic is frozen from step 0; TwoRoom
+(`freeze_critic_frac=0.8`) and Cube (0.5) do co-train and these knobs are live
+there.
+
 ## 8. Closed knobs — do not re-sweep
 
 Shared: `gamma` 0.98 (Reacher loses 7–14 points at 0.99/1.0), `vnorm` none,
@@ -190,8 +218,9 @@ Shared: `gamma` 0.98 (Reacher loses 7–14 points at 0.99/1.0), `vnorm` none,
 `ema_tau` 0.005.
 
 PushT specifically: `mean_weight` 0.1, `actor_lr` 3e-4, actor steps 6000
-(12k/18k worse), **teacher steps 12000** — an inverted U, 3k and 24k both lose
-and 24k costs 7.4 points at p = 0.00 while leaving the teacher's *sampling*
-score intact, `max_delta` 20 (6 and 10 are null-to-negative), actor batch 256,
+(12k/18k worse), actor batch 256, `max_delta` 10 (negative alone; 6 is the
+winner ONLY in combination with replay-off),
+**teacher steps: the peak is 6000, not the shipped 12000** (3k and 24k both lose
+7.4 points; at 6k the teacher's own sampling score also rises to 78.7),
 `ac_weight` 0.5 — **load-bearing**, removing it costs ~7 points at p = 0.01,
 and the physics-grounding term (E32), which is a null.
