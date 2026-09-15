@@ -66,7 +66,12 @@ for replay-off alone. `planner.expand_weight` and `planner.near_frac` were
 removed because they are **inert** here (see §7a). Consider also
 `value.steps=6000`, which is +1.3 at three seeds and is being confirmed.
 
-Equivalently, via the launcher: `REPLAY=0 TAGSUF=-rp0 scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ 0 1 2 3 4 5`.
+Equivalently, via the launcher:
+
+```bash
+REPLAY=0 MAX_DELTA_OVERRIDE=6 EXTRA_OVR="planner.p_cross=0.1" TAGSUF=-rp0md6 \
+  scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ 0 1 2 3 4 5
+```
 
 **`planner.replay_prob=0` was the first 2026-09-14 result**: 69.0 → **72.3** on the
 six-seed median, six of six seeds positive, paired sign test p = 0.03, teacher
@@ -80,8 +85,9 @@ The other non-default choices, all from the W1NEAR_FRZ arm: single-frame
 critic (`window_frames=1`, against config B's declared w4 for PushT) because
 the single-frame near-goal teacher is the only PushT critic that reaches
 latent-L2 parity as a ranking objective; `freeze_critic_frac=0`, i.e. the
-offline TD teacher is frozen from step 0 and never co-trained; near-goal
-hindsight oversampling on both learners.
+offline TD teacher is frozen from step 0 and never co-trained; and near-goal
+hindsight oversampling, which reaches the teacher through `value.near_frac`
+only (the `planner.near_frac` half is inert, see §7a).
 
 Eval, per training seed:
 
