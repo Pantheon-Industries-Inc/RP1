@@ -2364,3 +2364,63 @@ continue` (policy.py), and that first decision is exactly when
 one did receive the real action history. The measurement is therefore a
 partial test of action history plus a full test of real frame history, and it
 is negative either way.
+
+## E37 -- two corrections to E36's reading, and the teacher's untouched goal band (2026-09-15)
+
+### `max_delta` is ALSO an episode filter, so the `md6` win is confounded with data volume
+
+`src/rlp/train/lip_ac.py:140`: `keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]`.
+PushT fs5 episodes have a MEDIAN of 25 blocks (E27). So `max_delta=20` admitted
+only episodes longer than 24 blocks -- by definition of the median, roughly
+HALF the training pool -- while `max_delta=6` admits everything longer than 10.
+
+The +4.7 `rp0md6` win is therefore two changes at once: the goal band narrowing
+AND an approximately 2x expansion of the actor's episode pool. Given E27's
+ladder (8x data = +13.4, the largest single lever ever measured here), the data
+half may be the larger term. This also explains the superadditivity E36 called
+"the interesting part": replay-off doubles the REAL fraction of each batch and
+`md6` doubles the POOL those real samples come from, which is multiplicative
+coverage rather than two independent distribution edits. It is consistent with
+E28 too: 5x denser sampling of the SAME episodes was a null, whereas `md6`
+supplies new, shorter episodes.
+
+Two consequences. E36's "the goal-horizon axis is closed" was written before
+`rp0md6` and is falsified by it. And `md10`'s -2.0 was measured with replay ON,
+so it is not evidence against a low `max_delta` in the current mixture.
+Decomposing band-vs-pool needs an arm that widens the pool without narrowing
+the band, which the current code cannot express -- the filter and the band are
+the same knob.
+
+### The TEACHER's goal band has never been set, in any run, ever
+
+`git log --all -S"value.max_delta"` is empty. `configs/train/metric.yaml` ships
+`max_delta: null` and `configs/train/rlp.yaml`'s `value:` block omits the key,
+so the offline teacher has always trained on goals spread across the WHOLE
+episode plus 30% cross-episode goals, while every deployed query is a goal
+exactly 25 primitive steps away in the same episode. An independent
+recomputation from the sampler code puts **53% of the teacher's training pairs
+outside the regime the refiner queries**. This is the literal one-level-down
+analogue of the two edits that just paid +4.7 and +5.0.
+
+**Units trap, load-bearing:** the teacher trains on the **fs1** cache and the
+actor on **fs5**, so `planner.max_delta` is in BLOCKS and `value.max_delta` is
+in PRIMITIVE STEPS. Eval-matched is `value.max_delta=30` (= 6 blocks), not 6.
+The key is absent from the composed config, so the override needs a leading
+`+`. Ladder launched at 15 / 30 / 50 with `value.p_cross=0.1`, three seeds each.
+
+### Free readout: early stopping is doing real work, and the actor peaks near 4,000 steps
+
+Winning snapshot across the 17 finished replay-off runs (`[ckpt-select]` lines):
+
+| snapshot | runs |
+|---|---|
+| `planner_step4000.pt` | 10 |
+| final (6000) | 5 |
+| `planner_step2000.pt` | 2 |
+
+The final checkpoint wins in under a third of runs, so ES is not decorative --
+it is recovering real points -- and the actor's optimum under the new mixture
+sits around 4,000 of 6,000 steps. This is evidence AGAINST the longer-actor
+arm (`tri12k`, already launched, now expected null-to-negative) and FOR either
+a shorter budget or a finer snapshot grid (`ckpt_every=1000` gives six
+candidates instead of three, at zero extra training cost).
