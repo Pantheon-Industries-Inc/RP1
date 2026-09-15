@@ -2217,3 +2217,61 @@ every eval goal is 5). Neither alone changes the sample distribution enough to
 matter; together they concentrate the actor's training on the deployed
 regime. The n=3 caveat is real (seed 0 is -2.0 against `rp0`), so seeds 3-5
 are running before this displaces `rp0` in the config sheet.
+
+## E36 -- the mixture axis pays twice more, and half the planner recipe is INERT (2026-09-14)
+
+### New best: `rp0md6` at six seeds = 73.7
+
+| seed | baseline | `rp0` | **`rp0md6`** | delta vs base |
+|---|---|---|---|---|
+| 0 | 72.7 | 73.3 | 71.3 | -1.4 |
+| 1 | 70.7 | 72.7 | 74.7 | +4.0 |
+| 2 | 67.3 | 68.0 | **76.7** | +9.4 |
+| 3 | 66.0 | 70.0 | 72.0 | +6.0 |
+| 4 | 68.0 | 72.0 | 76.0 | +8.0 |
+| 5 | 70.0 | 75.3 | 72.7 | +2.7 |
+| **median** | **69.0** | 72.7 | **73.7** | **+4.7** |
+
+Paired per-task: **90 fixes / 47 breaks, sign test p = 0.00**, the most
+significant positive effect the campaign has produced. Five of six seeds up.
+**Gap to latent-CEM: -10.3 -> -5.6.**
+
+### `value.steps=6000` is also a win, and it revises the ladder
+
+| `value.steps` | rlp median | n | teacher as CEM objective |
+|---|---|---|---|
+| 3,000 | 63.3 | 3 | 74.0 |
+| **6,000** | **74.0** | 3 | **78.7** |
+| 12,000 (recipe) | 72.7 | 6 | 77.3 |
+| 24,000 | 63.3 | 3 | 75.3 |
+
+Paired at 6k: 50 fixes / 28 breaks, p = 0.02. The earlier "12k is the optimum"
+reading was premature on one seed: **the peak is 6k, and at 6k the teacher is
+better in BOTH senses** (its own CEM ranking score rises to 78.7). 12k was
+already past the peak; 24k is far past it. Seeds 3-5 are running, plus the
+triple `rp0md6tch6k`.
+
+### INERT: with `freeze_critic_frac=0`, most `planner.*` TD knobs do nothing
+
+`freeze_at = int(0 * steps) = 0`, so `critic_live = step < 0` is never true and
+the in-loop `critic_step()` at lip_ac.py:736 never runs. The pretrain loop at
+:712 is also skipped, because `pretrain = -1` and `init_value` is set gives
+`pretrain = 0`. The teacher is therefore a verbatim `copy.deepcopy` of the
+stage-4 checkpoint (:332) and NOTHING in stage 5 ever updates a critic.
+
+Proven inert in the W1NEAR_FRZ family (every use site is inside `critic_step`,
+the schedules that feed it, or the `NStepGoalSampler` only it consumes):
+`planner.expand_weight`, `planner.expand_traj`, `planner.gamma`,
+`planner.n_step`, `planner.expectile`, `planner.expectile_final`,
+`planner.td_batch`, `planner.td_p_cross`, `planner.td_max_delta`,
+`planner.critic_lr`, `planner.critic_lr_final`, `planner.critic_wd`,
+`planner.ema_tau`, `planner.huber_beta`, `planner.critic_ratio`,
+`planner.pretrain`, and **`planner.near_frac` / `planner.near_max`** (:288-291
+feed only the co-critic sampler; `value.near_frac` is the one that matters).
+
+Consequences: (i) the launcher's `EXPAND=1.0` and its `planner.near_frac`
+half of `NEAR_FRAC` have been dead in every W1NEAR_FRZ run; (ii) the
+config sheet published earlier today lists `planner.expand_weight=1.0` and
+`planner.near_frac=0.3` as meaningful and must be corrected; (iii) any past
+arm that moved ONLY these knobs measured nothing but seed noise -- worth
+re-reading E15/E20 with that in mind.
