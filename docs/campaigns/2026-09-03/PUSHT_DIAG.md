@@ -2275,3 +2275,46 @@ config sheet published earlier today lists `planner.expand_weight=1.0` and
 `planner.near_frac=0.3` as meaningful and must be corrected; (iii) any past
 arm that moved ONLY these knobs measured nothing but seed noise -- worth
 re-reading E15/E20 with that in mind.
+
+### Decomposing the goal-band win, and a limit on the distribution-matching story
+
+All on top of replay-off, seeds 0-2, against the same-seed baselines (70.7):
+
+| arm | median | vs `rp0` (72.7) | paired |
+|---|---|---|---|
+| `rp0` (replay off only) | 72.7 | -- | 31/26, p=0.60 |
+| `rp0pc0` (+ `p_cross=0`, cross-episode goals removed entirely) | 73.3 | +0.6 | 38/24, p=0.10 |
+| `rp0md6` (+ `max_delta=6 p_cross=0.1`) | **74.7** | **+2.0** | 41/23, p=0.03 |
+
+So both halves of the goal-band edit contribute and the distance band is the
+larger half: removing cross-episode goals alone buys +0.6, and narrowing
+1-20 blocks to 1-6 buys roughly another +1.4. Seed 1 of `rp0pc0` hit 78.7.
+
+**But the same principle FAILS on the deploy side.** The actor now trains on
+100% real action histories (replay off), while the deployed solver tiles the
+current frame and zeroes the action history (`planning.history_len=1`). Giving
+the solver the real thing should close that gap. Evaluated on the existing
+`rp0` actors, no retraining (jobs 23740-23742,
+`planning.history_len=3 core.solver.use_action_history=true`):
+
+| seed | `rp0` as deployed | + real frame and action history |
+|---|---|---|
+| 0 | 73.3 | 71.3 |
+| 1 | 72.7 | 70.7 |
+| 2 | 68.0 | 67.3 |
+| median | **72.7** | **70.7** |
+
+**-2.0, negative on all three seeds**, turning E29's null into a mild loss now
+that the actor is trained exclusively on real histories. The tiled-frame,
+zero-action query is not merely tolerated, it is BETTER than the input the
+actor trained on.
+
+**Reading.** "Match the training distribution to deployment" is not a general
+principle here; it is specifically **"delete training samples whose outcomes
+the world model cannot be trusted to produce"**. Imagined start windows and
+far-away goals both force the model into long, uncorrected extrapolations,
+which is why deleting them pays. Feeding the model a real moving history does
+the opposite: it hands the model momentum to extrapolate from, at exactly the
+contact geometry where E16/E31/E32 showed its derivative is least reliable.
+The static tiled query is a conservative prior, and it wins. Deploy-side
+matching is therefore closed; the training-side deletions remain the live axis.
