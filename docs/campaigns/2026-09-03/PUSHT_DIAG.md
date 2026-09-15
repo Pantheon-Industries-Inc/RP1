@@ -2318,3 +2318,49 @@ the opposite: it hands the model momentum to extrapolate from, at exactly the
 contact geometry where E16/E31/E32 showed its derivative is least reliable.
 The static tiled query is a conservative prior, and it wins. Deploy-side
 matching is therefore closed; the training-side deletions remain the live axis.
+
+### E36 continued -- the teacher budget is the second big mixture win (2026-09-15)
+
+`rp0tch6k` = replay-off + `value.steps=6000`, five seeds in:
+
+| seed | baseline | `rp0` | **`rp0tch6k`** | teacher as CEM objective |
+|---|---|---|---|---|
+| 0 | 72.7 | 73.3 | 74.0 | 84.7 |
+| 1 | 70.7 | 72.7 | 73.3 | 75.3 |
+| 2 | 67.3 | 68.0 | **78.0** | 78.7 |
+| 3 | 66.0 | 70.0 | 74.0 | 75.3 |
+| 4 | 68.0 | 72.0 | 76.0 | 77.3 |
+| **median (5 seeds)** | 68.0 | 72.0 | **74.0** | 77.3 |
+
+Five of five seeds above both the baseline and `rp0`; paired **88 fixes / 42
+breaks, p = 0.00**. Seed 2's 78.0 and seed 0's draw-43 cell of 86 are records
+for the recipe. Seed 5 is running. So the two independent mixture wins on top
+of replay-off are now `md6` (+4.7 at n=6) and `tch6k` (+5.0 at n=5), and the
+triple is launched.
+
+### `p_cross=0` is positive but weaker than the band change
+
+`rp0pc0` (all actor goals same-episode, `max_delta` left at 20): 73.3 / 78.7 /
+68.0 = **73.3** median at three seeds vs 70.7 matched baseline, 38 fixes / 24
+breaks, p = 0.10. Seed 1's 78.7 is a record cell. Positive but not significant
+at n=3, and below `rp0md6`'s 74.7 on the same three seeds -- so narrowing the
+distance BAND matters more than removing cross-episode goals, and `md6`
+already sets `p_cross=0.1`.
+
+### The action-history mismatch is still not a lever (eval-only, free)
+
+`planning.history_len=3 core.solver.use_action_history=true` on the existing
+`rp0` actors: 71.3 / 70.7 / 67.3 against `rp0`'s 73.3 / 72.7 / 68.0, i.e.
+about -1.5 and negative on all three seeds. E29's null survives the
+replay-off regime, so the premise that replay was masking the mismatch was
+wrong.
+
+**Read the regime log carefully here.** The line reports
+`action history zeros`, which looks like the override failed. It did not:
+`rlp.core.policy` cannot publish `action_hist` at an episode's FIRST decision
+because `_primitive_history` is empty and the loop does `if not values:
+continue` (policy.py), and that first decision is exactly when
+`_history_announced` fires. PushT has two decisions per episode, so the second
+one did receive the real action history. The measurement is therefore a
+partial test of action history plus a full test of real frame history, and it
+is negative either way.
