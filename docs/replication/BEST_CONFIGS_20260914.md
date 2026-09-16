@@ -20,10 +20,10 @@ restarts, no behaviour cloning.
 | Cube | PLDM | 87.3 | 85.3 | 3 | latent+CEM 62.7 (h25) |
 | Reacher (w2) | LeWM | 100.0 (τ 0.1) | 96.3 (τ 0.05) | 6 | latent+CEM 88.0 (τ 0.05) |
 | Reacher (w2) | PLDM | 99.3 | 90.7 | 3 | latent+CEM 88.0 (τ 0.05) |
-| **PushT** | LeWM | **73.7** (h25) | — | **6** | **latent+CEM 79.3** |
+| **PushT** | LeWM | **77.7** (h25) | — | **6** | **latent+CEM 79.3** |
 
-PushT is the only environment where RLP trails the sampler, and the only one
-with a single horizon column and a single world-model base.
+PushT is the only environment where RLP trails the sampler, now by 1.6 points,
+and the only one with a single horizon column and a single world-model base.
 
 ## 2. The one thing to know before running anything
 
@@ -56,21 +56,31 @@ pixi run train model=rlp \
   planner.actor_lr=3e-4 planner.actor_lr_final=3e-05 \
   planner.iterations=8 \
   planner.replay_prob=0 planner.max_delta=6 planner.p_cross=0.1 \
-  planner.freeze_critic_frac=0 planner.ac_weight=0.5 planner.ckpt_every=2000
+  planner.freeze_critic_frac=0 planner.ac_weight=0.5 planner.ckpt_every=2000 \
+  value.steps=6000
 ```
 
-**Updated 2026-09-14 (E36).** Three changes from the version first published
-today. `planner.max_delta=6 planner.p_cross=0.1` joins `replay_prob=0`: the
-pair is **73.7 at n=6**, paired 90 fixes / 47 breaks, p = 0.00, against 72.3
-for replay-off alone. `planner.expand_weight` and `planner.near_frac` were
-removed because they are **inert** here (see §7a). Consider also
-`value.steps=6000`, which is +1.3 at three seeds and is being confirmed.
+**Updated 2026-09-15 (E38) — this is the final recipe.** Three data-mixture
+edits, each measured at six seeds and each stacking:
+
+| recipe | n=6 median | paired |
+|---|---|---|
+| W1NEAR_FRZ as shipped | 69.0 | |
+| `+ replay_prob=0` | 72.3 | p = 0.03 |
+| `+ max_delta=6 p_cross=0.1` | 73.7 | p = 0.00 |
+| `+ value.steps=6000` (all three) | **77.7** | **p = 0.00**, 121 fixes / 47 breaks |
+
+Six of six seeds improved, by 5.3 to 10.7. **Gap to latent-CEM: 10.3 → 1.6.**
+Seed spread also fell from 6.7 to 2.7, so n=3 arms are now far more
+informative than they used to be. `planner.expand_weight` and
+`planner.near_frac` were removed from this command because they are **inert**
+here (see §7a).
 
 Equivalently, via the launcher:
 
 ```bash
-REPLAY=0 MAX_DELTA_OVERRIDE=6 EXTRA_OVR="planner.p_cross=0.1" TAGSUF=-rp0md6 \
-  scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ 0 1 2 3 4 5
+REPLAY=0 MAX_DELTA_OVERRIDE=6 EXTRA_OVR="planner.p_cross=0.1 value.steps=6000" \
+  TAGSUF=-rp0md6tch6k scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ 0 1 2 3 4 5
 ```
 
 **`planner.replay_prob=0` was the first 2026-09-14 result**: 69.0 → **72.3** on the
