@@ -2424,3 +2424,61 @@ sits around 4,000 of 6,000 steps. This is evidence AGAINST the longer-actor
 arm (`tri12k`, already launched, now expected null-to-negative) and FOR either
 a shorter budget or a finer snapshot grid (`ckpt_every=1000` gives six
 candidates instead of three, at zero extra training cost).
+
+## E38 -- HEADLINE: the three mixture edits together give 77.7 at n=6, 1.6 from latent-CEM (2026-09-15)
+
+`rp0md6tch6k` = W1NEAR_FRZ + `planner.replay_prob=0` + `planner.max_delta=6
+planner.p_cross=0.1` + `value.steps=6000`. Six training seeds, eval draws
+42/43/44 x 50 episodes, one K=8 pass, no restarts, no BC.
+
+| seed | baseline | **triple** | delta | per-draw 42/43/44 |
+|---|---|---|---|---|
+| 0 | 72.7 | **78.7** | +6.0 | 78 / **92** / 66 |
+| 1 | 70.7 | 76.0 | +5.3 | 78 / 86 / 64 |
+| 2 | 67.3 | 78.0 | +10.7 | 78 / 86 / 70 |
+| 3 | 66.0 | 76.0 | +10.0 | 72 / 88 / 68 |
+| 4 | 68.0 | 77.3 | +9.3 | 78 / 84 / 70 |
+| 5 | 70.0 | 78.0 | +8.0 | 82 / 82 / 70 |
+| **median** | **69.0** | **77.7** | **+8.7** | |
+
+Paired per-task: **121 fixes / 47 breaks, sign test p = 0.00**. Six of six
+seeds up, by 5.3 to 10.7 points. **Gap to latent-CEM (79.3): -10.3 -> -1.6.**
+The teacher as a CEM objective sits at 78.0, so the refiner is now within 0.3
+of the sampler that uses the same critic, at ~1000x less planning compute.
+
+### Where the points came from: draw 44, the draw that held the whole gap
+
+| draw | baseline median | triple median | delta |
+|---|---|---|---|
+| 42 | 70 | 78 | +8 |
+| 43 | 81 | 86 | +5 |
+| 44 | **56** | **69** | **+13** |
+
+E26 established that "the entire mean deficit is draw 44" and every arm since
+tried and failed to move it. The mixture edits moved it by 13 points -- more
+than either other draw -- which is the strongest confirmation that the deficit
+was a training-distribution artefact and not a property of those tasks.
+
+### The seed lottery collapsed
+
+| | baseline | triple |
+|---|---|---|
+| per-seed means | 72.7 / 70.7 / 67.3 / 66.0 / 68.0 / 70.0 | 78.7 / 76.0 / 78.0 / 76.0 / 77.3 / 78.0 |
+| spread (max-min) | **6.7** | **2.7** |
+
+A 60% reduction in seed spread, and the mechanism is the same one: the actor
+now trains only on the regime it is deployed in, so which seed you drew matters
+much less. The campaign's long-standing "seed lottery" -- 55 seed-dependent
+tasks, an estimated 84.7 ceiling if it were eliminated -- was substantially an
+artefact of training on samples deployment never produces. This also makes n=3
+arms far more informative going forward than they were at spread 6.7.
+
+### What this settles
+
+The single mechanism behind all three edits -- **delete training samples the
+deployed planner never produces** -- is worth 8.7 points on PushT, more than
+every critic, objective, optimiser, input, pessimism and grounding arm of the
+campaign combined (all null). Note E37's caveat that `max_delta` is also an
+episode filter, so part of the goal-band term is a ~2x pool expansion rather
+than pure distribution matching; the two cannot be separated with the current
+code, where the filter and the band are the same knob.
