@@ -2482,3 +2482,56 @@ campaign combined (all null). Note E37's caveat that `max_delta` is also an
 episode filter, so part of the goal-band term is a ~2x pool expansion rather
 than pure distribution matching; the two cannot be separated with the current
 code, where the filter and the band are the same knob.
+
+## E39 -- the fine-grained wave: the teacher band is dead, early stopping is the live one (2026-09-16)
+
+All arms on top of the triple (`rp0md6tch6k`), seeds 0-2, compared against the
+triple's own value on those SAME three seeds (78.7 / 76.0 / 78.0, median 78.0).
+Seed spread is now 2.7, so n=3 is informative in a way it was not before E38.
+
+| arm | s0 | s1 | s2 | median | vs triple | paired (sign p) |
+|---|---|---|---|---|---|---|
+| triple (reference) | 78.7 | 76.0 | 78.0 | 78.0 | -- | -- |
+| **`es1k`** `ckpt_every=1000` | 78.7 | 78.7 | **81.3** | **78.7** | **+0.7** | 60/18 (**0.00**) |
+| **`amax30`** clip 2.5 -> 3.0 | **80.7** | 74.7 | 78.7 | **78.7** | **+0.7** | 58/23 (**0.00**) |
+| `amax28` clip 2.5 -> 2.8 | 72.7 | 74.0 | 73.3 | 73.3 | -4.7 | 45/31 (0.14) |
+| `trinf0` `value.near_frac=0` | 74.7 | 74.7 | 80.0 | 74.7 | -3.3 | 57/29 (0.00) |
+| `vmd50` teacher band 50 | 75.3 | 74.7 | 76.7 | 75.3 | -2.7 | 52/28 (0.01) |
+| `vmd30` teacher band 30 | 67.3 | 71.3 | 71.3 | 71.3 | -6.7 | 43/44 (1.00) |
+| `vmd15` teacher band 15 | 70.7 | 70.7 | 71.3 | 70.7 | -7.3 | 49/46 (0.84) |
+
+### The teacher's goal band is closed NEGATIVE, and the mechanism is clear
+
+All three rungs lose, monotonically in the right direction (50 > 30 > 15), and
+the teacher's OWN sampling score falls with them. The actor's winning edit does
+NOT transfer one level down, and the reason is that the two learners are
+queried differently: the actor only ever plans 5 blocks, so matching its goal
+band to deployment is pure gain, whereas the teacher is a GLOBAL distance
+function evaluated all along imagined trajectories, so capping its training
+goals destroys the long-range calibration. Draw 44, the transport-heavy draw,
+collapses hardest (70 -> 50/56/60 at vmd30). "Delete training samples the
+deployed planner never produces" is therefore an ACTOR-side principle, not a
+general one -- the sharpest limit found on the mechanism that drove E34-E38.
+
+`trinf0` closes the same way: near-goal oversampling on the teacher is
+load-bearing (-3.3), consistent with it being the compensation that keeps the
+teacher sharp near the goal.
+
+### Two winners, both +0.7, and they are mechanically independent
+
+`es1k` is the cleaner: every seed at or above the triple, the tightest spread
+of any arm this campaign (2.6), and **it costs no extra training at all** --
+six snapshot candidates instead of three, evaluation-only. It follows directly
+from E37's readout that ES picks step 4000 in 10 of 17 runs, i.e. the actor's
+optimum sits between the old 2000-step grid points. Seed 2 reaches **81.3**,
+the highest single-seed value of the campaign.
+
+`amax30` is noisier (spread 6.0) but its best seed hits **80.7**. Note the
+non-monotonicity: 2.5 -> 78.0, 2.8 -> 73.3, 3.0 -> 78.7. The 2.8 dip is a tight
+cluster (72.7/74.0/73.3, spread 1.3) so it is not obviously noise, and the old
+AUG claim of a "cliff at 3.0" does not reproduce on this recipe. Treat the amax
+curve as unresolved rather than as a clean win.
+
+Launched on this read: `es1k` at seeds 3-5 for the six-seed median, and
+`es1kamax30` to test whether the two stack (they are independent -- one changes
+the actor's reach, the other only which iterate ships).
