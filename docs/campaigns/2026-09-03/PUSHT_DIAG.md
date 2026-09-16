@@ -2535,3 +2535,46 @@ curve as unresolved rather than as a clean win.
 Launched on this read: `es1k` at seeds 3-5 for the six-seed median, and
 `es1kamax30` to test whether the two stack (they are independent -- one changes
 the actor's reach, the other only which iterate ships).
+
+## E40 -- finer early stopping confirmed at six seeds: 78.7, gap to CEM 0.6 (2026-09-16)
+
+`es1k` = the triple + `planner.ckpt_every=1000` (six snapshot candidates for the
+existing early-stopping pass instead of three). **No training change at all** --
+the actor, teacher, data and objective are identical to the triple; only the
+choice of which iterate ships differs.
+
+| seed | baseline | triple | **es1k** | per-draw 42/43/44 |
+|---|---|---|---|---|
+| 0 | 72.7 | 78.7 | 78.7 | 78 / 92 / 66 |
+| 1 | 70.7 | 76.0 | 78.7 | 78 / 88 / 70 |
+| 2 | 67.3 | 78.0 | **81.3** | 84 / 88 / 72 |
+| 3 | 66.0 | 76.0 | 74.7 | 68 / 88 / 68 |
+| 4 | 68.0 | 77.3 | 77.3 | 78 / 84 / 70 |
+| 5 | 70.0 | 78.0 | 78.7 | 82 / 84 / 70 |
+| **median** | **69.0** | 77.7 | **78.7** | |
+
+Paired vs baseline: **123 fixes / 41 breaks, p = 0.00**. **Gap to latent-CEM
+(79.3): -0.6.** The deployed teacher scores 78.3 as a CEM objective on these
+runs, so the refiner now EXCEEDS the sampler that uses its own critic, at ~1000x
+less planning compute, and trails the latent-cost sampler by six tenths of a
+point.
+
+Full ladder, all at n=6 on the same protocol:
+69.0 -> 72.3 (replay off) -> 73.7 (+ goal band) -> 77.7 (+ teacher 6k)
+-> **78.7** (+ finer ES).
+
+### `amax 3.0` does NOT hold at six seeds -- a clean n=3 cautionary tale
+
+77.0 at n=6 versus the triple's 77.7, i.e. **-0.7**, after reading **+0.7** at
+n=3. The first three seeds were simply the favourable ones. Combined with the
+2.8 dip (-4.7) the amax axis is now closed: 2.5 remains the value, and the
+E19 "still rising at the right edge" reading was wrong. This is the second time
+this week a three-seed lead evaporated at six (cf. `md6pc01`), and it is worth
+remembering even though the collapsed seed spread made n=3 look trustworthy.
+
+### Open: the combination
+
+`es1kamax30` reads **79.3 at three seeds** (62 fixes / 20 breaks, p = 0.00),
+which would be above latent-CEM -- but `amax30` alone is -0.7 at six seeds and
+its three-seed value was +0.7, exactly this pattern. Seeds 3-5 launched. Treat
+79.3 as unconfirmed and expect regression toward `es1k`'s 78.7.
