@@ -2578,3 +2578,39 @@ remembering even though the collapsed seed spread made n=3 look trustworthy.
 which would be above latent-CEM -- but `amax30` alone is -0.7 at six seeds and
 its three-seed value was +0.7, exactly this pattern. Seeds 3-5 launched. Treat
 79.3 as unconfirmed and expect regression toward `es1k`'s 78.7.
+
+## E41 (2026-09-17): selection SCORING is saturated, selection CANDIDATES may not be; `amax 3.0` and the phase cache both close negative
+
+All arms sit on `es1k` = W1NEAR_FRZ + `replay_prob=0` + `max_delta=6 p_cross=0.1`
++ `value.steps=6000` + `planner.ckpt_every=1000`, the 78.7 recipe. The whole
+remaining 0.6 to latent-CEM is draw 44 (`es1k` 70 vs CEM 76; draw 42 ties,
+draw 43 is +4), so an arm has to move draw 44 or it cannot matter.
+
+| arm | change vs `es1k` | seeds | median | vs `es1k` (same seeds) |
+|---|---|---|---|---|
+| `es4v` | selection scored on draws 48-51 instead of 50-51 | 0-2 | 78.7 | **0.0, bit-identical** |
+| `es1kp5` | `actor_phases=5` (5x block-aligned start states) | 0-2 | 76.0 | **-2.7** |
+| `es1kamax30` | `amax` 2.5 -> 3.0 | 0-5 | 77.0 | **-1.7** |
+
+**`es4v` is not a small null, it is an exact one.** All nine `rlp` per-draw
+cells (3 seeds x 3 draws) are identical to `es1k`'s: 78/92/66, 78/88/70,
+84/88/72. Doubling the selection set changed which checkpoint ships on zero of
+three seeds. The +1.0 that `ckpt_every` 2000 -> 1000 bought was therefore NOT a
+noise reduction -- the two-draw ranking is already stable at this margin -- it
+was candidate density: the snapshot grid simply did not contain the better
+actor before. That makes `es500` (12 candidates) the only member of this family
+that can still move, and it is worth noting its seed-0 selection picked
+`step4500`, a grid point `es1k` cannot offer.
+
+**`es1kp5` re-closes E28 in the negative.** The phase-multiplexed actor cache
+was a null when measured with replay ON and `max_delta=20`; the hope was that
+under a 100%-real, ~2x-larger episode pool the 5x denser block-aligned start
+states would finally pay. They cost 2.7 points instead. Five residue classes of
+the same stride are five views of the same episodes, and the actor's bottleneck
+is evidently which episodes it sees, not how finely it samples within one --
+which is the same conclusion E37 drew about `md6`, from the opposite direction.
+
+**`amax 3.0` is now closed at n=6** (77.0 vs 78.7), after reading +0.7 at n=3.
+Second three-seed lead to evaporate this week; `md6pc01` was the first. Nothing
+goes in the config sheet at n=3 any more.
+
