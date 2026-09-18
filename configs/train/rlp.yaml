@@ -45,6 +45,12 @@ value:
   near_frac: null       # near-goal hindsight oversampling fraction
   near_max: null
   max_episodes: null    # data-volume ablation: cap the critic's episodes without re-encoding
+  eikonal_weight: null  # >0: penalise (||grad_z V|| * mean per-step latent
+                        # displacement - 1)^2, i.e. constrain the critic's INPUT
+                        # GRADIENT to the magnitude a true temporal distance has.
+                        # The refiner descends exactly this gradient through the
+                        # frozen world model; E34/E24 measured that further critic
+                        # optimisation degrades it while leaving the ranking intact.
 
 # Stage 5 -- RLP plan refiner (train/lip_ac, actor-critic tandem).
 # Keys are forwarded verbatim onto configs/train/lip_ac.yaml.

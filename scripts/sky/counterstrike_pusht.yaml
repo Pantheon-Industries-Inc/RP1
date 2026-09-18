@@ -247,7 +247,14 @@ run: |
   }
   if [ "${CKPT_SELECT:-0}" = 1 ] && ls "$D"/train_checkpoints/planner_step*.pt >/dev/null 2>&1; then
     BEST=""; BESTV="-1"; SCORES=/tmp/ckpt_scores.txt; : > $SCORES
+    SEEN=/tmp/ckpt_seen.txt; : > $SEEN
     for CKP in "$D"/train_checkpoints/planner_step*.pt "$D/train_checkpoints/planner.pt"; do
+      # An imported ACTOR_TAG carries planner.pt = the snapshot a previous
+      # selection already deployed, so the same weights appear twice. Score
+      # each distinct actor once, or the average would double-weight it.
+      SUM=$(md5sum "$CKP" | cut -d' ' -f1)
+      if grep -qx "$SUM" $SEEN; then echo "[ckpt-select] $(basename $CKP) duplicate, skipped"; continue; fi
+      echo "$SUM" >> $SEEN
       MEAN=$(score_ckpt "$CKP" || true)
       [ -n "$MEAN" ] || { echo "[ckpt-select] $(basename $CKP) val=none"; continue; }
       echo "[ckpt-select] $(basename $CKP) val=$MEAN"

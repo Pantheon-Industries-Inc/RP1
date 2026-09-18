@@ -126,6 +126,11 @@ def _run(cfg: DictConfig) -> None:
         value_depth = value_overrides.pop("depth", None)
         if value_depth is not None:
             value_overrides["core.value.depth"] = value_depth
+        # same for the eikonal gradient penalty: a value-architecture/objective
+        # knob that train/metric reads off the composed value group.
+        eikonal = value_overrides.pop("eikonal_weight", None)
+        if eikonal is not None:
+            value_overrides["core.value.eikonal_weight"] = eikonal
         learner = str(value_overrides.pop("learner", "td"))
         run_stage(
             "value",

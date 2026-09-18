@@ -65,3 +65,63 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
     assert len(sub.z) == 10  # every 2nd frame of two 10-step episodes
     runs = sorted((tmp_path / "logs").rglob("checkpoints/value_td"))
     assert runs, "value stage saved no checkpoint"
+
+
+def test_value_architecture_knobs_route_onto_the_value_group(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`value.depth` / `value.eikonal_weight` configure the value GROUP, not the trainer.
+
+    train/metric merges `cfg.core.value` onto its flat config, so a bare
+    `eikonal_weight=` override would be dropped on the floor and the gradient
+    penalty would silently stay off.
+    """
+    seen: dict[str, dict[str, object]] = {}
+
+    def capture(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
+        seen[name] = values
+        return None
+
+    monkeypatch.setattr(rlp_pipeline, "_stage", capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rlp",
+            "wm=unused",
+            "dataset=unused",
+            f"cache_directory={tmp_path}/caches",
+            "skip=[cache,subsample,actions,planner]",
+            "value.eikonal_weight=0.5",
+            "value.depth=1",
+        ],
+    )
+    run_hydra(lambda cfg: rlp_pipeline._run(cfg), config_name="train/rlp")
+    value = seen["value"]
+    assert value["core.value.eikonal_weight"] == 0.5
+    assert value["core.value.depth"] == 1
+    assert "eikonal_weight" not in value
+    assert "depth" not in value
+
+
+def test_eikonal_weight_is_absent_when_unset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen: dict[str, dict[str, object]] = {}
+
+    def capture(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
+        seen[name] = values
+        return None
+
+    monkeypatch.setattr(rlp_pipeline, "_stage", capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "rlp",
+            "wm=unused",
+            "dataset=unused",
+            f"cache_directory={tmp_path}/caches",
+            "skip=[cache,subsample,actions,planner]",
+        ],
+    )
+    run_hydra(lambda cfg: rlp_pipeline._run(cfg), config_name="train/rlp")
+    assert "core.value.eikonal_weight" not in seen["value"]
