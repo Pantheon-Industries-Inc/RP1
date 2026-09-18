@@ -2654,3 +2654,66 @@ Ops: `es1kmd5` s0 died in setup on a pixi release download (HTTP 500), not on
 the arm; relaunched. The `sky jobs queue` column layout gained a WORKSPACE
 column between TASK and NAME, which silently emptied the ledger's positional
 regex -- it now matches the job name position-free but whitespace-delimited.
+
+## E43 (2026-09-18): the measurement noise floor, and two closed negatives (snapshot soup, eikonal gradient penalty)
+
+### The report eval is NOT bit-deterministic; the floor is about +/-1 point
+
+The soup arms import a finished `es1k` run's checkpoints, and when the soup is
+REJECTED they deploy the byte-identical actor. Those runs are therefore free
+same-actor replicates:
+
+| seed | arm | rlp delta | cem_value delta |
+|---|---|---|---|
+| 0 | `es1kavg3` | +0.7 | 0.0 (identical) |
+| 2 | `es1kavg3` | 0.0 (identical) | -0.7 |
+| 5 | `es1kavg6` | -1.3 | 0.0 (identical) |
+
+Every discrepancy is one to three episodes out of 150, it appears in the CEM
+control as well as the refiner, and seeds with an identical number of preceding
+evals differ (s0) or reproduce bit-exactly (s2). So this is NOT the RNG-state
+shift hypothesised from the s5 case alone: it is occasional per-episode
+nondeterminism, consistent with episodes sitting on the success threshold
+(< 20 px AND < 20 deg) flipping. **Practical floor: ~1 point run-to-run on a
+three-draw report for a FIXED actor**, i.e. ~0.4 on a six-seed median.
+Consequences: sub-point n=3 results are unmeasurable (this covers `es1kps9k`'s
++0.6), and the `ckpt_every` +1.0 at n=6 is real but ~2.5 sigma, not solid.
+E41's claim that `es4v` was "bit-identical" stands as observed but is now known
+to be luck rather than a guarantee.
+
+### Snapshot weight averaging: closed negative
+
+| k | seeds | outcome |
+|---|---|---|
+| 3 | 0, 2 | soup REJECTED on both (does not beat the best single on the selection draws) |
+| 6 | 1 | soup deployed (sel 83.0 vs 82.0) -> report **-4.0** |
+| 6 | 5 | soup rejected |
+
+Where the average is good enough to ship, it ships on a +1.0 selection-draw
+edge measured on 100 episodes and then loses 4.0 on the report -- selection
+overfitting, the exact failure the deploy rule was supposed to bound and does
+not. Where it is not good enough, the arm is just `es1k` again. Averaging does
+not beat picking, at either dose.
+
+### Eikonal gradient penalty: closed negative, and the assumption is wrong
+
+`value.eikonal_weight` penalises `(||grad_z V|| * step_norm - 1)^2`, verified
+active in-job (`Eikonal mean per-step latent displacement=1.2784`).
+
+| weight | seeds | rlp median vs `es1k` | teacher as a CEM ranking objective |
+|---|---|---|---|
+| 0.1 | 0, 2 | **-4.0** (12/24, p=0.07) | 77.3 / 76.7 vs `es1k` 83.3 / 79.3 |
+| 1.0 | 0-2 | **-2.7** (18/41, p=0.00) | 76.7 median vs `es1k` 79.3 |
+
+Both doses are negative, the weaker dose is not better, and both are far
+outside the +/-1 floor. The decisive detail is the last column: **the teacher's
+RANKING quality drops too.** The hypothesis was that the critic trades ranking
+for gradient quality and that constraining the gradient would recover the
+latter; instead the constraint costs both. The reason is visible in the
+calibration itself -- `step_norm` is ONE scalar for the whole dataset, so the
+penalty asserts a globally uniform per-step latent displacement. In PushT the
+latent moves very differently during free agent transit than during contact,
+which is the whole mechanism this campaign is about, so a single-scale eikonal
+constraint is misspecified and fights the real geometry. A gradient
+regulariser would have to be contact-aware to be worth retrying, and nothing
+available decodes contact reliably enough (E32).
