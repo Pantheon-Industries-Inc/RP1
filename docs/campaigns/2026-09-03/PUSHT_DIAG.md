@@ -2614,3 +2614,43 @@ which is the same conclusion E37 drew about `md6`, from the opposite direction.
 Second three-seed lead to evaporate this week; `md6pc01` was the first. Nothing
 goes in the config sheet at n=3 any more.
 
+
+## E42 (2026-09-17): selection is saturated in BOTH directions; the mixture axis is exhausted; one arm touches 79.3 at n=3
+
+All arms on `es1k` (78.7 at n=6). Seed-matched against `es1k`'s own seeds.
+
+| arm | change | seeds | median | vs `es1k` (same seeds) |
+|---|---|---|---|---|
+| `es500` | `ckpt_every=500` (12 candidates) | 0-2 | 78.0 | **-0.7** |
+| `es1kpc0` | `p_cross=0` (no cross-episode actor goals) | 0-2 | 76.7 | **-2.0** |
+| `es1kmd5` | goal band 1..5 instead of 1..6 | 1-2 | 77.7 | **-2.3** (s0 relaunched) |
+| `es1kps9k` | `planner.steps=9000`, `ckpt_every=1500` | 0-2 | **79.3** | **+0.6** |
+
+**Selection is saturated from both sides.** E41 showed more selection DRAWS
+changes nothing (bit-identical). `es500` now shows more selection CANDIDATES
+is -0.7. So the `ckpt_every` 2000 -> 1000 gain of +1.0 does not extend: the
+pass is near its optimum at ~6 candidates, and past that the extra candidates
+overfit a 2-draw, 50-episode selection set. This is the argument FOR weight
+averaging over the snapshots rather than picking harder among them, which is
+the arm now running.
+
+**The mixture axis is exhausted.** `pc0` and `md5` are the two remaining
+"delete samples the deployed planner never produces" moves and both are
+clearly negative. `md5` matters for the E37 caveat: `max_delta` doubles as an
+episode-length filter (`len > md+4`), so md5 admits MORE episodes than md6 and
+still loses, which separates the two mechanisms the code confounds -- the md6
+win was the goal BAND, not the extra data. Note `pc0` was +0.6 back when the
+band was 20; under the narrow band it is -2.0, so the two interact and the
+actor does need some cross-episode goals.
+
+**`es1kps9k` is the first arm to reach 79.3, and it is not yet believable.**
+Per-seed 75.3 / 79.3 / 80.7 -- a 5.4-point spread, and its prior was weak
+(E34 recorded actor length 6k best, 12k/18k worse; 9k was untested but the
+trend pointed down). Two three-seed leads have already evaporated at six seeds
+this week (`md6pc01`, `amax30`). Seeds 3-5 launched; nothing is claimed until
+they land.
+
+Ops: `es1kmd5` s0 died in setup on a pixi release download (HTTP 500), not on
+the arm; relaunched. The `sky jobs queue` column layout gained a WORKSPACE
+column between TASK and NAME, which silently emptied the ledger's positional
+regex -- it now matches the job name position-free but whitespace-delimited.
