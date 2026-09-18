@@ -80,7 +80,7 @@ for S in $SEEDS; do
     --env VALUE_GAMMA=0.98 --env VALUE_NSTEP="$VNSTEP" --env VALUE_EXPECTILE="$VEXP"
     --env MAX_DELTA="${MAX_DELTA_OVERRIDE:-20}" --env MEAN_WEIGHT=0.1 --env AMAX="${AMAX_OVERRIDE:-2.5}"
     --env REPLAY="${REPLAY:-}"
-    --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="${CKPT_VAL_SEEDS:-50 51}"
+    --env CKPT_SELECT=1 --env CKPT_VAL_SEEDS="${CKPT_VAL_SEEDS:-50 51}" --env CKPT_AVG="${CKPT_AVG:-0}"
     --env TRAIN_OVERRIDES="$BASE_OVR $EXTRA"
     --env NEAR_FRAC="$NEAR" --env NEAR_MAX="$NMAX" --env PHASES="${PHASES:-1}"
     --env EVAL_SEEDS="42 43 44" --env EVAL_CONDS="${CONDS:-rlp cem_value cem_tdvalue}" --env SMOKE=0

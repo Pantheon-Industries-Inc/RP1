@@ -62,6 +62,8 @@ envs:
   MAX_DELTA: ""         # planner.max_delta override (unified band: 20)
   CKPT_SELECT: "0"      # 1 = within-run early stopping over planner snapshots
   CKPT_VAL_SEEDS: "50 51"  # selection draws (report draws 42-44 untouched)
+  CKPT_AVG: "0"         # k>0: deploy the weight average of the k best-scoring
+                        # snapshots when it matches/beats the best single one
   TRAIN_OVERRIDES: ""   # extra hydra overrides for the model=rlp train call,
                         # e.g. "planner.ac_weight=0.2 core.planner.transformer_layers=3
                         # core.value.depth=3" (deepcap + anti-constancy)
@@ -232,22 +234,46 @@ run: |
   # ---- within-run early stopping: score each planner snapshot on the
   # SELECTION draws (50/51), deploy the argmax as planner.pt. Snapshots come
   # from planner.ckpt_every (core lip_ac); report draws stay untouched.
+  score_ckpt () {  # score_ckpt <checkpoint> -> mean success over CKPT_VAL_SEEDS, or empty
+    local CKP=$1 TOT=0 CNT=0 V
+    for VS in ${CKPT_VAL_SEEDS:-50 51}; do
+      pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+        runtime.seed=$VS evaluation.num_episodes=$EVAL_N \
+        core/solver=lip core.solver.actor_path="$CKP" > /tmp/ckv.log 2>&1 || true
+      V=$(grep -oE "'success_rate': [0-9.]+" /tmp/ckv.log | tail -1 | grep -oE "[0-9.]+")
+      [ -n "$V" ] && { TOT=$(awk -v a=$TOT -v b=$V 'BEGIN{print a+b}'); CNT=$((CNT+1)); }
+    done
+    [ "$CNT" -gt 0 ] && awk -v t=$TOT -v c=$CNT 'BEGIN{printf "%.2f", t/c}'
+  }
   if [ "${CKPT_SELECT:-0}" = 1 ] && ls "$D"/train_checkpoints/planner_step*.pt >/dev/null 2>&1; then
-    BEST=""; BESTV="-1"
+    BEST=""; BESTV="-1"; SCORES=/tmp/ckpt_scores.txt; : > $SCORES
     for CKP in "$D"/train_checkpoints/planner_step*.pt "$D/train_checkpoints/planner.pt"; do
-      TOT=0; CNT=0
-      for VS in ${CKPT_VAL_SEEDS:-50 51}; do
-        pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
-          runtime.seed=$VS evaluation.num_episodes=$EVAL_N \
-          core/solver=lip core.solver.actor_path="$CKP" > /tmp/ckv.log 2>&1 || true
-        V=$(grep -oE "'success_rate': [0-9.]+" /tmp/ckv.log | tail -1 | grep -oE "[0-9.]+")
-        [ -n "$V" ] && { TOT=$(awk -v a=$TOT -v b=$V 'BEGIN{print a+b}'); CNT=$((CNT+1)); }
-      done
-      [ "$CNT" -gt 0 ] || { echo "[ckpt-select] $(basename $CKP) val=none"; continue; }
-      MEAN=$(awk -v t=$TOT -v c=$CNT 'BEGIN{printf "%.2f", t/c}')
+      MEAN=$(score_ckpt "$CKP" || true)
+      [ -n "$MEAN" ] || { echo "[ckpt-select] $(basename $CKP) val=none"; continue; }
       echo "[ckpt-select] $(basename $CKP) val=$MEAN"
+      echo "$MEAN $CKP" >> $SCORES
       if awk -v m=$MEAN -v b=$BESTV 'BEGIN{exit !(m>b)}'; then BESTV=$MEAN; BEST=$CKP; fi
     done
+    # ---- CKPT_AVG=k: average the k best-scoring snapshots into ONE actor and
+    # deploy it when it is at least as good on the SELECTION draws. Still one
+    # actor and one K-pass; report draws stay untouched.
+    if [ "${CKPT_AVG:-0}" -gt 0 ] && [ -s "$SCORES" ]; then
+      TOPK=$(sort -k1,1gr "$SCORES" | head -n "${CKPT_AVG}" | awk '{print $2}')
+      NK=$(printf '%s\n' "$TOPK" | grep -c . || true)
+      if [ "$NK" -ge 2 ]; then
+        SOUP="$D/train_checkpoints/planner_soup.pt"
+        pixi run python scripts/avg_snapshots.py "$SOUP" $TOPK
+        SOUPV=$(score_ckpt "$SOUP" || true)
+        echo "[ckpt-avg] soup of $NK val=${SOUPV:-none} (best single $BESTV)"
+        if [ -n "$SOUPV" ] && awk -v s=$SOUPV -v b=$BESTV 'BEGIN{exit !(s>=b)}'; then
+          BEST="$SOUP"; BESTV="$SOUPV"; echo "[ckpt-avg] soup deployed"
+        else
+          echo "[ckpt-avg] soup rejected, keeping best single"
+        fi
+      else
+        echo "[ckpt-avg] only $NK scored snapshot(s), skipping"
+      fi
+    fi
     if [ -n "$BEST" ] && [ "$BEST" != "$D/train_checkpoints/planner.pt" ]; then
       echo "[ckpt-select] winner $(basename $BEST) (val $BESTV) -> deployed"
       cp "$BEST" "$D/train_checkpoints/planner.pt"
