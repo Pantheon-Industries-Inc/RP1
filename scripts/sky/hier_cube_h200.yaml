@@ -48,6 +48,10 @@ envs:
   HWM_STEPS: "6000"
   VALUE_STEPS: "6000"
   VALUE_TAU_FINAL: "0.2"   # 2026-09-19 sweep: 0.2 > 0.09 > 0.03 on corr(V,delta)
+  LL_SAMPLES: "300"        # low-level CEM samples, applied to EVERY arm incl. flat
+  LL_ITERS: "30"           # low-level CEM iterations; 10 is the 3x-cheaper setting
+  BF16: "false"            # true = the canonical cube protocol's ++bf16 (the old
+                           # campaign's h200 floor numbers were measured with it)
   HL_SAMPLES: "512"
   HL_LR: "0.1"             # Adam-sweep optimum (2026-08-16); >= 0.3 harmful
   HL_ADAM_STEPS: "30"
@@ -181,6 +185,8 @@ run: |
       $extra \
       core.solver.hl_samples=$HLS core.solver.hl_iters=$HLI \
       core.solver.hl_horizon=$HL_HORIZON \
+      core.solver.ll_samples=$LL_SAMPLES core.solver.ll_iters=$LL_ITERS \
+      runtime.bfloat16=$BF16 \
       2>&1 | tee "$D/log_${label}.txt" | grep -vi "solve completed" || \
       echo "[eval-failed] $label"
     local run=$(ls -dt logs/*/* | head -1)
@@ -197,7 +203,9 @@ run: |
           echo "===== HIER cem_h${OFF}_s${SD} ====="
           pixi run eval model=lewm runtime.seed=$SD evaluation.num_episodes=$NEP \
             evaluation.goal_offset_steps=$OFF evaluation.budget=$(( OFF * 2 )) \
-            core/solver=cem 2>&1 | tee "$D/log_cem_h${OFF}_s${SD}.txt" \
+            core/solver=cem core.solver.num_samples=$LL_SAMPLES \
+            core.solver.n_steps=$LL_ITERS runtime.bfloat16=$BF16 \
+            2>&1 | tee "$D/log_cem_h${OFF}_s${SD}.txt" \
             | grep -vi "solve completed" || echo "[eval-failed] cem_h${OFF}_s${SD}"
           grep -h "success_rate" "$D/log_cem_h${OFF}_s${SD}.txt" | tail -2 || true
         else

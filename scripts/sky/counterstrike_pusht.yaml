@@ -88,6 +88,7 @@ envs:
   DMPO_CKPT: ""         # trained DMPO actor for the dmpo_* conditions (none = skipped)
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
   RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
+  WM_DIR: ""            # pre-installed world model dir (overrides the LeWM base)
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
   POST_ONLY: "0"         # 1 = skip training/evals, only run POST_SCRIPT_B64 on an existing $D
   POST_ENV: ""           # extra "KEY=VALUE KEY2=VALUE2" exported for the POST script
@@ -143,6 +144,14 @@ run: |
 
   # World model: official release weights, converted once to this stack's
   # vit_hf (transformers-5 q_proj) key naming. Durable on /checkpoints.
+  # WM_DIR: use an already-installed world model instead of the official LeWM
+  # base (e.g. the in-house PushT WM on the volume). Takes precedence over the
+  # ACTOR_TAG copy and the HF download; the latent caches are WM-specific, so
+  # pair it with its OWN CACHE_TAG.
+  if [ -n "${WM_DIR:-}" ]; then
+    [ -f "$WM_DIR/weights.pt" ] || { echo "WM_DIR has no weights.pt: $WM_DIR" >&2; exit 1; }
+    WM="$WM_DIR"; echo "[wm] using $WM"
+  else
   WM=$D/lewm_pusht_official
   if [ ! -f "$WM/weights.pt" ] && [ -n "${ACTOR_TAG:-}" ]; then
     for ROOT in /checkpoints ${OUT_ROOT:-/checkpoints}; do
@@ -158,6 +167,7 @@ run: |
       --revision 22b330c28c27ead4bfd1888615af1340e3fe9052 --local-dir "$RAW"
     pixi run tool tool=convert_pldm src="$RAW/weights.pt" dst="$WM/weights.pt"
     cp "$RAW/config.json" "$WM/config.json"
+  fi
   fi
 
   # Sweep cells share the seed-0 run's caches: wait for the encode stages to
