@@ -2717,3 +2717,59 @@ which is the whole mechanism this campaign is about, so a single-scale eikonal
 constraint is misspecified and fights the real geometry. A gradient
 regulariser would have to be contact-aware to be worth retrying, and nothing
 available decodes contact reliably enough (E32).
+
+## E44 (2026-09-19): reproducibility settled, every remaining arm closed, and the 79.3 target re-examined
+
+### The eval is near-deterministic; the floor is 0-2 episodes in 150
+
+Two fresh replicates of the IDENTICAL actor (`es1k` s5 `planner.pt`, imported,
+`CKPT_SELECT=0` so NO evals precede the report pass):
+
+| run | rlp | cem_value | cem_tdvalue |
+|---|---|---|---|
+| `es1k` s5 (original, 12 selection evals first) | 82/84/70 = 78.7 | 80/76/80 = 78.7 | 80/76/78 = 78.0 |
+| repro a (0 preceding evals) | 82/84/70 = **78.7** | 78/76/80 = 78.0 | 80/76/80 = 78.7 |
+| repro b (0 preceding evals) | 82/82/70 = 78.0 | 78/76/80 = 78.0 | 80/76/80 = 78.7 |
+
+Per-episode: repro a vs repro b differ on 1/150 (`rlp`), 2/150 (`cem_value`),
+0/150 (`cem_tdvalue`). **repro a reproduces the original's `rlp` array exactly
+despite running zero selection evals before it, so the E43 "preceded-eval
+count / RNG state" hypothesis is dead.** What remains is low-rate per-episode
+nondeterminism (threshold-straddling episodes), worth **0-1.3 points** on a
+three-draw report. On a six-seed median that is ~0.4.
+
+### Every remaining arm is closed negative
+
+Paired against `es1k`, seed-matched:
+
+| arm | change | n | median delta | paired fixes/breaks (p) |
+|---|---|---|---|---|
+| `es1kps9k` | actor 9000 steps | 6 | **-1.0** | 37/45 (0.44) |
+| `es1kd1` | critic depth 1 | 3 | +0.7 | **22/30** (0.33) |
+| `es1kavg3` | soup of top 3 | 6 | -0.7 | 8/12 (0.50) |
+| `es1kavg6` | soup of top 6 | 6 | -1.3 | 5/12 (0.14) |
+| `es1kmd5` | goal band 1..5 | 3 | -2.7 | 15/28 (0.07) |
+| `es1keik01` | eikonal 0.1 | 3 | -1.3 | 18/30 (0.11) |
+
+**The median-of-three artefact bit twice and both times it looked like a win.**
+`es1kps9k` read +0.7 at n=3 and is **-1.0 at n=6** (per-seed -3.3 / +0.7 / -0.7
+/ +2.7 / +0.7 / -5.3) -- the THIRD three-seed lead to evaporate this week after
+`md6pc01` and `amax30`. `es1kd1` shows the same shape without needing more
+seeds: median +0.7 but per-seed -4.7 / +0.7 / -1.3 (mean -1.8) and 22 fixes
+against 30 breaks. A three-point median can sit high purely because the
+reference repeats its own low value; **report the paired per-seed deltas, not
+the median, at n=3.**
+
+### The 79.3 target is the maximum of the baseline's range, not its value
+
+`latent+CEM` is parameter-free (no training, no seeds, no checkpoint
+selection), so repeated evaluations measure only eval noise. Available
+measurements: **79.3** (counterstrike writeup, draws 78/84/76) and **78.7 /
+78.7 / 79.3** (E4's three `cem_latent` runs; the actor column is irrelevant to
+a sampler on latent L2). Pooled ~**79.0**; E9's class-pooled table gives 79.1.
+So the baseline carries the same +/-1 spread everything else does, and the
+campaign has been chasing its top value. Against ~79.0, `es1k`'s 78.7 at n=6
+is **~0.3 behind, inside the noise** -- NOT a demonstrated parity, and RLP
+still holds an asymmetric advantage (it selects its best of six snapshots on
+draws 50/51; the sampler gets no selection at all). Giving the baseline a
+real error bar is a few cheap eval jobs and should precede any parity claim.
