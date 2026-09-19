@@ -84,6 +84,8 @@ envs:
   PROBES: "0"            # 1 = per-replan probe dumps for every rlp-family eval
   GD_LRS: "0.03"         # gd_* conditions: space-separated learning rates for the plain step
   RECORD: "0"            # 1 = record real rollouts (pixels, action) per eval
+  L2O_CKPT: ""          # trained L2O actor for the l2o_* conditions (none = skipped)
+  DMPO_CKPT: ""         # trained DMPO actor for the dmpo_* conditions (none = skipped)
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
   RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
@@ -234,6 +236,41 @@ run: |
   # ---- within-run early stopping: score each planner snapshot on the
   # SELECTION draws (50/51), deploy the argmax as planner.pt. Snapshots come
   # from planner.ckpt_every (core lip_ac); report draws stay untouched.
+  # ---- TRAIN_BASELINE=l2o|dmpo: the learned inner-loop MPC baselines have never
+  # been trained on PushT. Both imitate/optimise through the FROZEN world model
+  # against a frozen objective, chosen by BASELINE_OBJ:
+  #   value  -> the deployed offline TD teacher (value_td)
+  #   latent -> a parameter-free single-frame latent-L2 metric, built here
+  # Paper defaults are kept for the baseline itself; only the objective changes.
+  if [ -n "${TRAIN_BASELINE:-}" ]; then
+    BOBJ=${BASELINE_OBJ:-value}
+    if [ "$BOBJ" = latent ]; then
+      IV="$D/train_checkpoints/value_l2"
+      if [ ! -d "$IV" ]; then
+        pixi run train model=metric learner=l2 cache="$CD/counterstrike_fs1.pt" \
+          window_frames=1 window_lag=5 output.checkpoint=value_l2 device=cpu
+        RUNL=$(ls -dt logs/*/* | head -1); mkdir -p "$D/train_checkpoints"
+        cp -r "$RUNL/checkpoints/value_l2" "$D/train_checkpoints/"
+      fi
+    else
+      IV="$D/train_checkpoints/value_td"
+    fi
+    [ -e "$IV" ] || { echo "[baseline] missing objective $IV" >&2; exit 1; }
+    BCKPT="$D/train_checkpoints/${TRAIN_BASELINE}_${BOBJ}.pt"
+    if [ ! -f "$BCKPT" ]; then
+      pixi run train model=$TRAIN_BASELINE wm="$WM" \
+        cache="$CD/counterstrike_fs5.pt" h5="$CD/counterstrike_actions.h5" \
+        init_value="$IV" seed=$SEED ${BASELINE_OVERRIDES:-}
+      RUNB=$(ls -dt logs/*/* | head -1)
+      cp "$RUNB/checkpoints/${TRAIN_BASELINE}.pt" "$BCKPT"
+      echo "[baseline] trained $TRAIN_BASELINE ($BOBJ) -> $BCKPT"
+    else
+      echo "[baseline] reusing $BCKPT"
+    fi
+    [ "$TRAIN_BASELINE" = l2o ] && export L2O_CKPT="$BCKPT"
+    [ "$TRAIN_BASELINE" = dmpo ] && export DMPO_CKPT="$BCKPT"
+  fi
+
   score_ckpt () {  # score_ckpt <checkpoint> -> mean success over CKPT_VAL_SEEDS, or empty
     local CKP=$1 TOT=0 CNT=0 V
     for VS in ${CKPT_VAL_SEEDS:-50 51}; do
@@ -384,6 +421,35 @@ run: |
           run_eval rlp_tdvalue $ES core/solver=lip core.solver.value_path="$D/train_checkpoints/value_td" \
             core.solver.actor_path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
+        # ---- solver matrix (2026-09-19, user request): the same energy, optimised by
+        # every solver in the campaign, at BOTH objectives. "_latent" = parameter-free
+        # latent L2 (no value override); "_value" = the deployed critic. Sampler budgets
+        # are the published defaults (CEM/MPPI 300x30 = 9,000 rollouts; Adam 100x30),
+        # against RLP's single K=8 pass -- the asymmetry is the point of the comparison.
+        mppi_latent) run_eval mppi_latent $ES core/solver=mppi;;
+        mppi_value)
+          run_eval mppi_value $ES core/solver=mppi core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_ac]";;
+        adam_latent) run_eval adam_latent $ES core/solver=adam;;
+        adam_value)
+          run_eval adam_value $ES core/solver=adam core/value=metric core.value.mode=replacement \
+            "core.value.checkpoints=[$D/train_checkpoints/value_ac]";;
+        # L2O / DMPO are LEARNED inner loops: each needs its own trained checkpoint,
+        # supplied via L2O_CKPT / DMPO_CKPT (they have never been trained on PushT).
+        l2o_latent)
+          [ -n "${L2O_CKPT:-}" ] || { echo "[skip] l2o_latent: no L2O_CKPT"; continue; }
+          run_eval l2o_latent $ES core/solver=l2o core.solver.actor_path="$L2O_CKPT";;
+        l2o_value)
+          [ -n "${L2O_CKPT:-}" ] || { echo "[skip] l2o_value: no L2O_CKPT"; continue; }
+          run_eval l2o_value $ES core/solver=l2o core.solver.actor_path="$L2O_CKPT" \
+            core.solver.value_path="$D/train_checkpoints/value_ac";;
+        dmpo_latent)
+          [ -n "${DMPO_CKPT:-}" ] || { echo "[skip] dmpo_latent: no DMPO_CKPT"; continue; }
+          run_eval dmpo_latent $ES core/solver=dmpo core.solver.actor_path="$DMPO_CKPT";;
+        dmpo_value)
+          [ -n "${DMPO_CKPT:-}" ] || { echo "[skip] dmpo_value: no DMPO_CKPT"; continue; }
+          run_eval dmpo_value $ES core/solver=dmpo core.solver.actor_path="$DMPO_CKPT" \
+            core.solver.value_path="$D/train_checkpoints/value_ac";;
         cem_l2w4)   # windowed latent-L2 control: 4-frame window vs the tiled goal, same input as the w4 critic
           if [ ! -d "$D/train_checkpoints/value_l2w4" ]; then
             pixi run train model=metric learner=l2 cache="$CD/counterstrike_fs1.pt" window_frames=4 window_lag=5 \
