@@ -33,6 +33,7 @@
 #   CELLS="cube-pldm pusht" SEEDS="0 1 2 3 4 5" bash ...   # subset
 #   DRY=1 bash ...                                          # print only
 #   CRITIC=plaintd bash ...                                 # plain-TD control (mlp head, expectile 0.5)
+#   CRITIC=plaintd TEACHER_PC=0 bash ...                    # ... and no cross-episode teacher goals
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 export PATH="$HOME/.sky/bin:$PATH"
@@ -48,6 +49,11 @@ case $CRITIC in
   plaintd) TDHEAD=mlp;         TDEXP=0.5;  CSUF="-plaintd";;
   *) echo "CRITIC must be mrn|plaintd" >&2; exit 1;;
 esac
+# TEACHER_PC: the offline teacher's cross-episode goal fraction (default 0.3, config B).
+# 0 = in-episode hindsight goals only (no stitching, no off-trajectory pairs);
+# the ACTOR's p_cross stays 0.1 either way. Non-default values get a -tpc<v> tag.
+TEACHER_PC=${TEACHER_PC:-0.3}
+[ "$TEACHER_PC" != 0.3 ] && CSUF="${CSUF}-tpc${TEACHER_PC/./}"
 USERV=armin@pantheon.inc
 CELLS=${CELLS:-"tworoom-lejepa tworoom-pldm cube-lewm cube-pldm reacher-lejepa reacher-pldm pusht"}
 COMMON=(--env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer --env PANTHEON_USER=$USERV --env MAXPAR=4)
@@ -64,7 +70,7 @@ for CELL in $CELLS; do
       --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
       --env TR_GAMMA=0.98 --env TR_NSTEP=1 --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=21 --env UNIG_K=8 \
       --env ACR_LAM=0.5 --env TW_REPLAY=0 --env ACTOR_BANDS="6,21" --env ACTOR_PC=0.1 \
-      --env UNIG_SCHED=frz --env TD_STEPS=8000 --env TW_TD_EXPECTILE=$TDEXP --env TD_HEAD=$TDHEAD --env UNIG_PC=0.3 \
+      --env UNIG_SCHED=frz --env TD_STEPS=8000 --env TW_TD_EXPECTILE=$TDEXP --env TD_HEAD=$TDHEAD --env UNIG_PC=$TEACHER_PC \
       --env NEAR_FRAC=0.3 --env NEAR_MAX=3 --env TD_PER_SEED=1 \
       --env STEPS=8000 --env BATCH=128 --env RH=5 \
       --env CKPT_SELECT=1 --env CKPT_EVERY=2000 --env CKPT_VAL_SEEDS="48 49 50 51" \
@@ -79,7 +85,7 @@ for CELL in $CELLS; do
       --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
       --env CU_DYNA=0 --env CU_DYNA_WM="" --env CU_EXPAND=1.0 --env CU_REPLAY=0.5 --env CU_GAMMA=0.98 --env TR_NSTEP=1 \
       --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=21 --env UNIG_K=8 --env ACR_LAM=0.5 --env ACTOR_BANDS="6,21" --env ACTOR_PC=0.1 \
-      --env UNIG_SCHED=frz --env TD_STEPS=6000 --env CU_TD_EXPECTILE=$TDEXP --env TD_HEAD=$TDHEAD --env UNIG_PC=0.3 \
+      --env UNIG_SCHED=frz --env TD_STEPS=6000 --env CU_TD_EXPECTILE=$TDEXP --env TD_HEAD=$TDHEAD --env UNIG_PC=$TEACHER_PC \
       --env NEAR_FRAC=0.3 --env NEAR_MAX=3 --env TD_PER_SEED=1 \
       --env STEPS=6000 --env BATCH=256 --env RH=5 \
       --env CKPT_SELECT=1 --env CKPT_EVERY=2000 --env CKPT_VAL_SEEDS="48 49 50 51" \
@@ -93,7 +99,7 @@ for CELL in $CELLS; do
       --env SMOKE=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 --env ACTOR_IMPORT_TAG="" \
       --env RS_GAMMA=0.98 --env RS_NSTEP=1 --env CRIT_DEPTH=2 --env RS_LAYERS=2 --env RS_MD=6 --env RS_K=8 --env RS_ACTOR_BANDS="6" --env RS_ACTOR_PC=0.1 \
       --env ACR_LAM=0.5 --env VALUE_FRAMES=2 --env VALUE_EXPECTILE=$TDEXP --env RS_TD_HEAD=$TDHEAD \
-      --env RS_FREEZE=0 --env RS_TD_STEPS=6000 --env RS_TD_PC=0.3 --env RS_TD_NEAR_FRAC=0.3 --env RS_TD_NEAR_MAX=3 --env RS_TD_PER_SEED=1 \
+      --env RS_FREEZE=0 --env RS_TD_STEPS=6000 --env RS_TD_PC=$TEACHER_PC --env RS_TD_NEAR_FRAC=0.3 --env RS_TD_NEAR_MAX=3 --env RS_TD_PER_SEED=1 \
       --env STEPS=6000 --env BATCH=256 --env CKPT_EVERY=2000 --env RS_CKPT_SELECT=1 --env RS_CKPT_VAL_SEEDS="48 49 50 51" \
       --env RS_LATCHED=1 --env FINAL_ONLY=1 --env HELD_AT_END=0 --env REPORT_DRAWS="42 43 44" \
       --env SUCCESS_THRESHOLDS="0.1 0.05" --env PLANNER_RH=5 \
@@ -106,7 +112,7 @@ for CELL in $CELLS; do
       # official quentinll/lewm-pusht base (CACHE_TAG=counterstrike, no WM_DIR);
       # selection draws 48-51 like every other cell (E41: extra draws are free).
       DRY=${DRY:-0} DATE=$DATE REPLAY=0 MAX_DELTA_OVERRIDE=6 CKPT_VAL_SEEDS="48 49 50 51" \
-        EXTRA_OVR="planner.p_cross=0.1 planner.band_mix=6 value.steps=6000 planner.ckpt_every=1000 value.head=$TDHEAD value.expectile=$TDEXP" TAGSUF=-unicrit${CSUF} \
+        EXTRA_OVR="planner.p_cross=0.1 planner.band_mix=6 value.steps=6000 planner.ckpt_every=1000 value.head=$TDHEAD value.expectile=$TDEXP value.p_cross=$TEACHER_PC" TAGSUF=-unicrit${CSUF} \
         scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ $S
     done
     ;;
