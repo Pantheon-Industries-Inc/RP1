@@ -74,15 +74,27 @@ if a.reacher:
         m = re.match(r"reacher_(?P<cfg>rs_.+)_(?P<base>lejepa|pldm)_s(?P<seed>\d+)$", r.name)
         if not m: continue
         key = (m["cfg"], m["base"], int(m["seed"]))
-        prev = [t for t in trains.get(key, []) if t[0] <= r.created_at]
-        tag = max(prev)[1] if prev else "?"
-        if not re.search(a.tag_regex, tag): continue
         arts = [x for x in r.logged_artifacts() if x.type == "lip_actor"]
         if not arts: continue
         art = arts[-1]
         csvs = [f for f in art.manifest.entries if f.endswith("summary.csv")]
         if not csvs: continue
         d = os.path.join(tmp, r.id); os.makedirs(d, exist_ok=True)
+        # Authoritative tag: the training log shipped in the artifact prints
+        # "wandb: setting up run <TAG>-<cfg>-<base>-s<seed>". The time-based
+        # join below is only a fallback -- two jobs of the same cell running
+        # concurrently (e.g. critB vs bandB on 2026-09-20) break it.
+        tag = None
+        logs = [f for f in art.manifest.entries if f.startswith("train_") and f.endswith(".log")]
+        if logs:
+            art.get_entry(logs[0]).download(root=d)
+            txt = open(os.path.join(d, logs[0]), errors="ignore").read()
+            mm = re.search(r"setting up run (\S+?)-" + re.escape(m["cfg"]) + "-" + m["base"] + "-s" + m["seed"], txt)
+            if mm: tag = mm.group(1)
+        if tag is None:
+            prev = [t for t in trains.get(key, []) if t[0] <= r.created_at]
+            tag = max(prev)[1] + "?" if prev else "?"
+        if not re.search(a.tag_regex, tag): continue
         art.get_entry(csvs[0]).download(root=d)
         pre = f"{m['cfg']}_s{m['seed']}_final_e"
         vals = collections.defaultdict(list)
