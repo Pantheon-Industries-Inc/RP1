@@ -64,8 +64,14 @@ envs:
 
 resources:
   accelerators: H200:1
-  cpus: 8
-  memory: 90
+  # 2026-09-20: back to the guide's 1-GPU sizing. These evals are CPU-bound,
+  # not GPU-bound: swm's EnvPool steps all 50 MuJoCo envs SERIALLY in Python,
+  # each with a 224x224 EGL render, and that sets wall-clock (measured ~20-25
+  # min per planning decision, 16 decisions per h200 arm). The earlier 8/90 was
+  # chosen to dodge a Kueue admission theory that never held up, and it cost
+  # ~3x on exactly that path. Admission is a non-issue in the `armin` workspace.
+  cpus: 20
+  memory: 230
   image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
   labels:
     telemetry-contract: opt-out

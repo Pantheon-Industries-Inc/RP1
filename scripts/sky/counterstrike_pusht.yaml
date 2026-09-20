@@ -89,6 +89,7 @@ envs:
   RECORD_CONDS: "rlp cem_latent"   # conditions that record when RECORD=1 (E3 needs only these)
   RECORD_MIN_LEN: "25"   # recorder drops episodes shorter than this (25 = WM window; 1 = keep all, for videos)
   WM_DIR: ""            # pre-installed world model dir (overrides the LeWM base)
+  FORCE_CACHE: "0"      # 1 = re-encode latents even if a cache exists in CACHE_TAG
   OUT_ROOT: "/newcheckpoints"      # where $D is written; /checkpoints reads remain legacy
   POST_ONLY: "0"         # 1 = skip training/evals, only run POST_SCRIPT_B64 on an existing $D
   POST_ENV: ""           # extra "KEY=VALUE KEY2=VALUE2" exported for the POST script
@@ -195,6 +196,18 @@ run: |
     AUG_EXTRA="value.near_frac=$NEAR_FRAC planner.near_frac=$NEAR_FRAC value.near_max=${NEAR_MAX:-3} planner.near_max=${NEAR_MAX:-3}"
   fi
   SKIP=$(echo "$SKIP" | sed 's/^,//')
+  # FORCE_CACHE=1: always (re-)encode, never reuse whatever is sitting in $CD.
+  # Latent caches are WORLD-MODEL-SPECIFIC: reusing a cache encoded by a different
+  # WM trains the teacher/actor in one latent space and plans in another, which is
+  # silent and invalidates the run. Required whenever WM_DIR changes the base.
+  if [ "${FORCE_CACHE:-0}" = 1 ]; then
+    echo "[cache] FORCE_CACHE=1: encoding from scratch into $CD (was skip=[$SKIP])"
+    rm -f "$CD/counterstrike_fs1.pt" "$CD"/counterstrike_fs5*.pt "$CD/counterstrike_actions.h5"
+    SKIP=""
+  fi
+  if [ -n "${WM_DIR:-}" ] && [ "${CACHE_TAG:-}" = counterstrike ]; then
+    echo "WM_DIR is set but CACHE_TAG is the official base's cache; refusing" >&2; exit 1
+  fi
 
   TRAIN_EXTRA=""
   EVAL_N=50
