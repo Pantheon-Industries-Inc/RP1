@@ -2788,8 +2788,8 @@ Adam 100x30) against RLP's single K=8 pass.
 | **RLP (K=8 refiner)** | — | **78.7** |
 | Adam | 73.7 | 77.3 |
 | MPPI | 55.0 | 63.3 |
-| L2O (n=1) | 33.3 | 30.7 |
-| DMPO (n=1) | 29.3 | 36.0 |
+| L2O | — (not the method) | 30.7 |
+| DMPO | — (not the method) | 36.0 |
 
 Ordering: `CEM-latent > RLP > CEM-value > Adam-value > Adam-latent > MPPI > L2O ~ DMPO`,
 reproducing the L2O campaign's cross-environment ordering on PushT. The critic
@@ -2798,7 +2798,12 @@ and slightly hurts CEM (-1.3) -- consistent with E24: the critic is a better
 descent field than latent L2 but a slightly worse ranking field. L2O and DMPO
 were trained on PushT for the FIRST time here (both campaigns had covered only
 TwoRoom/Cube/Reacher); they train cleanly and land at ~30, far below every
-training-free baseline, at n=1.
+training-free baseline. **Both are run at the VALUE objective only**: each is
+defined as a learned MPC inner loop trained against a FROZEN CRITIC (L2O
+DAgger-imitates an MPPI expert through the frozen WM + critic; DMPO optimises
+its inner loop against the frozen critic), so a latent-L2 variant would not be
+the published method. The latent cells briefly run at n=1 (33.3 / 29.3) are
+withdrawn for that reason, not on their numbers.
 
 **Correction to E44.** E44 argued latent-CEM's "79.3" was the top of its range
 and the pooled value was ~79.0, so the gap was ~0.3. With six proper
