@@ -96,6 +96,14 @@ envs:
   RS_WIDTH: "512"          # v4 refiner MLP width
   RS_LAYERS: "2"           # v4 refiner hidden layers
   ACR_LAM: "0"             # anti-constancy regularizer weight
+  RS_TD_STEPS: "12000"     # window-teacher steps (unified critic: = STEPS)
+  RS_TD_PC: "0.3"          # window-teacher cross-episode goal fraction
+  RS_TD_NEAR_FRAC: "0"     # window-teacher near-goal oversampling (1..RS_TD_NEAR_MAX steps)
+  RS_TD_NEAR_MAX: "3"
+  RS_TD_PER_SEED: "0"      # 1 = one window teacher per TRAIN seed (legacy: seed 0 shared)
+  RS_FREEZE: ""            # actor --freeze-critic-frac (empty = recipe profile 0.5;
+                           # 0 = frozen teacher deployed verbatim, PushT's recipe)
+  RS_ACTOR_PC: ""          # actor --p-cross (empty = overlay default 0.3)
   CRIT_DEPTH: "2"          # MRN critic-head depth (window teacher + co-critic)
                            # -- W3 cache key must change with it (see below)
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
@@ -307,13 +315,24 @@ setup: |
   fi
 
   # window value, STANDARDIZED numbers on the clean split
-  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
-  WSTEPS=12000; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
-  [ -f "$W3" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
-    --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
-    --boundary ${RS_BOUNDARY:-legacy} \
-    --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed 0 --out "$W3" > /workspace/logs/w3.log 2>&1 || true
-  [ -f "$W3" ] || { echo "window value failed"; tail -20 /workspace/logs/w3.log; exit 1; }
+  TDSUF=""; [ "${RS_TD_STEPS:-12000}" != 12000 ] && TDSUF="${TDSUF}_t${RS_TD_STEPS}"
+  [ "${RS_TD_NEAR_FRAC:-0}" != 0 ] && TDSUF="${TDSUF}_nf${RS_TD_NEAR_FRAC}m${RS_TD_NEAR_MAX:-3}"
+  [ "${RS_TD_PC:-0.3}" != 0.3 ] && TDSUF="${TDSUF}_pc${RS_TD_PC}"
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}${TDSUF}_std.pt
+  WSTEPS=${RS_TD_STEPS:-12000}; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
+  # RS_TD_PER_SEED=1: one teacher per TRAIN seed (window_*_s<seed>.pt); the
+  # seed-0 file is linked to the shared $W3 path for the measurement arms.
+  W3SEEDS="0"; [ "${RS_TD_PER_SEED:-0}" = 1 ] && W3SEEDS="${TRAIN_SEEDS:-0 1 2}"
+  for TDS in $W3SEEDS; do
+    W3S="$W3"; [ "${RS_TD_PER_SEED:-0}" = 1 ] && W3S="${W3%.pt}_s${TDS}.pt"
+    [ -f "$W3S" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
+      --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
+      --boundary ${RS_BOUNDARY:-legacy} --p-cross ${RS_TD_PC:-0.3} \
+      --near-frac ${RS_TD_NEAR_FRAC:-0} --near-max ${RS_TD_NEAR_MAX:-3} \
+      --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed $TDS --out "$W3S" > /workspace/logs/w3_s${TDS}.log 2>&1 || true
+    [ -f "$W3S" ] || { echo "window value failed (seed $TDS)"; tail -20 /workspace/logs/w3_s${TDS}.log; exit 1; }
+  done
+  [ "${RS_TD_PER_SEED:-0}" = 1 ] && [ ! -e "$W3" ] && ln -s "${W3%.pt}_s0.pt" "$W3"
   echo "[setup] reacher/${BASE} ready"
 
 run: |
@@ -340,7 +359,10 @@ run: |
   export EXPAND
   C1=/workspace/caches/tr_${BASE}_fs1.pt
   C5=/workspace/caches/tr_${BASE}_fs5.pt
-  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}_std.pt
+  TDSUF=""; [ "${RS_TD_STEPS:-12000}" != 12000 ] && TDSUF="${TDSUF}_t${RS_TD_STEPS}"
+  [ "${RS_TD_NEAR_FRAC:-0}" != 0 ] && TDSUF="${TDSUF}_nf${RS_TD_NEAR_FRAC}m${RS_TD_NEAR_MAX:-3}"
+  [ "${RS_TD_PC:-0.3}" != 0.3 ] && TDSUF="${TDSUF}_pc${RS_TD_PC}"
+  W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}${TDSUF}_std.pt
   PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
   export PERSIST
   ACTORS=$PERSIST/actors; METRICS=$PERSIST/metrics; RESULTS=$PERSIST/results
@@ -899,15 +921,16 @@ run: |
             [ -f "$STATE" ] && STATE_ARGS+=(--resume-state "$STATE")
           fi
           DGFLAG=""; [ "${DROP_GRAD:-0}" = 1 ] && DGFLAG="--drop-grad"
+          W3_SEED="$W3"; [ "${RS_TD_PER_SEED:-0}" = 1 ] && W3_SEED="${W3%.pt}_s${SEED}.pt"
           CUDA_VISIBLE_DEVICES=$S timeout ${TRAIN_TIMEOUT:-64800} python3 scripts/plan/train_lip_ac.py \
           --cache "$C5" --cache-td "$C1" --h5 "$SLIM" --wm "$WM" --pad-context ${DGFLAG} \
-          --init-value "$W3" \
+          --init-value "$W3_SEED" \
           --recipe-profile "$PROFILE" \
           --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step ${RS_NSTEP:-50} \
           --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} \
           --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
-          --replay-prob $RP --expand-weight $XW --freeze-critic-frac 0.5 ${FROZEN_ARGS} \
+          --replay-prob $RP --expand-weight $XW --freeze-critic-frac ${RS_FREEZE:-0.5} ${RS_ACTOR_PC:+--p-cross $RS_ACTOR_PC} ${FROZEN_ARGS} \
           --lambda-schedule uniform --mean-weight $MW --amax $AMAX \
           --temporal-objective "$TOBJ" \
           --steps $STEPS --batch ${BATCH:-128} --ckpt-every ${CKPT_EVERY:-0} \

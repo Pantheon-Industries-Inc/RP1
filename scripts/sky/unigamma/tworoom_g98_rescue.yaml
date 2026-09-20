@@ -89,12 +89,21 @@ envs:
   UNIG_PC: "0.3"           # cross-episode goal fraction (teacher + co-critic)
   UNIG_WIDTH: "512"        # v4 refiner MLP width
   UNIG_LAYERS: "2"         # v4 refiner hidden layers
-  UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og);
+  UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og | frz);
+                           # frz = freeze-critic-frac 0: the offline teacher is
+                           # deployed verbatim, no co-training (PushT's recipe)
                            # og = the cube/reacher package (freeze 0.5,
                            # expectile 0.1->0.03, critic-lr 1e-3->1e-4)
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
   TD_STEPS: "6000"         # offline TD teacher steps (12000 = longer warm-start)
+  TW_TD_EXPECTILE: "0.1"   # tworoom offline teacher expectile (cube: CU_TD_EXPECTILE;
+                           # the unified-critic recipe passes 0.03 on both)
+  TD_PER_SEED: ""          # 1 = one offline teacher per TRAIN seed on cube too
+                           # (legacy: tworoom+SPLIT per seed, cube shares td_grid_s0)
+  CU_REPLAY: "0.5"         # cube actor replay_prob (was hardcoded 0.5)
+  ACTOR_PC: ""             # actor --p-cross (empty = overlay default 0.3); the
+                           # teacher/co-critic fraction is UNIG_PC
   TDB: "1024"              # co-critic TD batch (2048/4096 = lower-variance targets)
   EMA_TAU: "0.005"         # teacher EMA rate (0.002 = smoother targets)
   DEPLOY_CRITIC: ""        # eval-only: "teacher" rewrites imported actors'
@@ -472,13 +481,14 @@ setup: |
 
   # ---- TD critic to warm-start the co-trained value from. Cube uses the
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
-  TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+  TDFLAGS="--expectile ${TW_TD_EXPECTILE:-0.1} --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
   # per-seed guard, not any-file: a cap-cancelled builder can leave a partial
   # ~/gm (e.g. s0/s1 without s2) that an any-file guard would accept and the
   # validation below would then fatally reject
   TDSEEDS="0"
   [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
+  [ "${TD_PER_SEED:-}" = 1 ] && TDSEEDS="${TRAIN_SEEDS:-0 1 2}"
   for TDS in $TDSEEDS; do
     if [ ! -f ~/gm/td_grid_s${TDS}.pt ]; then
       CUDA_VISIBLE_DEVICES=0 python3 scripts/plan/train_metric.py --learner td \
@@ -517,10 +527,11 @@ setup: |
   # Training runs rebuild any missing grid; ~/gm symlinks into CACHE_ROOT, so
   # the node cache heals forward.
   if [ "${REUSE_ONLY:-0}" != 1 ]; then
-    BF_TDFLAGS="--expectile 0.1 --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+    BF_TDFLAGS="--expectile ${TW_TD_EXPECTILE:-0.1} --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
     [ "$ENVNAME" = cube ] && BF_TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
     BF_SEEDS="0"
     [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"
+    [ "${TD_PER_SEED:-}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"
     for TDS in $BF_SEEDS; do
       if [ ! -f ~/gm/td_grid_s${TDS}.pt ]; then
         echo "[cache-backfill] td_grid_s${TDS} missing from READY cache; training it"
@@ -1076,7 +1087,7 @@ run: |
   # tworoom passes nothing here.
   RECIPE=""
   [ "$ENVNAME" = tworoom ] && RECIPE="--gamma ${TR_GAMMA:-1.0} --replay-prob ${TW_REPLAY:-0}"
-  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob 0.5 --expand-weight ${CU_EXPAND:-1.0} --freeze-critic-frac 0.5 --expectile ${CU_EXPECTILE:-0.1} --expectile-final ${CU_EXPECTILE_FINAL:-0.03} --critic-lr 1e-3 --critic-lr-final 1e-4"
+  [ "$ENVNAME" = cube ] && RECIPE="--gamma ${CU_GAMMA:-0.98} --replay-prob ${CU_REPLAY:-0.5} --expand-weight ${CU_EXPAND:-1.0} --freeze-critic-frac 0.5 --expectile ${CU_EXPECTILE:-0.1} --expectile-final ${CU_EXPECTILE_FINAL:-0.03} --critic-lr 1e-3 --critic-lr-final 1e-4"
   FROZEN_ARGS=""
   if [ "${ACTOR_ONLY:-0}" = 1 ]; then
     # Keep each environment's established actor-only recipe. TwoRoom's
@@ -1383,6 +1394,7 @@ run: |
     SCHEDFLAGS=""
     [ "$SCHED" = f05 ] && SCHEDFLAGS="--freeze-critic-frac 0.5"
     [ "$SCHED" = og ] && SCHEDFLAGS="--freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
+    [ "$SCHED" = frz ] && SCHEDFLAGS="--freeze-critic-frac 0"
     # field 11 may carry several offsets as a comma list ("25,100"); the row is
     # word-split, so a space-separated value there would be eaten by field 12.
     EOFF=$(echo "$EOFF" | tr ',' ' ')
@@ -1397,6 +1409,7 @@ run: |
           LRF=$(python3 -c "print('%g' % (float('$LR') / 10))")
           TRAIN_CRIT="$CRIT"
           [ "$ENVNAME" = tworoom ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
+          [ "${TD_PER_SEED:-}" = 1 ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
           AFVFLAG=""; [ "$AFV" = on ] && AFVFLAG="--align-from-value"
           VNFLAG=""; [ "$VN" != none ] && VNFLAG="--vnorm $VN"
           # warm-frac "-" means drop the closed-loop term entirely
@@ -1412,7 +1425,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} ${ACTOR_PC:+--p-cross $ACTOR_PC} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \

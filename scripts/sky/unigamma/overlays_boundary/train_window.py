@@ -49,6 +49,10 @@ p.add_argument("--steps", type=int, default=6000)
 p.add_argument("--gamma", type=float, default=1.0)
 p.add_argument("--boundary", choices=["legacy", "smooth", "disc"], default="legacy")
 p.add_argument("--seed", type=int, default=0)
+p.add_argument("--p-cross", type=float, default=0.3, help="cross-episode (stitching) goal fraction")
+p.add_argument("--max-delta", type=int, default=None, help="cap in-episode hindsight offsets (primitive steps)")
+p.add_argument("--near-frac", type=float, default=0.0, help="fraction of in-episode goals drawn 1..near_max steps ahead")
+p.add_argument("--near-max", type=int, default=3)
 p.add_argument("--device", default="cuda")
 a = p.parse_args()
 
@@ -77,7 +81,8 @@ logging.info(f"stacked cache {tuple(Zs.shape)}")
 cfg = TDConfig(head="quasimetric", hidden_dim=256, depth=a.depth, embed_dim=128,
                n_step=a.n_step, gamma=a.gamma, expectile=a.expectile,
                boundary=a.boundary,
-               p_cross=0.3, balanced=True, batch_size=1024, steps=a.steps, seed=a.seed)
+               p_cross=a.p_cross, balanced=True, batch_size=1024, steps=a.steps, seed=a.seed,
+               max_delta=a.max_delta, near_frac=a.near_frac, near_max=a.near_max)
 module = learners.td.fit(stacked, cfg, a.device)
 
 # diagnostic: cost of the DEPLOY-style tiled goal vs the data-window goal. If
