@@ -58,6 +58,8 @@ class HierarchicalCEMSolver(CEMSolver):
         hwm_path: str = "",
         bank_path: str = "",
         hl_dynamics: str = "f2",
+        oracle_subgoal: bool = False,
+        cache_path: str = "",
         hl_opt: str = "cem",
         hl_lr: float = 0.1,
         hl_adam_steps: int = 30,
@@ -90,6 +92,26 @@ class HierarchicalCEMSolver(CEMSolver):
         if hl_dynamics not in ("f2", "compose"):
             raise ValueError(f"hl_dynamics must be 'f2' or 'compose', got {hl_dynamics!r}")
         self.hl_dynamics = hl_dynamics
+        # Oracle-subgoal diagnostic (Hi-LeWM's test, at our horizon): replace the
+        # high level with the TRUE future latent from the dataset, 1 macro ahead.
+        # If the low level then succeeds, subgoal GENERATION is the bottleneck;
+        # if it still fails, the problem is execution/compounding over 8 hops and
+        # no generator could have helped.
+        self.oracle_subgoal = bool(oracle_subgoal)
+        self._oracle_cache = None
+        self._oracle_rows: dict[int, Any] = {}
+        self._episodes: Any = None
+        self._starts: Any = None
+        self._decision = 0
+        if self.oracle_subgoal:
+            if not cache_path:
+                raise ValueError("oracle_subgoal requires cache_path (the fs1 LatentCache)")
+            from rlp.data import LatentCache
+
+            cache = LatentCache.load(cache_path)
+            self._oracle_cache = cache.z.to(self.device).float()
+            self._oracle_rows = {int(e): r for e, r in cache.episodes().items()}
+            logger.info(f"oracle subgoals from {cache_path} ({len(self._oracle_rows)} episodes)")
         if hl_opt not in ("cem", "adam"):
             raise ValueError(f"hl_opt must be 'cem' or 'adam', got {hl_opt!r}")
         self.hl_opt = hl_opt
@@ -181,6 +203,29 @@ class HierarchicalCEMSolver(CEMSolver):
                 opt.step()
         return macros.detach().clamp(-self.hl_amax, self.hl_amax)
 
+    def set_task_context(self, episodes: Any, start_steps: Any) -> None:
+        """Called by the eval driver with the per-env (episode, start) task list.
+
+        Only the oracle arm needs it; everything else ignores it.
+        """
+        self._episodes = list(episodes)
+        self._starts = list(start_steps)
+        self._decision = 0
+        logger.info(f"task context set for {len(self._episodes)} envs (oracle={self.oracle_subgoal})")
+
+    def _oracle_waypoint(self, b: int) -> torch.Tensor:
+        """True latent one macro ahead of this decision, per env."""
+        if self._episodes is None:
+            raise RuntimeError("oracle_subgoal needs set_task_context from the eval driver")
+        step_ahead = (self._decision + 1) * self.hl_stride
+        rows = []
+        for i in range(b):
+            ep = int(self._episodes[i])
+            ep_rows = self._oracle_rows[ep]
+            idx = min(int(self._starts[i]) + step_ahead, len(ep_rows) - 1)
+            rows.append(int(ep_rows[idx]))
+        return self._oracle_cache[torch.as_tensor(rows, dtype=torch.long, device=self.device)]
+
     def _encode(self, info_dict: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``(z_hist (B,3,D), z_goal (B,D))`` from the policy's info dict."""
         # The eval driver hands the solver a COST STACK (MetricCost wrapping a
@@ -207,6 +252,16 @@ class HierarchicalCEMSolver(CEMSolver):
         z_hist, z_goal = self._encode(info_dict)
         b = z_hist.shape[0]
         z0 = z_hist[:, -1]
+
+        if self.oracle_subgoal:
+            subgoal = self._oracle_waypoint(b)
+            if self.hl_value is not None:
+                logger.info(
+                    f"ORACLE: V(z0,goal) {self.hl_value(z0, z_goal).mean():.2f} "
+                    f"V(z0,true-subgoal) {self.hl_value(z0, subgoal).mean():.2f} macro-steps"
+                )
+            self._decision += 1
+            return self._solve_low(z_hist, subgoal, b, start)
 
         if self.hl_dynamics == "compose":
             return self._solve_compose(z_hist, z_goal, start)
@@ -240,7 +295,12 @@ class HierarchicalCEMSolver(CEMSolver):
                     f"HL: V(z0,goal) {d_goal:.2f} macro-steps, V(z0,subgoal) {d_sub:.2f}"
                 )
 
-        # ---------------- low level: primitive blocks toward the subgoal
+        return self._solve_low(z_hist, subgoal, b, start)
+
+    def _solve_low(
+        self, z_hist: torch.Tensor, subgoal: torch.Tensor, b: int, start: float
+    ) -> dict[str, Any]:
+        """Low level: CEM over primitive action blocks toward ``subgoal``."""
         ll_n = self.ll_samples or self.num_samples
         ll_iters = self.ll_iters or self.n_steps
         base = unwrap_encoder(self.model)

@@ -191,6 +191,7 @@ run: |
       hier_value)  extra="core/solver=hlip core.solver.hwm_path=$HWM core.solver.hl_cost=value core.solver.hl_value_path=$HLV";;
       hier_compose) extra="core/solver=hlip core.solver.hl_dynamics=compose core.solver.bank_path=$BANK core.solver.hl_cost=value core.solver.hl_value_path=$HLV";;
       hier_compose_latent) extra="core/solver=hlip core.solver.hl_dynamics=compose core.solver.bank_path=$BANK core.solver.hl_cost=latent";;
+      hier_oracle) extra="core/solver=hlip core.solver.oracle_subgoal=true core.solver.cache_path=$CACHE core.solver.hl_cost=value core.solver.hl_value_path=$HLV core.solver.hwm_path=$HWM";;
       hier_adam)   extra="core/solver=hlip core.solver.hwm_path=$HWM core.solver.hl_opt=adam core.solver.hl_lr=$HL_LR core.solver.hl_adam_steps=$HL_ADAM_STEPS core.solver.hl_cost=value core.solver.hl_value_path=$HLV";;
       hier_adam_latent) extra="core/solver=hlip core.solver.hwm_path=$HWM core.solver.hl_opt=adam core.solver.hl_lr=$HL_LR core.solver.hl_adam_steps=$HL_ADAM_STEPS core.solver.hl_cost=latent";;
     esac

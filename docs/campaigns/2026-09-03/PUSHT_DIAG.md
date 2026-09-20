@@ -2788,8 +2788,8 @@ Adam 100x30) against RLP's single K=8 pass.
 | **RLP (K=8 refiner)** | — | **78.7** |
 | Adam | 73.7 | 77.3 |
 | MPPI | 55.0 | 63.3 |
-| L2O | — (not the method) | 30.7 |
-| DMPO | — (not the method) | 36.0 |
+| L2O | — (not the method) | 28.0 |
+| DMPO | — (not the method) | 35.0 |
 
 Ordering: `CEM-latent > RLP > CEM-value > Adam-value > Adam-latent > MPPI > L2O ~ DMPO`,
 reproducing the L2O campaign's cross-environment ordering on PushT. The critic
@@ -2845,3 +2845,26 @@ episodes >= 16000 the 89.3 is contaminated and is an upper bound, not a result
 (cf. the standing split policy). The official base has the same question but a
 published provenance; this one was received on 2026-07-11 and the wandb project
 `pantheoninc-pantheon-inc/sambhav_lewm_pusht` is the place to check.
+
+### E45 addendum: the LeWM matrix is final at n=6, and a silent cache bug
+
+All ten cells now carry six seeds (`l2o_value` 28.0, `dmpo_value` 35.0 completed
+the set). Final ordering on the official base:
+
+`CEM-latent 79.3 > RLP 78.7 > CEM-value 78.0 > Adam-value 77.3 > Adam-latent 73.7
+> MPPI-value 63.3 > MPPI-latent 55.0 > DMPO 35.0 > L2O 28.0`
+
+**Ops defect worth recording, because it fails silently and LOOKS like success.**
+The first in-house-WM column skipped its cache stage (`skip=[cache,subsample,
+actions]`) because files already sat in the target `CACHE_TAG` directory, so six
+seeds trained a teacher and actor on latents encoded by the OFFICIAL base while
+planning with a DIFFERENT world model -- two latent spaces, no error raised, and
+a full set of plausible numbers at the end. The only symptom was speed: ~70
+minutes start-to-trained-planner instead of the several hours a real 2M-frame
+encode takes. Note a correct re-encode produces an IDENTICALLY shaped cache
+(same 2,002,226 rows, same dim 192), so neither shape nor row count
+distinguishes the two cases -- only the latent values do. All six were cancelled
+and relaunched. Guards added: `FORCE_CACHE=1` wipes and re-encodes rather than
+reusing, and `WM_DIR` together with `CACHE_TAG=counterstrike` is refused
+outright, since that pairing is always this bug. Rule: **a latent cache belongs
+to exactly one world model; changing WM_DIR REQUIRES its own CACHE_TAG.**

@@ -21,6 +21,10 @@ hl_dynamics: f2       # f2 | compose. `compose` rolls the LOW-LEVEL WM over real
                       # bottleneck, so `compose` removes the bottleneck entirely.
 hwm_path: ""          # required for hl_dynamics=f2
 bank_path: ""         # required for hl_dynamics=compose (build_chunk_bank.py)
+oracle_subgoal: false # diagnostic: replace the high level with the TRUE future
+                      # latent one macro ahead (Hi-LeWM's oracle test). Isolates
+                      # subgoal GENERATION from low-level execution.
+cache_path: ""        # fs1 LatentCache, required when oracle_subgoal=true
 hl_value_path: ""     # scripts/hierarchy/train_hl_value.py directory
 hl_cost: value        # value | latent (latent = the old behaviour)
 hl_opt: cem           # cem | adam. `adam` backprops through F2 + the value

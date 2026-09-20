@@ -255,6 +255,13 @@ def _run(cfg: DictConfig) -> None:
     eval_episodes = np.asarray(dataset.get_col_data(col_name)).reshape(-1)[random_episode_indices].astype(np.int64)
     eval_start_idx = np.asarray(dataset.get_col_data("step_idx")).reshape(-1)[random_episode_indices].astype(np.int64)
 
+    # Diagnostic hook: solvers that need to know WHICH dataset task each env is
+    # running (e.g. the oracle-subgoal arm, which reads true future latents)
+    # get the per-env (episode, start) list here. No-op for every other solver.
+    _solver = getattr(policy, "solver", None)
+    if _solver is not None and hasattr(_solver, "set_task_context"):
+        _solver.set_task_context(eval_episodes.tolist(), eval_start_idx.tolist())
+
     world.set_policy(policy)
 
     logger.info(f"Saving evaluation videos to {video_directory}")
