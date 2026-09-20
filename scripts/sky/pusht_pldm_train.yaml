@@ -1,0 +1,111 @@
+# Train a PLDM world model on the PushT expert pool (episodes 0-15999, the
+# held-out protocol) with the authors' recipe (train/pldm.yaml), export every
+# epoch in the LeWM layout the eval stack loads:
+#   /newcheckpoints/<user>/<EXPERIMENT_TAG>/wm_epoch<N>/{weights.pt,config.json}
+# Then run RLP on it with WM_DIR=<that dir> CACHE_TAG=<its own tag> (never the
+# official cache tag -- see the E45 addendum).
+#
+#   sky jobs launch scripts/sky/pusht_pldm_train.yaml -n pusht-pldm-wm --priority p1 -y --async
+name: pusht-pldm-wm
+
+envs:
+  EXPERIMENT_TAG: pusht-pldm-wm-20260920
+  EPOCHS: "20"
+  DEVICES: "4"          # Lightning DDP over the job's GPUs (per-GPU batch = BATCH)
+  BATCH: "128"
+  WORKERS: "10"
+  TRAIN_EPISODES: "16000"
+  WANDB_MODE: online
+  PANTHEON_USER: armin@pantheon.inc
+
+workdir: .
+
+resources:
+  accelerators: H200:4
+  cpus: 48
+  memory: 400
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: training-v1
+
+volumes:
+  /newcheckpoints: armin-rlp-checkpoints
+
+secrets:
+  - secrets:WANDB_API_KEY
+
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        containers:
+          - env:
+              - name: K8S_NODE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  echo "[node] k8s=${K8S_NODE:-unknown} pod=$(hostname) gpus=$(nvidia-smi -L 2>/dev/null | wc -l)"
+  OUT=/newcheckpoints/$PANTHEON_USER/$EXPERIMENT_TAG
+  mkdir -p "$OUT" && chmod 777 "$OUT"
+
+  pixi run tool tool=fetch_dataset dataset=pusht
+  H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
+  ls -la "$H5"
+
+  # every epoch's export is mirrored to the volume as it appears (preemption-safe)
+  export_loop() {
+    while true; do
+      RUN=$(ls -dt logs/*/* 2>/dev/null | head -1)
+      if [ -n "$RUN" ] && [ -d "$RUN/checkpoints/pldm_pusht" ]; then
+        for f in "$RUN"/checkpoints/pldm_pusht/weights_epoch_*.pt; do
+          [ -f "$f" ] || continue
+          e=$(basename "$f" .pt | sed 's/weights_epoch_//'); d="$OUT/wm_epoch$e"
+          if [ ! -f "$d/weights.pt" ]; then
+            mkdir -p "$d" && cp "$f" "$d/weights.pt.tmp" && mv "$d/weights.pt.tmp" "$d/weights.pt" \
+              && cp "$RUN/checkpoints/pldm_pusht/config.json" "$d/config.json" && echo "[export] epoch $e -> $d"
+          fi
+        done
+      fi
+      sleep 300
+    done
+  }
+  export_loop &
+  LOOP=$!
+
+  set +e
+  pixi run train model=pldm dataset="$H5" train_episodes=$TRAIN_EPISODES \
+    train.trainer.max_epochs=$EPOCHS train.trainer.devices=$DEVICES \
+    data.loader.batch_size=$BATCH data.loader.num_workers=$WORKERS \
+    logging.wandb.mode=$WANDB_MODE logging.wandb.config.entity=armin-sommer \
+    logging.wandb.config.project=RLP logging.wandb.config.name=$EXPERIMENT_TAG \
+    2>&1 | tee "$OUT/train.log" | grep -E --line-buffered "Episode cap|Model saved|Error|Traceback|epoch=|fit/loss|Run completed" | cut -c1-200
+  RC=${PIPESTATUS[0]}
+  set -e
+  kill $LOOP 2>/dev/null || true
+  RUN=$(ls -dt logs/*/* | head -1)
+  cp -r "$RUN/checkpoints/pldm_pusht" "$OUT/" 2>/dev/null || true
+  for f in "$OUT"/pldm_pusht/weights_epoch_*.pt; do
+    [ -f "$f" ] || continue
+    e=$(basename "$f" .pt | sed 's/weights_epoch_//'); d="$OUT/wm_epoch$e"
+    [ -f "$d/weights.pt" ] || { mkdir -p "$d"; cp "$f" "$d/weights.pt"; cp "$OUT/pldm_pusht/config.json" "$d/config.json"; echo "[export] epoch $e -> $d"; }
+  done
+  ls "$OUT"
+  exit $RC

@@ -1,0 +1,24 @@
+# @package data
+# PushT expert pool (quentinll/lewm-pusht dataset: pusht_expert_train.h5,
+# 18,685 episodes x 109 steps, 224px) read directly as HDF5 for world-model
+# training. `train_episodes` (train/pldm.yaml) keeps the split: episodes
+# 0-15999 train, 16000+ are the evaluation draws.
+cache_dir: null
+image_size: 224
+action_stats: null
+train_split: 0.9
+loader:
+  batch_size: 128
+  num_workers: 6
+  drop_last: true
+  persistent_workers: true
+  prefetch_factor: 3
+  pin_memory: true
+  shuffle: true
+dataset:
+  name: ${dataset}
+  num_steps: 4          # history_size 3 + num_predictions 1
+  frameskip: 5
+  keys_to_load: [pixels, action]
+  keys_to_cache: [action]
+  keys_to_merge: {}

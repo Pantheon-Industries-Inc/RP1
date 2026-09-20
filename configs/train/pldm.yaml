@@ -1,0 +1,40 @@
+# @package _global_
+# PLDM world model (the LeWM paper's PLDM baseline), authors' recipe
+# (Value_Metric_LeWM@eval-sweep stable-worldmodel/scripts/train/config/pldm.yaml):
+# same ViT-tiny/predictor architecture as LeWM, VCReg + temporal-alignment
+# objective, separate inverse-dynamics head. Saved in the LeWM layout.
+defaults:
+  - /data: pusht_pldm
+  - /core/world_model: lewm
+  - /logging: default
+  - _self_
+entrypoint:
+  _target_: rlp.train.pldm._run
+dataset: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/pusht/pusht_expert_train.h5
+train_episodes: 16000   # held-out protocol; null = all episodes
+runtime:
+  seed: 3072
+  device: auto
+train:
+  initial_weights: null
+  idm_hidden_dim: 512
+  trainer:
+    max_epochs: 20
+    devices: auto
+    accelerator: auto
+    precision: bf16-mixed
+    gradient_clip_val: 1.0
+  optimizer:
+    type: AdamW
+    lr: 5e-5
+    weight_decay: 1e-3
+  loss:                  # authors' defaults; pred_loss is always on
+    std:          {enabled: true,  weight: 18.0}
+    std_t:        {enabled: true,  weight: 0.7}
+    cov:          {enabled: true,  weight: 12.0}
+    cov_t:        {enabled: true,  weight: 0.0}
+    temp_align:   {enabled: true,  weight: 0.2}
+    idm:          {enabled: true,  weight: 0.0}
+    temp_straight: {enabled: false, weight: 0.1}
+output:
+  model_name: pldm_pusht
