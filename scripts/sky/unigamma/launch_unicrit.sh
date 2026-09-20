@@ -21,6 +21,9 @@
 #     in-episode goals at 1..3 primitive steps (fs1 cache everywhere),
 #     one teacher per training seed (cube/reacher shared seed 0 before).
 #   * window frames stay the environment property (1 / 1 / 2 / 1).
+#   * selection draws 48-51 in every cell (PushT was 50/51), report 42/43/44.
+#   * PushT base = the OFFICIAL quentinll/lewm-pusht release (user decision
+#     2026-09-20), not the in-house epoch-20 WM.
 #
 # Prerequisite: GIT_TOKEN secret refreshed (tworoom/reacher yamls clone
 # Value_Metric_LeWM@eval-sweep; every such job failed on it 2026-09-09 and
@@ -90,7 +93,9 @@ for CELL in $CELLS; do
     # PushT already IS this critic recipe (W1NEAR_FRZ + value.steps=6000 = actor
     # steps); the actor side is the 78.7 es1k recipe. Re-run only for a same-date tag.
     for S in $SEEDS; do
-      DRY=${DRY:-0} DATE=$DATE REPLAY=0 MAX_DELTA_OVERRIDE=6 \
+      # official quentinll/lewm-pusht base (CACHE_TAG=counterstrike, no WM_DIR);
+      # selection draws 48-51 like every other cell (E41: extra draws are free).
+      DRY=${DRY:-0} DATE=$DATE REPLAY=0 MAX_DELTA_OVERRIDE=6 CKPT_VAL_SEEDS="48 49 50 51" \
         EXTRA_OVR="planner.p_cross=0.1 planner.band_mix=6 value.steps=6000 planner.ckpt_every=1000" TAGSUF=-unicrit \
         scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ $S
     done
