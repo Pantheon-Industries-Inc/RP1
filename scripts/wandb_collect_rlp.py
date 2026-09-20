@@ -28,7 +28,7 @@ api = wandb.Api(timeout=120)
 
 # ---- tworoom / cube: one summary per (tag, env, base, cfg, seed)
 runs = api.runs(f"{a.entity}/{a.project}", filters={"$and": [{"display_name": {"$regex": a.tag_regex}}, {"jobType": "eval"}]}, per_page=500)
-cells = collections.defaultdict(dict)   # (env, base, cfg) -> seed -> {h: mean over report draws}
+cells = collections.defaultdict(dict)   # (env, base, cfg, tag) -> seed -> {h: mean over report draws}
 seen = set()
 for r in runs:
     m = re.match(r"(?P<tag>.+)_g_(?P<env>tworoom|cube)_(?P<base>lejepa|lewm|pldm|dinowm)_(?P<cfg>.+)_s(?P<seed>\d+)$", r.name)
@@ -40,9 +40,20 @@ for r in runs:
         vals = [s[k] for k in (f"eval/rh5/rh5_h{h}_s{d}" for d in (42, 43, 44)) if k in s]
         if len(vals) == 3: per_h[h] = sum(vals) / 3
     if per_h:
-        cells[(m["env"], m["base"], m["cfg"])][int(m["seed"])] = (m["tag"], per_h)
+        cells[(m["env"], m["base"], m["cfg"], m["tag"])][int(m["seed"])] = (m["tag"], per_h)
 print(f"# {len(seen)} eval runs matched /{a.tag_regex}/")
-for (env, base, cfg), seeds in sorted(cells.items()):
+# Pool tags of the same cell only when their seeds do not collide (e.g. s0-2
+# and s345 waves); tags that share seeds are separate arms and stay separate.
+pooled = collections.defaultdict(dict)
+for (env, base, cfg, tag), seeds in sorted(cells.items()):
+    tgt = pooled[(env, base, cfg)]
+    if any(sd in tgt for sd in seeds):
+        pooled[(env, base, cfg, tag)] = dict(seeds)
+    else:
+        tgt.update(seeds)
+cells = {k: v for k, v in pooled.items() if v}
+for key, seeds in sorted(cells.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2], kv[0][3] if len(kv[0]) > 3 else "")):
+    env, base, cfg = key[0], key[1], key[2]
     tags = sorted({t for t, _ in seeds.values()})
     print(f"\n## {env} / {base} / {cfg}   tags: {', '.join(tags)}")
     hs = [h for h in ("25", "100") if any(h in v[1] for v in seeds.values())]
