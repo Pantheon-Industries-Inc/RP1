@@ -107,7 +107,7 @@ if d_win_to_tiled > 0.25 * d_rand:
     logging.warning("tiled-goal queries are far from the data manifold -- deploy convention suspect")
 
 save_metric(module.cpu(), "td", F * D,
-            {"head": "quasimetric", "hidden_dim": 256, "depth": a.depth, "embed_dim": 128,
+            {"head": a.head, "hidden_dim": 256, "depth": a.depth, "embed_dim": 128,
              "softplus": True, "symmetric": False,
              "window_frames": F, "window_lag": a.lag}, a.out)
 logging.success(f"saved -> {a.out} (declared latent_dim={F * D} => hook _m={F})")
