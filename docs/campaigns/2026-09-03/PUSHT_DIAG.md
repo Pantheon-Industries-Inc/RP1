@@ -2773,3 +2773,70 @@ is **~0.3 behind, inside the noise** -- NOT a demonstrated parity, and RLP
 still holds an asymmetric advantage (it selects its best of six snapshots on
 draws 50/51; the sampler gets no selection at all). Giving the baseline a
 real error bar is a few cheap eval jobs and should precede any parity claim.
+
+## E45 (2026-09-19): the full solver matrix, and the world model is worth +10
+
+### Solver matrix on the 78.7 recipe's own artifacts (LeWM base, 6 seeds, draws 42/43/44)
+
+"latent" = parameter-free latent L2; "value" = the deployed critic (`value_ac`).
+Sampler budgets are the published defaults (CEM/MPPI 300x30 = 9,000 rollouts;
+Adam 100x30) against RLP's single K=8 pass.
+
+| solver | latent | value |
+|---|---|---|
+| CEM | **79.3** | 78.0 |
+| **RLP (K=8 refiner)** | — | **78.7** |
+| Adam | 73.7 | 77.3 |
+| MPPI | 55.0 | 63.3 |
+| L2O (n=1) | 33.3 | 30.7 |
+| DMPO (n=1) | 29.3 | 36.0 |
+
+Ordering: `CEM-latent > RLP > CEM-value > Adam-value > Adam-latent > MPPI > L2O ~ DMPO`,
+reproducing the L2O campaign's cross-environment ordering on PushT. The critic
+HELPS every gradient/sampling optimiser that is not CEM (Adam +3.6, MPPI +8.3)
+and slightly hurts CEM (-1.3) -- consistent with E24: the critic is a better
+descent field than latent L2 but a slightly worse ranking field. L2O and DMPO
+were trained on PushT for the FIRST time here (both campaigns had covered only
+TwoRoom/Cube/Reacher); they train cleanly and land at ~30, far below every
+training-free baseline, at n=1.
+
+**Correction to E44.** E44 argued latent-CEM's "79.3" was the top of its range
+and the pooled value was ~79.0, so the gap was ~0.3. With six proper
+measurements it is **79.3 median** (80.0/78.0/78.7/79.3/79.3/80.0, mean 79.2).
+The original figure was right; E44's revision was based on four scattered
+historical numbers and is withdrawn. **The gap to RLP's 78.7 is 0.6**, as
+originally reported.
+
+### The in-house PushT world model scores 89.3 with plain latent+CEM
+
+`Value_Metric_LeWM/stable-worldmodel/checkpoints/Pusht/weights_epoch_20.pt`,
+installed at `/checkpoints/armin@pantheon.inc/wm/pusht_ours_epoch20`. Verified
+distinct from the official base (0 of 303 tensors share values) and already in
+the converted key layout. Gate run, same 50-episode task sets, same draws:
+
+| world model | `cem_latent` 42/43/44 | mean | `noop` floor |
+|---|---|---|---|
+| official LeWM base | 80/78/80 (s0) | 79.3 (n=6 median) | 0.7 |
+| **in-house epoch-20** | **90/90/88** | **89.3** | 0.7 |
+
+**+10.0 over the base this entire campaign was built on, from a parameter-free
+objective and no training at all.** This contradicts the 2026-07-11 verdict
+(`WRITEUP_pusht_lip.md`: latent+CEM 12.0 = random, predictor barely beating a
+frozen-world baseline). That evaluation predates several harness fixes of that
+era (action convention, osmesa rendering, the dead `history_len`), and the
+current harness with a pinned `MUJOCO_GL=egl` render puts it 10 points ABOVE
+the official release. The July number should be treated as a harness artefact.
+
+**Consequence for the campaign.** Every lever tried since E1 moved the refiner
+within a fixed world model, total swing ~+9.7 (69.0 -> 78.7), and the last
+three weeks bought 0. Swapping the world model buys +10.0 on the sampler alone,
+before any refiner is trained on it. The binding constraint was the base, not
+the planner. Full column launched: es1k verbatim on this WM, its own re-encoded
+latent cache, 6 seeds, with the solver matrix in the same pass.
+
+**OPEN CAVEAT, must be resolved before this number is reported anywhere:** it is
+not known what episode range this checkpoint was pretrained on. If it saw
+episodes >= 16000 the 89.3 is contaminated and is an upper bound, not a result
+(cf. the standing split policy). The official base has the same question but a
+published provenance; this one was received on 2026-07-11 and the wandb project
+`pantheoninc-pantheon-inc/sambhav_lewm_pusht` is the place to check.

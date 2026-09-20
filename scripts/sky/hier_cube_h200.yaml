@@ -163,9 +163,20 @@ run: |
   HLS=$HL_SAMPLES; HLI=$HL_ITERS
   if [ "$SMOKE" = 1 ]; then NEP=4; SEEDS=42; OFFS=25; HLS=32; HLI=3; fi
 
+  # Preemption is frequent and an h200 arm costs 1-7 h, so completed arms must
+  # survive a restart: each writes a small .done marker next to its log and is
+  # skipped if that marker exists (2026-09-19: two jobs lost hours to
+  # #RECOVERIES 1 re-running finished arms).
+  done_marker () { echo "$D/done_${1}"; }
+
   run_eval () {  # run_eval <arm> <offset> <seed>
     local arm=$1 off=$2 sd=$3 bud=$(( $2 * 2 ))
     local label="${arm}_h${off}_s${sd}"
+    if [ -s "$(done_marker "$label")" ]; then
+      echo "===== HIER $label (already done, skipping) ====="
+      cat "$(done_marker "$label")"
+      return
+    fi
     echo "===== HIER $label ====="
     local extra=""
     case $arm in
@@ -192,7 +203,8 @@ run: |
     local run=$(ls -dt logs/*/* | head -1)
     cp "$run"/*results*.txt "$D/results_${label}.txt" 2>/dev/null || true
     echo "----- RESULT $label -----"
-    grep -h "success_rate" "$D/log_${label}.txt" | tail -2 || echo "metrics: MISSING"
+    grep -h "success_rate" "$D/log_${label}.txt" | tail -2 | tee "$(done_marker "$label")" \
+      || echo "metrics: MISSING"
   }
 
   for OFF in $OFFS; do
@@ -200,6 +212,10 @@ run: |
       for ARM in $ARMS; do
         # the flat reference takes no hl_* overrides
         if [ "$ARM" = cem ]; then
+          if [ -s "$(done_marker "cem_h${OFF}_s${SD}")" ]; then
+            echo "===== HIER cem_h${OFF}_s${SD} (already done, skipping) ====="
+            cat "$(done_marker "cem_h${OFF}_s${SD}")"; continue
+          fi
           echo "===== HIER cem_h${OFF}_s${SD} ====="
           pixi run eval model=lewm runtime.seed=$SD evaluation.num_episodes=$NEP \
             evaluation.goal_offset_steps=$OFF evaluation.budget=$(( OFF * 2 )) \
@@ -207,7 +223,8 @@ run: |
             core.solver.n_steps=$LL_ITERS runtime.bfloat16=$BF16 \
             2>&1 | tee "$D/log_cem_h${OFF}_s${SD}.txt" \
             | grep -vi "solve completed" || echo "[eval-failed] cem_h${OFF}_s${SD}"
-          grep -h "success_rate" "$D/log_cem_h${OFF}_s${SD}.txt" | tail -2 || true
+          grep -h "success_rate" "$D/log_cem_h${OFF}_s${SD}.txt" | tail -2 \
+            | tee "$(done_marker "cem_h${OFF}_s${SD}")" || true
         else
           run_eval "$ARM" "$OFF" "$SD"
         fi
