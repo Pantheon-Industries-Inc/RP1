@@ -33,7 +33,7 @@ envs:
   OUT_ROOT: /newcheckpoints
 
   OFFSETS: "25 200"        # budget is 2x offset, as everywhere else in the stack
-  ARMS: "cem hier_latent hier_value hier_compose"
+  ARMS: "cem hier_latent hier_value hier_compose"   # + hier_oracle hier_adam
   BANK_CHUNKS: "4096"
   EVAL_SEEDS: "42 43 44"
   NUM_EPISODES: "50"
@@ -56,6 +56,12 @@ envs:
   HL_LR: "0.1"             # Adam-sweep optimum (2026-08-16); >= 0.3 harmful
   HL_ADAM_STEPS: "30"
   HL_ITERS: "8"
+
+  RUN_SALT: ""             # appended to the .done marker names. Set it when the
+                           # SOLVER changed but the trained artifacts (HWM,
+                           # value, bank) must be reused: keeps EXPERIMENT_TAG
+                           # (so nothing retrains) while forcing every eval to
+                           # re-run instead of reading a stale marker.
 
   SMOKE: "0"               # 1 = 4 episodes, tiny CEM, one seed, h25 only
   WAIT_ART_MIN: "0"        # >0: wait this many minutes for a sibling job (same
@@ -173,7 +179,7 @@ run: |
   # survive a restart: each writes a small .done marker next to its log and is
   # skipped if that marker exists (2026-09-19: two jobs lost hours to
   # #RECOVERIES 1 re-running finished arms).
-  done_marker () { echo "$D/done_${1}"; }
+  done_marker () { echo "$D/done_${1}${RUN_SALT}"; }
 
   run_eval () {  # run_eval <arm> <offset> <seed>
     local arm=$1 off=$2 sd=$3 bud=$(( $2 * 2 ))

@@ -69,11 +69,14 @@ class HierarchicalCEMSolver(CEMSolver):
         hl_samples: int = 512,
         hl_iters: int = 8,
         hl_lam: float = 0.01,
+        hl_topk: int | None = None,
         hl_amax: float = 3.0,
         ll_samples: int | None = None,
         ll_iters: int | None = None,
         ll_lam: float = 0.01,
+        ll_topk: int | None = None,
         ll_amax: float = 3.5,
+        ll_clamp: bool = False,
         subgoal_index: int = 0,
         **kwargs: Any,
     ) -> None:
@@ -84,9 +87,12 @@ class HierarchicalCEMSolver(CEMSolver):
         self.hl_horizon = int(hl_horizon)
         self.hl_samples, self.hl_iters = int(hl_samples), int(hl_iters)
         self.hl_lam, self.hl_amax = float(hl_lam), float(hl_amax)
+        self.hl_topk = int(hl_topk) if hl_topk else max(2, round(0.1 * self.hl_samples))
         self.ll_samples = int(ll_samples) if ll_samples else None
         self.ll_iters = int(ll_iters) if ll_iters else None
         self.ll_lam, self.ll_amax = float(ll_lam), float(ll_amax)
+        self.ll_clamp = bool(ll_clamp)
+        self.ll_topk = int(ll_topk) if ll_topk else max(2, round(0.1 * (ll_samples or 300)))
         self.subgoal_index = int(subgoal_index)
 
         if hl_dynamics not in ("f2", "compose"):
@@ -103,6 +109,7 @@ class HierarchicalCEMSolver(CEMSolver):
         self._episodes: Any = None
         self._starts: Any = None
         self._decision = 0
+        self._prev_subgoal: torch.Tensor | None = None
         if self.oracle_subgoal:
             if not cache_path:
                 raise ValueError("oracle_subgoal requires cache_path (the fs1 LatentCache)")
@@ -159,22 +166,45 @@ class HierarchicalCEMSolver(CEMSolver):
         iters: int,
         n_samples: int,
         cost_fn: Any,
+        topk: int = 0,
+        clamp: bool = True,
     ) -> torch.Tensor:
-        """Softmax-refit CEM (the update rule CEMSolver uses)."""
+        """CEM refit. ``topk > 0`` uses the hard-elite rule swm's CEMSolver uses.
+
+        The softmax branch (``topk <= 0``) is LIPSolver's rule and is kept only
+        for ablation. It is NOT a drop-in here: LIP softmaxes a learned value of
+        scale ~1 and seeds the mean from its actor, whereas both levels of this
+        solver start from zeros and score raw quantities (a 192-d summed squared
+        latent distance at the low level, macro-steps at the high level). At
+        ``lam`` 0.01 the weights go one-hot on the first iteration, which makes
+        the weighted variance collapse to the 0.05 floor and freezes the search
+        around a single random draw -- measured 21.3 final cost against 6.7 for
+        top-k at equal iterations on a surrogate of the low-level objective.
+        Hard top-k is also the exact rule the flat CEM baseline runs, so using
+        it keeps the optimizer out of the hierarchy comparison.
+        """
         var = torch.ones_like(mean)
         b, horizon, adim = mean.shape
+        k = min(int(topk), n_samples) if topk > 0 else 0
         with torch.no_grad():
             for _ in range(iters):
                 cand = torch.randn(b, n_samples, horizon, adim, device=mean.device) * var.unsqueeze(
                     1
                 ) + mean.unsqueeze(1)
                 cand[:, 0] = mean  # keep the incumbent
-                cand = cand.clamp(-amax, amax)
+                if clamp:
+                    cand = cand.clamp(-amax, amax)
                 cost = cost_fn(cand.reshape(b * n_samples, horizon, adim)).view(b, n_samples)
-                w = torch.softmax(-cost / lam, dim=1)
-                mean = (w[..., None, None] * cand).sum(dim=1)
-                spread = (cand - mean.unsqueeze(1)) ** 2
-                var = ((w[..., None, None] * spread).sum(dim=1)).sqrt().clamp(min=0.05)
+                if k > 0:
+                    idx = torch.topk(cost, k, dim=1, largest=False).indices
+                    rows = torch.arange(b, device=mean.device).unsqueeze(1).expand(-1, k)
+                    elite = cand[rows, idx]
+                    mean, var = elite.mean(dim=1), elite.std(dim=1).clamp(min=0.05)
+                else:
+                    w = torch.softmax(-cost / lam, dim=1)
+                    mean = (w[..., None, None] * cand).sum(dim=1)
+                    spread = (cand - mean.unsqueeze(1)) ** 2
+                    var = ((w[..., None, None] * spread).sum(dim=1)).sqrt().clamp(min=0.05)
         return mean
 
     def _adam_macros(self, z0: torch.Tensor, z_goal: torch.Tensor) -> torch.Tensor:
@@ -211,6 +241,7 @@ class HierarchicalCEMSolver(CEMSolver):
         self._episodes = list(episodes)
         self._starts = list(start_steps)
         self._decision = 0
+        self._prev_subgoal = None
         logger.info(f"task context set for {len(self._episodes)} envs (oracle={self.oracle_subgoal})")
 
     def _oracle_waypoint(self, b: int) -> torch.Tensor:
@@ -256,10 +287,21 @@ class HierarchicalCEMSolver(CEMSolver):
         if self.oracle_subgoal:
             subgoal = self._oracle_waypoint(b)
             if self.hl_value is not None:
-                logger.info(
-                    f"ORACLE: V(z0,goal) {self.hl_value(z0, z_goal).mean():.2f} "
-                    f"V(z0,true-subgoal) {self.hl_value(z0, subgoal).mean():.2f} macro-steps"
+                # `residual` is the diagnostic that matters: the distance still
+                # left to the waypoint the low level was aiming at during the
+                # macro that just finished. Perfect tracking -> 0; a residual
+                # that stays near the 1-macro reading means the low level did
+                # not move the state at all.
+                msg = (
+                    f"ORACLE d{self._decision}: V(z0,goal) {self.hl_value(z0, z_goal).mean():.2f} "
+                    f"V(z0,next-true-subgoal) {self.hl_value(z0, subgoal).mean():.2f}"
                 )
+                if self._prev_subgoal is not None and self._prev_subgoal.shape[0] == b:
+                    resid = self.hl_value(z0, self._prev_subgoal).mean()
+                    l2 = (z0 - self._prev_subgoal).pow(2).sum(-1).sqrt().mean()
+                    msg += f" | residual-to-last-target {resid:.2f} macro-steps (latent l2 {l2:.2f})"
+                logger.info(msg + " macro-steps")
+            self._prev_subgoal = subgoal
             self._decision += 1
             return self._solve_low(z_hist, subgoal, b, start)
 
@@ -282,7 +324,9 @@ class HierarchicalCEMSolver(CEMSolver):
         if self.hl_opt == "adam":
             macro_mean = self._adam_macros(z0, z_goal)
         else:
-            macro_mean = self._refit(macro_mean, self.hl_amax, self.hl_lam, self.hl_iters, hl_n, hl_cost)
+            macro_mean = self._refit(
+                macro_mean, self.hl_amax, self.hl_lam, self.hl_iters, hl_n, hl_cost, topk=self.hl_topk
+            )
 
         with torch.no_grad():
             waypoints = self.hwm.rollout_from(z0, macro_mean)
@@ -313,7 +357,16 @@ class HierarchicalCEMSolver(CEMSolver):
             return cast(torch.Tensor, (traj[:, -1] - sub_ll).pow(2).sum(-1))
 
         plan_mean = torch.zeros(b, self.horizon, self.action_dim, device=self.device)
-        plan_mean = self._refit(plan_mean, self.ll_amax, self.ll_lam, ll_iters, ll_n, ll_cost)
+        plan_mean = self._refit(
+            plan_mean,
+            self.ll_amax,
+            self.ll_lam,
+            ll_iters,
+            ll_n,
+            ll_cost,
+            topk=self.ll_topk,
+            clamp=self.ll_clamp,  # flat CEM does not clamp; match it
+        )
 
         logger.info(f"Hierarchical solve completed in {time.time() - start:.4f} seconds")
         return {"actions": plan_mean, "costs": [], "mean": [], "var": []}
