@@ -224,6 +224,12 @@ config:
           - volumeMounts:
               - mountPath: /mnt/raid0
                 name: raid0
+            env:
+              # the pod's own hostname is always "node-0"; this is the REAL node
+              - name: K8S_NODE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
 
 file_mounts:
   /tmp/codex-overlays/train_lip_ac.py: ./scripts/sky/overlays/train_lip_ac.py
@@ -325,14 +331,22 @@ setup: |
   FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
   if [ "${FREE_GB:-999}" -lt 300 ]; then
     echo "[janitor] raid0 ${FREE_GB}GB free < 300GB; pruning stale dirs"
-    for d in /mnt/raid0/rlp-cache/* /mnt/raid0/rlp-runs/* /mnt/raid0/rlp-wandb/*; do
+    for d in /mnt/raid0/rlp-cache/* /mnt/raid0/rlp-runs/* /mnt/raid0/rlp-wandb/* \
+             /mnt/raid0/rlp-re-* /mnt/raid0/rlp-reacher-* /mnt/raid0/rlp11-*reacher* /mnt/raid0/rlp-atlas-re-*; do
       [ -d "$d" ] || continue
-      case "$d" in *"${CACHE_VERSION}-${ENVNAME}-${BASE}"*) continue;; esac
+      case "$d" in *"${CACHE_VERSION}-${ENVNAME}-${BASE}"*|*"${EXPERIMENT_TAG}"*) continue;; esac
       [ -n "$(find "$d" -maxdepth 2 -mtime -3 -print -quit 2>/dev/null)" ] && continue
       if [ -f "$d/build.lock" ]; then flock -n "$d/build.lock" true 2>/dev/null || continue; fi
-      echo "[janitor] rm $d"; rm -rf "$d" 2>/dev/null || true
+      echo "[janitor] rm $(du -sh "$d" 2>/dev/null | cut -f1) $d"; rm -rf "$d" 2>/dev/null || true
     done
     df -h /mnt/raid0 | tail -1
+    FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
+  fi
+  echo "[node] k8s=${K8S_NODE:-unknown} pod=$(hostname) raid0_free=${FREE_GB:-?}GB"
+  if [ "${FREE_GB:-999}" -lt 150 ]; then
+    echo "[janitor] FATAL: only ${FREE_GB}GB free on this node's raid0 after pruning; top consumers:" >&2
+    du -sh /mnt/raid0/*/ 2>/dev/null | sort -h | tail -12 >&2
+    exit 3
   fi
   WANDB_ROOT=/mnt/raid0/rlp-wandb/${EXPERIMENT_TAG}/shard-${SHARD_INDEX:-0}
   mkdir -p "$WANDB_ROOT"/{runs,artifacts,cache}

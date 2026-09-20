@@ -175,6 +175,12 @@ config:
           - volumeMounts:
               - mountPath: /mnt/raid0
                 name: raid0
+            env:
+              # the pod's own hostname is always "node-0"; this is the REAL node
+              - name: K8S_NODE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
 
 file_mounts:
   /tmp/codex-overlays/train_lip_ac.py: ./scripts/sky/unigamma/overlays_reacher_vnorm/train_lip_ac.py
@@ -230,6 +236,32 @@ setup: |
   r.log({'probe': 1}); r.finish(); print('[wandb] verified')
   "
 
+  # raid0 janitor (2026-09-20, mirrors the tworoom yaml): several raid0 nodes
+  # sit at 98-100% with stale per-job scratch. When free space is short, prune
+  # OUR OWN rebuildable dirs older than 3 days -- rlp-cache/runs/wandb entries
+  # and the per-job reacher scratch dirs -- never the current tag, never a dir
+  # with a live build.lock, never another user's data. Then fail fast with a
+  # listing if still short, instead of dying on ENOSPC mid-download.
+  echo "[node] k8s=${K8S_NODE:-unknown} pod=$(hostname)"
+  FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
+  if [ "${FREE_GB:-999}" -lt 300 ]; then
+    echo "[janitor] raid0 ${FREE_GB}GB free < 300GB; pruning stale RLP dirs"
+    for d in /mnt/raid0/rlp-cache/* /mnt/raid0/rlp-runs/* /mnt/raid0/rlp-wandb/* \
+             /mnt/raid0/rlp-re-* /mnt/raid0/rlp-reacher-* /mnt/raid0/rlp11-*reacher* /mnt/raid0/rlp-atlas-re-*; do
+      [ -d "$d" ] || continue
+      case "$d" in *"${EXPERIMENT_TAG}"*) continue;; esac
+      [ -n "$(find "$d" -maxdepth 2 -mtime -3 -print -quit 2>/dev/null)" ] && continue
+      if [ -f "$d/build.lock" ]; then flock -n "$d/build.lock" true 2>/dev/null || continue; fi
+      echo "[janitor] rm $(du -sh "$d" 2>/dev/null | cut -f1) $d"; rm -rf "$d" 2>/dev/null || true
+    done
+    FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
+    echo "[janitor] raid0 now ${FREE_GB}GB free"
+  fi
+  if [ "${FREE_GB:-999}" -lt 150 ]; then
+    echo "[janitor] FATAL: only ${FREE_GB}GB free on this node's raid0 after pruning; top consumers:" >&2
+    du -sh /mnt/raid0/*/ 2>/dev/null | sort -h | tail -12 >&2
+    exit 3
+  fi
   SCRATCH=/mnt/raid0/${EXPERIMENT_TAG}
   sudo mkdir -p "$SCRATCH" && sudo chmod 777 "$SCRATCH"
   if [ -e /workspace ] && [ ! -L /workspace ]; then
