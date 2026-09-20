@@ -38,6 +38,10 @@ value:
   n_step: 1
   p_cross: 0.3
   depth: null           # MRN value-head depth (null = core default 2)
+  head: null            # value head: quasimetric (MRN, default) | iqe | mlp -- `mlp` +
+                        # expectile 0.5 is plain goal-conditioned TD, V(z,g) an MLP,
+                        # symmetric Huber, no quasimetric structure
+  symmetric: null       # mlp head only: average both orderings (default false)
   window_frames: null   # m-frame window teacher (null = single frame); the
                         # planner stage inherits the window automatically
   window_lag: null      # window frame spacing in primitive steps; required

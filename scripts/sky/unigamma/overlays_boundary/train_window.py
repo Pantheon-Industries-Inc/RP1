@@ -53,6 +53,8 @@ p.add_argument("--p-cross", type=float, default=0.3, help="cross-episode (stitch
 p.add_argument("--max-delta", type=int, default=None, help="cap in-episode hindsight offsets (primitive steps)")
 p.add_argument("--near-frac", type=float, default=0.0, help="fraction of in-episode goals drawn 1..near_max steps ahead")
 p.add_argument("--near-max", type=int, default=3)
+p.add_argument("--head", choices=["quasimetric", "mlp"], default="quasimetric",
+               help="quasimetric (MRN) | mlp: plain pairwise MLP V(z,g) (with --expectile 0.5 = plain TD)")
 p.add_argument("--device", default="cuda")
 a = p.parse_args()
 
@@ -78,7 +80,7 @@ stacked = LatentCache(z=Zs, episode_idx=c.episode_idx, step_idx=c.step_idx,
                                            "window_frames": F, "window_lag": a.lag})
 logging.info(f"stacked cache {tuple(Zs.shape)}")
 
-cfg = TDConfig(head="quasimetric", hidden_dim=256, depth=a.depth, embed_dim=128,
+cfg = TDConfig(head=a.head, hidden_dim=256, depth=a.depth, embed_dim=128,
                n_step=a.n_step, gamma=a.gamma, expectile=a.expectile,
                boundary=a.boundary,
                p_cross=a.p_cross, balanced=True, batch_size=1024, steps=a.steps, seed=a.seed,

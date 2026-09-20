@@ -126,6 +126,12 @@ def _run(cfg: DictConfig) -> None:
         value_depth = value_overrides.pop("depth", None)
         if value_depth is not None:
             value_overrides["core.value.depth"] = value_depth
+        # `head` / `symmetric` likewise live on the value-architecture group:
+        # quasimetric (MRN, default) | iqe | mlp (plain pairwise MLP V(z, g))
+        for arch_key in ("head", "symmetric"):
+            arch_val = value_overrides.pop(arch_key, None)
+            if arch_val is not None:
+                value_overrides[f"core.value.{arch_key}"] = arch_val
         # same for the eikonal gradient penalty: a value-architecture/objective
         # knob that train/metric reads off the composed value group.
         eikonal = value_overrides.pop("eikonal_weight", None)

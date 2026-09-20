@@ -97,6 +97,8 @@ envs:
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
   TD_STEPS: "6000"         # offline TD teacher steps (12000 = longer warm-start)
+  TD_HEAD: "quasimetric"   # offline teacher head: quasimetric (MRN) | mlp (plain
+                           # pairwise MLP V(z,g); with expectile 0.5 = plain TD)
   TW_TD_EXPECTILE: "0.1"   # tworoom offline teacher expectile (cube: CU_TD_EXPECTILE;
                            # the unified-critic recipe passes 0.03 on both)
   TD_PER_SEED: ""          # 1 = one offline teacher per TRAIN seed on cube too
@@ -484,6 +486,7 @@ setup: |
   # banked g98s12k teacher recipe (RECIPE_lewm_lipv4_expand3.md).
   TDFLAGS="--expectile ${TW_TD_EXPECTILE:-0.1} --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
   [ "$ENVNAME" = cube ] && TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+  TDFLAGS="$TDFLAGS --head ${TD_HEAD:-quasimetric}"
   # per-seed guard, not any-file: a cap-cancelled builder can leave a partial
   # ~/gm (e.g. s0/s1 without s2) that an any-file guard would accept and the
   # validation below would then fatally reject
@@ -530,6 +533,7 @@ setup: |
   if [ "${REUSE_ONLY:-0}" != 1 ]; then
     BF_TDFLAGS="--expectile ${TW_TD_EXPECTILE:-0.1} --steps ${TD_STEPS:-6000} --gamma ${TR_GAMMA:-1.0} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
     [ "$ENVNAME" = cube ] && BF_TDFLAGS="--expectile ${CU_TD_EXPECTILE:-0.03} --gamma ${CU_GAMMA:-0.98} --steps ${TD_STEPS:-12000} --p-cross ${UNIG_PC:-0.3} --depth ${CRIT_DEPTH:-2}"
+    BF_TDFLAGS="$BF_TDFLAGS --head ${TD_HEAD:-quasimetric}"
     BF_SEEDS="0"
     [ "$ENVNAME" = tworoom ] && [ "${SPLIT:-0}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"
     [ "${TD_PER_SEED:-}" = 1 ] && BF_SEEDS="${TRAIN_SEEDS:-0 1 2}"

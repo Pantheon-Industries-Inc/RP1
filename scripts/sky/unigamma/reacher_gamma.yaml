@@ -97,6 +97,7 @@ envs:
   RS_LAYERS: "2"           # v4 refiner hidden layers
   ACR_LAM: "0"             # anti-constancy regularizer weight
   RS_TD_STEPS: "12000"     # window-teacher steps (unified critic: = STEPS)
+  RS_TD_HEAD: "quasimetric" # window-teacher head: quasimetric (MRN) | mlp (plain TD with VALUE_EXPECTILE=0.5)
   RS_TD_PC: "0.3"          # window-teacher cross-episode goal fraction
   RS_TD_NEAR_FRAC: "0"     # window-teacher near-goal oversampling (1..RS_TD_NEAR_MAX steps)
   RS_TD_NEAR_MAX: "3"
@@ -319,6 +320,8 @@ setup: |
   TDSUF=""; [ "${RS_TD_STEPS:-12000}" != 12000 ] && TDSUF="${TDSUF}_t${RS_TD_STEPS}"
   [ "${RS_TD_NEAR_FRAC:-0}" != 0 ] && TDSUF="${TDSUF}_nf${RS_TD_NEAR_FRAC}m${RS_TD_NEAR_MAX:-3}"
   [ "${RS_TD_PC:-0.3}" != 0.3 ] && TDSUF="${TDSUF}_pc${RS_TD_PC}"
+  [ "${RS_TD_HEAD:-quasimetric}" != quasimetric ] && TDSUF="${TDSUF}_h${RS_TD_HEAD}"
+  [ "${VALUE_EXPECTILE:-0.03}" != 0.03 ] && TDSUF="${TDSUF}_e${VALUE_EXPECTILE}"
   W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}${TDSUF}_std.pt
   WSTEPS=${RS_TD_STEPS:-12000}; [ "${SMOKE:-0}" = 1 ] && WSTEPS=2000
   # RS_TD_PER_SEED=1: one teacher per TRAIN seed (window_*_s<seed>.pt); the
@@ -328,7 +331,7 @@ setup: |
     W3S="$W3"; [ "${RS_TD_PER_SEED:-0}" = 1 ] && W3S="${W3%.pt}_s${TDS}.pt"
     [ -f "$W3S" ] || CUDA_VISIBLE_DEVICES=0 python3 /workspace/train_window.py \
       --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
-      --boundary ${RS_BOUNDARY:-legacy} --p-cross ${RS_TD_PC:-0.3} \
+      --boundary ${RS_BOUNDARY:-legacy} --p-cross ${RS_TD_PC:-0.3} --head ${RS_TD_HEAD:-quasimetric} \
       --near-frac ${RS_TD_NEAR_FRAC:-0} --near-max ${RS_TD_NEAR_MAX:-3} \
       --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed $TDS --out "$W3S" > /workspace/logs/w3_s${TDS}.log 2>&1 || true
     [ -f "$W3S" ] || { echo "window value failed (seed $TDS)"; tail -20 /workspace/logs/w3_s${TDS}.log; exit 1; }
@@ -363,6 +366,8 @@ run: |
   TDSUF=""; [ "${RS_TD_STEPS:-12000}" != 12000 ] && TDSUF="${TDSUF}_t${RS_TD_STEPS}"
   [ "${RS_TD_NEAR_FRAC:-0}" != 0 ] && TDSUF="${TDSUF}_nf${RS_TD_NEAR_FRAC}m${RS_TD_NEAR_MAX:-3}"
   [ "${RS_TD_PC:-0.3}" != 0.3 ] && TDSUF="${TDSUF}_pc${RS_TD_PC}"
+  [ "${RS_TD_HEAD:-quasimetric}" != quasimetric ] && TDSUF="${TDSUF}_h${RS_TD_HEAD}"
+  [ "${VALUE_EXPECTILE:-0.03}" != 0.03 ] && TDSUF="${TDSUF}_e${VALUE_EXPECTILE}"
   W3=/workspace/metrics/window${VALUE_FRAMES:-1}_${BASE}_g${RS_GAMMA:-0.98}_b${RS_BOUNDARY:-legacy}_d${CRIT_DEPTH:-2}_n${RS_NSTEP:-50}${TDSUF}_std.pt
   PERSIST=/checkpoints/${PANTHEON_USER}/${EXPERIMENT_TAG}
   export PERSIST
