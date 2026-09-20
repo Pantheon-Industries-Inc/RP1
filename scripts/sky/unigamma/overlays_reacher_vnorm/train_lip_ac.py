@@ -68,6 +68,27 @@ def _cos(base, final, t, T):
     return final + 0.5 * (base - final) * (1.0 + math.cos(math.pi * t / T))
 
 
+
+def _band_offset(rng, hi: int, bands=None) -> int:
+    """Hindsight-goal offset in fs5 blocks. Legacy: uniform 1..hi. With ``bands``
+    (one entry per deployment horizon, in blocks, e.g. [6, 21] for h25+h100)
+    a band is drawn uniformly first and the offset uniformly within
+    1..min(band, hi): every deployment horizon gets equal mass, so ONE actor
+    serves h25 and h100 without the short horizon being 4x under-weighted.
+    Equal-width buckets over 1..hi would NOT do this -- that is uniform again."""
+    if hi < 1:
+        return 1
+    if not bands:
+        return int(rng.integers(1, hi + 1))
+    b = int(bands[int(rng.integers(len(bands)))])
+    return int(rng.integers(1, min(b, hi) + 1))
+
+
+def _parse_bands(v):
+    if v is None or v is False or str(v).strip() in ("", "None", "null", "false"):
+        return None
+    return [int(float(x)) for x in str(v).replace(";", ",").split(",") if x.strip()]
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--recipe-profile", default="auto", choices=[
@@ -116,6 +137,9 @@ def main():
                         "history, instead of real multi-frame cache windows")
     p.add_argument("--max-delta", type=int, default=None)
     p.add_argument("--p-cross", type=float, default=0.3)
+    p.add_argument("--band-mix", type=str, default=None,
+                   help="comma list of deployment-horizon bands in fs5 blocks (e.g. 6,21): a band is drawn "
+                        "uniformly, then the offset uniformly within it, so every horizon gets equal mass")
     p.add_argument("--actor-lr", type=float, default=None)
     p.add_argument("--actor-lr-final", type=float, default=None,
                    help="cosine-decay actor lr to this over all steps (None = constant)")
@@ -370,6 +394,11 @@ def main():
     keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]
     ep_rows = {e: np.asarray(eps[e]) for e in keys}
     ep_ids = np.array(keys)
+    BANDS = _parse_bands(a.band_mix)
+    if BANDS and max(BANDS) > a.max_delta:
+        raise ValueError(f"--band-mix {BANDS} exceeds --max-delta {a.max_delta}")
+    print(f"[band] max_delta={a.max_delta} blocks, {'MIXTURE over deployment bands ' + str(BANDS) if BANDS else 'uniform'}, "
+          f"p_cross={a.p_cross}, episodes kept {len(keys)}/{len(eps)} (len > max_delta+4)", flush=True)
     with h5py.File(a.h5, "r") as h:
         act = h["action"][:]
         ep_off = h["ep_offset"][:]
@@ -431,7 +460,7 @@ def main():
                 r2 = ep_rows[e2]
                 goal_idx.append(r2[rng.integers(len(r2))])
             else:
-                d = int(rng.integers(1, a.max_delta + 1))
+                d = _band_offset(rng, min(a.max_delta, L - 1 - t) if BANDS else a.max_delta, BANDS)
                 goal_idx.append(rows[min(t + d, L - 1)])
         idx_dev = z.device
         zh = z.index_select(0, torch.as_tensor(hist_idx, device=idx_dev)) \

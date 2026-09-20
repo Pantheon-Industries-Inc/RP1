@@ -104,6 +104,7 @@ envs:
   RS_FREEZE: ""            # actor --freeze-critic-frac (empty = recipe profile 0.5;
                            # 0 = frozen teacher deployed verbatim, PushT's recipe)
   RS_ACTOR_PC: ""          # actor --p-cross (empty = overlay default 0.3)
+  RS_ACTOR_BANDS: ""       # actor --band-mix, e.g. "6": deployment-horizon band mixture
   CRIT_DEPTH: "2"          # MRN critic-head depth (window teacher + co-critic)
                            # -- W3 cache key must change with it (see below)
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
@@ -930,7 +931,7 @@ run: |
           --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} \
           --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
           --critic-lr 1e-3 --critic-lr-final 1e-4 \
-          --replay-prob $RP --expand-weight $XW --freeze-critic-frac ${RS_FREEZE:-0.5} ${RS_ACTOR_PC:+--p-cross $RS_ACTOR_PC} ${FROZEN_ARGS} \
+          --replay-prob $RP --expand-weight $XW --freeze-critic-frac ${RS_FREEZE:-0.5} ${RS_ACTOR_PC:+--p-cross $RS_ACTOR_PC} ${RS_ACTOR_BANDS:+--band-mix $RS_ACTOR_BANDS} ${FROZEN_ARGS} \
           --lambda-schedule uniform --mean-weight $MW --amax $AMAX \
           --temporal-objective "$TOBJ" \
           --steps $STEPS --batch ${BATCH:-128} --ckpt-every ${CKPT_EVERY:-0} \

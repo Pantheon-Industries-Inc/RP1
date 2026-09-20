@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# UNIFIED CRITIC on top of config B -- one critic-training recipe for all
-# seven cells (TwoRoom/Cube/Reacher x LeWM/PLDM, PushT/LeWM). Actor side is
-# config B unchanged (amax 2.5, md 20 / pc 0.3 except PushT's md 6 / pc 0.1,
-# ac 0.5, K 8, ES on 48-51, per-env budgets/anchors/replay).
+# UNIFIED CRITIC + UNIFIED ACTOR BAND on top of config B, all seven cells
+# (TwoRoom/Cube/Reacher x LeWM/PLDM, PushT/LeWM). Actor band rule (2026-09-20):
+# max_delta = longest deployment horizon in fs5 blocks + 1 (tw/cube 21,
+# reacher/pusht 6), offsets drawn as a MIXTURE over the deployment-horizon
+# bands (tw/cube 6,21: half the goals within 6 blocks, half within 21; a
+# single-horizon env is just uniform 1..6) so one actor serves h25 and h100,
+# p_cross 0.1 everywhere.
+# Rest of the actor is config B (amax 2.5, ac 0.5, K 8, ES on 48-51,
+# per-env budgets/anchors/replay).
 #
 # The critic recipe (= PushT's W1NEAR_FRZ teacher, made the rule everywhere):
 #   * offline TD teacher only, deployed verbatim: freeze_critic_frac 0, so the
@@ -25,7 +30,7 @@
 #   CELLS="cube-pldm pusht" SEEDS="0 1 2 3 4 5" bash ...   # subset
 #   DRY=1 bash ...                                          # print only
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../../.."
 export PATH="$HOME/.sky/bin:$PATH"
 DATE=${DATE:-20260920}
 SEEDS=${SEEDS:-"0 1 2"}
@@ -44,8 +49,8 @@ for CELL in $CELLS; do
       --env ENVNAME=tworoom --env BASE=$BASE --env GRID=unig --env ONLYCFG=unig_ctrl_a2.5 \
       --env SPLIT=1 --env SMOKE=0 --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
       --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
-      --env TR_GAMMA=0.98 --env TR_NSTEP=1 --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=20 --env UNIG_K=8 \
-      --env ACR_LAM=0.5 --env TW_REPLAY=0 \
+      --env TR_GAMMA=0.98 --env TR_NSTEP=1 --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=21 --env UNIG_K=8 \
+      --env ACR_LAM=0.5 --env TW_REPLAY=0 --env ACTOR_BANDS="6,21" --env ACTOR_PC=0.1 \
       --env UNIG_SCHED=frz --env TD_STEPS=8000 --env TW_TD_EXPECTILE=0.03 --env UNIG_PC=0.3 \
       --env NEAR_FRAC=0.3 --env NEAR_MAX=3 --env TD_PER_SEED=1 \
       --env STEPS=8000 --env BATCH=128 --env RH=5 \
@@ -60,7 +65,7 @@ for CELL in $CELLS; do
       --env SPLIT=0 --env SMOKE=0 --env INCLUDE_WINNERS=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 \
       --env STAGED=0 --env ACTOR_IMPORT_TAG="" --env FULLCACHE=0 --env SHARD_INDEX=0 --env SHARD_COUNT=1 \
       --env CU_DYNA=0 --env CU_DYNA_WM="" --env CU_EXPAND=1.0 --env CU_REPLAY=0.5 --env CU_GAMMA=0.98 --env TR_NSTEP=1 \
-      --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=20 --env UNIG_K=8 --env ACR_LAM=0.5 \
+      --env CRIT_DEPTH=2 --env UNIG_LAYERS=2 --env UNIG_MD=21 --env UNIG_K=8 --env ACR_LAM=0.5 --env ACTOR_BANDS="6,21" --env ACTOR_PC=0.1 \
       --env UNIG_SCHED=frz --env TD_STEPS=6000 --env CU_TD_EXPECTILE=0.03 --env UNIG_PC=0.3 \
       --env NEAR_FRAC=0.3 --env NEAR_MAX=3 --env TD_PER_SEED=1 \
       --env STEPS=6000 --env BATCH=256 --env RH=5 \
@@ -73,7 +78,7 @@ for CELL in $CELLS; do
     run sky jobs launch scripts/sky/unigamma/reacher_gamma.yaml -n "$NAME" --priority $PRIO -y --async \
       --env BASE=$BASE --env GRID=cross --env AMFIX=2.5 --env CROSS_EXPANDS="0" --env CROSS_REPLAYS="0.5" \
       --env SMOKE=0 --env REUSE_ONLY=0 --env ACTOR_ONLY=0 --env ACTOR_IMPORT_TAG="" \
-      --env RS_GAMMA=0.98 --env RS_NSTEP=1 --env CRIT_DEPTH=2 --env RS_LAYERS=2 --env RS_MD=20 --env RS_K=8 \
+      --env RS_GAMMA=0.98 --env RS_NSTEP=1 --env CRIT_DEPTH=2 --env RS_LAYERS=2 --env RS_MD=6 --env RS_K=8 --env RS_ACTOR_BANDS="6" --env RS_ACTOR_PC=0.1 \
       --env ACR_LAM=0.5 --env VALUE_FRAMES=2 --env VALUE_EXPECTILE=0.03 \
       --env RS_FREEZE=0 --env RS_TD_STEPS=6000 --env RS_TD_PC=0.3 --env RS_TD_NEAR_FRAC=0.3 --env RS_TD_NEAR_MAX=3 --env RS_TD_PER_SEED=1 \
       --env STEPS=6000 --env BATCH=256 --env CKPT_EVERY=2000 --env RS_CKPT_SELECT=1 --env RS_CKPT_VAL_SEEDS="48 49 50 51" \
@@ -86,7 +91,7 @@ for CELL in $CELLS; do
     # steps); the actor side is the 78.7 es1k recipe. Re-run only for a same-date tag.
     for S in $SEEDS; do
       DRY=${DRY:-0} DATE=$DATE REPLAY=0 MAX_DELTA_OVERRIDE=6 \
-        EXTRA_OVR="planner.p_cross=0.1 value.steps=6000 planner.ckpt_every=1000" TAGSUF=-unicrit \
+        EXTRA_OVR="planner.p_cross=0.1 planner.band_mix=6 value.steps=6000 planner.ckpt_every=1000" TAGSUF=-unicrit \
         scripts/sky/launch_pusht_critic_arms.sh W1NEAR_FRZ $S
     done
     ;;

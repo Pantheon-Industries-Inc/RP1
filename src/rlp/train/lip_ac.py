@@ -80,6 +80,27 @@ from .utils import cosine_interpolate
 type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
+
+def _band_offset(rng, hi: int, bands=None) -> int:
+    """Hindsight-goal offset in fs5 blocks. Legacy: uniform 1..hi. With ``bands``
+    (one entry per deployment horizon, in blocks, e.g. [6, 21] for h25+h100)
+    a band is drawn uniformly first and the offset uniformly within
+    1..min(band, hi): every deployment horizon gets equal mass, so ONE actor
+    serves h25 and h100 without the short horizon being 4x under-weighted.
+    Equal-width buckets over 1..hi would NOT do this -- that is uniform again."""
+    if hi < 1:
+        return 1
+    if not bands:
+        return int(rng.integers(1, hi + 1))
+    b = int(bands[int(rng.integers(len(bands)))])
+    return int(rng.integers(1, min(b, hi) + 1))
+
+
+def _parse_bands(v):
+    if v is None or v is False or str(v).strip() in ("", "None", "null", "false"):
+        return None
+    return [int(float(x)) for x in str(v).replace(";", ",").split(",") if x.strip()]
+
 def _run(cfg: DictConfig) -> None:
     # cfg arrives struct+readonly from dispatch; flatten onto an open copy so
     # the planner/value-group keys and derived aliases can be merged in.
@@ -146,6 +167,14 @@ def _run(cfg: DictConfig) -> None:
         )
     ep_rows = {e: np.asarray(eps[e]) for e in keys}
     ep_ids = np.array(keys)
+    BANDS = _parse_bands(a.get("band_mix", None))
+    if BANDS and max(BANDS) > a.max_delta:
+        raise ValueError(f"band_mix {BANDS} exceeds max_delta {a.max_delta}")
+    logger.info(
+        f"actor goal band: max_delta={a.max_delta} blocks, "
+        f"{'MIXTURE over deployment bands ' + str(BANDS) if BANDS else 'uniform'}, p_cross={a.p_cross}; "
+        f"episodes kept {len(keys)}/{len(eps)} (len > max_delta+4)"
+    )
     with h5py.File(a.h5, "r") as h:
         act = h["action"][:]
         ep_off = h["ep_offset"][:]
@@ -226,7 +255,7 @@ def _run(cfg: DictConfig) -> None:
                 r2 = ep_rows[e2]
                 zg.append(z[r2[rng.integers(len(r2))]])
             else:
-                d = int(rng.integers(1, a.max_delta + 1))
+                d = _band_offset(rng, min(a.max_delta, L - 1 - t) if BANDS else a.max_delta, BANDS)
                 zg.append(z[rows[min(t + d, L - 1)]])
         return (
             torch.stack(zh),

@@ -102,6 +102,7 @@ envs:
   TD_PER_SEED: ""          # 1 = one offline teacher per TRAIN seed on cube too
                            # (legacy: tworoom+SPLIT per seed, cube shares td_grid_s0)
   CU_REPLAY: "0.5"         # cube actor replay_prob (was hardcoded 0.5)
+  ACTOR_BANDS: ""          # actor --band-mix, e.g. "6,21": equal mass per deployment horizon
   ACTOR_PC: ""             # actor --p-cross (empty = overlay default 0.3); the
                            # teacher/co-critic fraction is UNIG_PC
   TDB: "1024"              # co-critic TD batch (2048/4096 = lower-variance targets)
@@ -1425,7 +1426,7 @@ run: |
           --temporal-objective "$TOBJ" \
           --align-mode $MODE --align-weight $AW \
           ${AFVFLAG} ${VNFLAG} ${WARMFLAG} ${RECIPE} ${SCHEDFLAGS} ${FROZEN_ARGS} \
-          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} ${ACTOR_PC:+--p-cross $ACTOR_PC} --seed ${SEED} \
+          --steps ${STEPS} --batch ${BATCH} --n-step ${TR_NSTEP:-50} --boundary ${BOUNDARY:-legacy} --squash ${SQUASH:-hard} --ckpt-every ${CKPT_EVERY:-0} --td-batch ${TDB:-1024} --ema-tau ${EMA_TAU:-0.005} --td-p-cross ${UNIG_PC:-0.3} --v4-hidden ${UNIG_WIDTH:-512} --v4-layers ${UNIG_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} ${ACTOR_PC:+--p-cross $ACTOR_PC} ${ACTOR_BANDS:+--band-mix $ACTOR_BANDS} --seed ${SEED} \
           --wandb-project "${WANDB_PROJECT}" --wandb-entity "${WANDB_ENTITY}" \
           --wandb-name "${EXPERIMENT_TAG}_g_${ENVNAME}_${BASE}_${NM}_s${SEED}" \
           --out "$OUT" --out-value $PERSIST/values/g_${ENVNAME}_${BASE}_${NM}_s${SEED}_value.pt \
