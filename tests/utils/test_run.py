@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from rlp.utils.logging import configured_logging, logger
-from rlp.utils.run import RunMetadata, RunPaths, save_config
+from rp1.utils.logging import configured_logging, logger
+from rp1.utils.run import RunMetadata, RunPaths, save_config
 
 
 def test_run_paths_create_complete_collision_safe_layout(tmp_path: Path) -> None:

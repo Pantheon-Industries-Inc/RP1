@@ -1,5 +1,5 @@
 [project]
-name = "rlp"
+name = "rp1"
 version = "0.1.0"
 description = "Learned iterative planning over latent world models"
 readme = "README.md"
@@ -16,14 +16,14 @@ requires = ["hatchling>=1.31"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rlp"]
+packages = ["src/rp1"]
 
 [tool.hatch.build.targets.wheel.shared-data]
-"configs" = "share/rlp/configs"
+"configs" = "share/rp1/configs"
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "/src/rlp",
+  "/src/rp1",
   "/configs",
   "/tests",
   "/README.md",

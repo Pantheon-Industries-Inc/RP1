@@ -9,8 +9,8 @@ import pyarrow as pa
 import pytest
 from huggingface_hub.hf_api import DatasetInfo
 
-import rlp.training.data.job.fetch_dataset as fetch_module
-from rlp.data import dataset_path, get_dataset_spec
+import rp1.training.data.job.fetch_dataset as fetch_module
+from rp1.data import dataset_path, get_dataset_spec
 
 
 def _dataset_info(size: int = 1024) -> DatasetInfo:
@@ -23,7 +23,7 @@ def _dataset_info(size: int = 1024) -> DatasetInfo:
 
 
 def test_dataset_path_uses_external_data_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RLP_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("RP1_DATA_HOME", str(tmp_path))
     assert dataset_path(get_dataset_spec("ogb_cube")) == tmp_path / "datasets" / "ogb_cube_single.lance"
 
 
@@ -100,7 +100,7 @@ def test_fetch_validates_and_reuses_completed_dataset(monkeypatch: pytest.Monkey
     assert first.rows == 1
     assert second == first
     assert api_calls == 1
-    assert (tmp_path / "datasets" / ".rlp" / "ogb_cube.json").is_file()
+    assert (tmp_path / "datasets" / ".rp1" / "ogb_cube.json").is_file()
 
 
 def test_fetch_refuses_insufficient_disk_space(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -126,8 +126,8 @@ def test_archive_extraction_and_h5_validation(tmp_path: Path) -> None:
     import numpy as np
     import zstandard
 
-    from rlp.data import DatasetSpec
-    from rlp.training.data.job.fetch_dataset import _extract_archive, _validate_dataset
+    from rp1.data import DatasetSpec
+    from rp1.training.data.job.fetch_dataset import _extract_archive, _validate_dataset
 
     source = tmp_path / "payload"
     source.mkdir()
@@ -162,8 +162,8 @@ def test_plain_zst_extraction_and_h5_validation(tmp_path: Path) -> None:
     import numpy as np
     import zstandard
 
-    from rlp.data import DatasetSpec
-    from rlp.training.data.job.fetch_dataset import _extract_archive, _validate_dataset
+    from rp1.data import DatasetSpec
+    from rp1.training.data.job.fetch_dataset import _extract_archive, _validate_dataset
 
     payload = tmp_path / "pusht_expert_train.h5"
     with h5py.File(payload, "w") as handle:

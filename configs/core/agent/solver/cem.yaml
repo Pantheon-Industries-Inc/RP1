@@ -1,5 +1,5 @@
 # @package core.agent.solver
-_target_: rlp.core.agent.solver.CEMSolver
+_target_: rp1.core.agent.solver.CEMSolver
 batch_size: 1
 num_samples: 300
 var_scale: 1.0

@@ -18,7 +18,7 @@ jobs:
       - name: Build wheel and verify installed config discovery
         run: |
           pixi run -e dev python -m pip wheel --no-deps --wheel-dir dist .
-          pixi run -e dev python -m venv --system-site-packages /tmp/rlp-wheel-smoke
-          /tmp/rlp-wheel-smoke/bin/pip install --no-deps dist/rlp-*.whl
+          pixi run -e dev python -m venv --system-site-packages /tmp/rp1-wheel-smoke
+          /tmp/rp1-wheel-smoke/bin/pip install --no-deps dist/rp1-*.whl
           cd /tmp
-          /tmp/rlp-wheel-smoke/bin/python -c "from rlp.inference.evaluate import main; from rlp.utils.config import get_config_root; assert get_config_root().is_dir()"
+          /tmp/rp1-wheel-smoke/bin/python -c "from rp1.inference.evaluate import main; from rp1.utils.config import get_config_root; assert get_config_root().is_dir()"

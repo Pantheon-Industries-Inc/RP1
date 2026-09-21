@@ -1,0 +1,25 @@
+# @package core.agent.solver
+_target_: rp1.core.agent.solver.RP1Solver
+batch_size: 1
+num_samples: 300
+var_scale: 1.0
+n_steps: 0
+topk: 30
+lam: 1.0
+checkpoint:
+  _target_: rp1.training.harness.checkpointing.load_planner
+  path: ???
+  value_path: null  # override the value recorded in the checkpoint
+rp1_select: last
+graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
+graph_warmup_iters: 5
+record_probes: false
+probe_directory: ${run.artifacts}/probes
+# Refinement starts from the zero plan, or from the lowest-value plan among
+# zero, iid-Gaussian and time-tiled Gaussian candidates ("value"), or from the
+# mean of a CEM run on the planning cost ("cem").
+init_mode: zero
+init_samples: 64
+init_scale: 1.5
+cem_init_steps: 30
+iters_override: null  # refinement iterations at deployment; null = the trained count

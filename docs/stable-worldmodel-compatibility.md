@@ -1,19 +1,19 @@
 # Stable-WorldModel compatibility
 
-RLP depends on the published `stable-worldmodel==0.1.1` package. The version is
-pinned because RLP's planning and checkpoint adapters target that release's
+rp1 depends on the published `stable-worldmodel==0.1.1` package. The version is
+pinned because rp1's planning and checkpoint adapters target that release's
 public module layout and runtime contracts.
 
-The vendored Stable-WM fork has been removed. RLP-owned behavior now lives in
+The vendored Stable-WM fork has been removed. rp1-owned behavior now lives in
 small adapters instead:
 
-- `rlp.environment.World` preserves dataset-backed resets, goal snapshots,
+- `rp1.environment.World` preserves dataset-backed resets, goal snapshots,
   recording, and image resizing used by the evaluation campaigns.
-- `rlp.core.value.LatentGoalCost` corrects the candidate-axis broadcasting in
+- `rp1.core.value.LatentGoalCost` corrects the candidate-axis broadcasting in
   the 0.1.1 LeWM/PLDM terminal cost.
-- `rlp.core.world_model.DinoWMTokens` preserves the released patch-token DINO
+- `rp1.core.world_model.DinoWMTokens` preserves the released patch-token DINO
   checkpoint contract.
-- RLP's LIP, Dyna, and TRM implementations remain local research algorithms;
+- rp1's rp1, Dyna, and TRM implementations remain local research algorithms;
   they are not copies of published Stable-WM modules.
 
 ## Why upstream `main` is not a drop-in upgrade

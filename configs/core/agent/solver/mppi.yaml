@@ -1,6 +1,6 @@
 # @package core.agent.solver
 # Paper baseline: 300 samples x 30 iterations, temperature 0.5.
-_target_: rlp.core.agent.solver.MPPISolver
+_target_: rp1.core.agent.solver.MPPISolver
 batch_size: 1
 num_samples: 300
 var_scale: 1.0

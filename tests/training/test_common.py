@@ -10,12 +10,12 @@ import torch
 from lightning import LightningModule, Trainer
 from torchvision.transforms import v2
 
-from rlp.core.agent.value.temporal import trajectory_value
-from rlp.data import LatentCache
-from rlp.training.harness import callbacks
-from rlp.training.harness.callbacks import NonFiniteGradientGuard, PortableCheckpointCallback
-from rlp.training.harness.schedule import cosine_interpolate, sample_windows
-from rlp.training.harness.transforms import nested_clip, nested_resize
+from rp1.core.agent.value.temporal import trajectory_value
+from rp1.data import LatentCache
+from rp1.training.harness import callbacks
+from rp1.training.harness.callbacks import NonFiniteGradientGuard, PortableCheckpointCallback
+from rp1.training.harness.schedule import cosine_interpolate, sample_windows
+from rp1.training.harness.transforms import nested_clip, nested_resize
 
 
 @dataclass

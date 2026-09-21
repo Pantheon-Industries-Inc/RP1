@@ -1,13 +1,13 @@
-# RLP — Reinforcement Learned Planning with Latent World Models
+# rp1 — Reinforcement Learned Planning with Latent World Models
 
-Reference implementation of **RLP** (paper: *Reinforcement Learned Planning
+Reference implementation of **rp1** (paper: *Reinforcement Learned Planning
 with Latent World Models*): a goal-conditioned quasimetric critic plus a
 neural plan-refiner, trained on top of any frozen pretrained latent world
 model, that replaces hand-designed planners (CEM, MPPI, gradient descent)
 with a learned search procedure — 9 world-model rollouts per decision instead
 of 3,000–9,000.
 
-The paper's **RLP** planner is called **LIP** (Learned Iterative Planner) in
+The paper's **rp1** planner is called **rp1** (Learned Iterative Planner) in
 some code and experiment records; both names refer to the same residual plan
 refiner (Eq. 10).
 
@@ -15,11 +15,11 @@ refiner (Eq. 10).
 
 - **[`docs/replication/REPLICATION_RLP.md`](docs/replication/REPLICATION_RLP.md)**
   — the paper replication command sheet: paper-component → code map,
-  one-command RLP training, per-table evaluation commands, world-model bases,
+  one-command rp1 training, per-table evaluation commands, world-model bases,
   the Dyna round, and the data-split protocol.
 - [`docs/replication/cube/REPLICATION_CUBE.md`](docs/replication/cube/REPLICATION_CUBE.md)
   — bit-level replication of the tracked OGBench Cube LeWM base.
-- [`docs/lip/README_lip.md`](docs/lip/README_lip.md) — method notes and recipe
+- [`docs/rp1/README_lip.md`](docs/rp1/README_lip.md) — method notes and recipe
   lessons; [`docs/campaigns/`](docs/campaigns/) — dated experiment records.
 - [`docs/dmpo/README_dmpo.md`](docs/dmpo/README_dmpo.md) — the *Deep Model
   Predictive Optimization* (ICRA 2024) learned-optimizer baseline: `model=dmpo`
@@ -29,7 +29,7 @@ refiner (Eq. 10).
 - [`docs/PARALLELIZATION_ANALYSIS.md`](docs/PARALLELIZATION_ANALYSIS.md) — historical
   serialization/throughput audit (some citations target pre-refactor paths).
 
-## Replicating RLP: LeWM and PLDM
+## Replicating rp1: LeWM and PLDM
 
 Both pretrained OGBench Cube world models are tracked in-tree via Git LFS —
 `assets/core/world_model/cube_lewm` (LeWM) and
@@ -42,7 +42,7 @@ train and evaluate per base.
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube   # ~20 GiB, public
 ```
 
-**Train RLP** (`model=rlp` runs the paper's full stack — latent caching,
+**Train rp1** (`model=rp1` runs the paper's full stack — latent caching,
 offline quasimetric value learning with TD + hindsight relabeling + expectile
 regression, then actor-critic planner training through the frozen world
 model). The only setting that differs between the two bases is the residual
@@ -50,20 +50,20 @@ clip range `amax`:
 
 ```bash
 # LeWM base (amax 1.6)
-pixi run training model=rlp training.wm=assets/core/world_model/cube_lewm \
-    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+pixi run training model=rp1 training.wm=assets/core/world_model/cube_lewm \
+    training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_lewm training.planner.action_limit=1.6
 
 # PLDM base (amax 4.5)
-pixi run training model=rlp training.wm=assets/core/world_model/cube_pldm \
-    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+pixi run training model=rp1 training.wm=assets/core/world_model/cube_pldm \
+    training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_pldm training.planner.action_limit=4.5
 ```
 
-Each run writes `checkpoints/planner.pt` (the RLP refiner), `value_td`
+Each run writes `checkpoints/planner.pt` (the rp1 refiner), `value_td`
 (offline critic), and `value_ac` (co-trained teacher) into its
 `logs/<date>/<time>/` directory. Reusable latent caches land in
-`$RLP_DATA_HOME/caches/` (rerun with `skip=[cache,subsample,actions]` to iterate
+`$RP1_DATA_HOME/caches/` (rerun with `skip=[cache,subsample,actions]` to iterate
 on recipes without re-encoding).
 
 **Evaluate** the trained planner against the paper's baselines
@@ -72,12 +72,12 @@ on recipes without re-encoding).
 for h100; report seeds 42/43/44):
 
 ```bash
-pixi run inference benchmark=lewm core/solver=lip core.solver.actor_path=<planner.pt>  # RLP, 9 rollouts
+pixi run inference benchmark=lewm core/solver=rp1 core.solver.actor_path=<planner.pt>  # rp1, 9 rollouts
 pixi run inference benchmark=lewm core/solver=cem                                      # CEM,  9,000 rollouts
 pixi run inference benchmark=lewm core/solver=mppi                                     # MPPI, 9,000 rollouts
 pixi run inference benchmark=lewm core/solver=adam                                     # Adam, 3,000 rollouts
 pixi run inference benchmark=lewm core/policy=no_move                                  # no-op floor (skill normalization)
-pixi run inference benchmark=pldm core/solver=lip core.solver.actor_path=<planner.pt>  # same grid on the PLDM base
+pixi run inference benchmark=pldm core/solver=rp1 core.solver.actor_path=<planner.pt>  # same grid on the PLDM base
 ```
 
 To run the baselines under the learned value objective instead of latent
@@ -154,7 +154,7 @@ nvidia-smi
 
 Install Git LFS before cloning so checkout can replace the model pointer with
 the actual checkpoint. For a private GitHub repository, configure an SSH key
-or GitHub credential first; GitHub CLI is optional and is not used by RLP.
+or GitHub credential first; GitHub CLI is optional and is not used by rp1.
 
 ```bash
 git clone https://github.com/armin-sommer/RLP_original.git
@@ -173,13 +173,13 @@ users can run `pixi install -e default` instead of installing all environments.
 
 ### 3. Choose data storage and fetch the public dataset
 
-Reusable datasets and caches default to `~/.cache/rlp`. To place them on a
-larger disk, set `RLP_DATA_HOME` in every shell used for fetching, training, or
+Reusable datasets and caches default to `~/.cache/rp1`. To place them on a
+larger disk, set `RP1_DATA_HOME` in every shell used for fetching, training, or
 evaluation (or persist the export in that shell's startup file):
 
 ```bash
-export RLP_DATA_HOME=/absolute/path/to/rlp-data
-mkdir -p "$RLP_DATA_HOME"
+export RP1_DATA_HOME=/absolute/path/to/rp1-data
+mkdir -p "$RP1_DATA_HOME"
 
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube preparation.dry_run=true
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
@@ -204,7 +204,7 @@ pixi lock --check
 pixi run -e default -x python -m pip check
 pixi run -e dev -x python -m pip check
 pixi run -e dev check
-pixi run -e dev -x python -m pip wheel --no-deps --wheel-dir /tmp/rlp-wheel .
+pixi run -e dev -x python -m pip wheel --no-deps --wheel-dir /tmp/rp1-wheel .
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube preparation.dry_run=true
 ```
 
@@ -224,11 +224,11 @@ and dedicated `checkpoints/`, `metrics/`, `videos/`, `artifacts/`,
 `tracking/`, and `stages/` directories.
 
 ```bash
-pixi run training model=rlp training.wm=<ckpt> training.dataset=<lance>   # full RLP pipeline (cache -> value -> planner)
-pixi run training model=lip_ac training.cache=<fs5> training.cache_td=<fs1> training.h5=<h5> training.wm=<ckpt>
+pixi run training model=rp1 training.wm=<ckpt> training.dataset=<lance>   # full rp1 pipeline (cache -> value -> planner)
+pixi run training model=rp1_ac training.cache=<fs5> training.cache_td=<fs1> training.h5=<h5> training.wm=<ckpt>
 pixi run training model=metric training.cache=<fs1> training.learner=td
 pixi run training model=lewm                             # LeWM world model, OGBench Cube
-pixi run inference  benchmark=lewm|pldm [core/solver=lip|cem|mppi|adam] [core/policy=no_move]
+pixi run inference  benchmark=lewm|pldm [core/solver=rp1|cem|mppi|adam] [core/policy=no_move]
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
 pixi run prepare job=cache_latents preparation.wm=<ckpt> preparation.dataset=<lance> preparation.out=<cache.pt>
 pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<out.pt>
@@ -236,11 +236,11 @@ pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<out
 
 ## `stable-worldmodel` is an installed dependency
 
-The framework is pinned to `stable-worldmodel[train]==0.1.1`. RLP's planner,
-value stack, and world-model backends are first-party code under `src/rlp/`;
+The framework is pinned to `stable-worldmodel[train]==0.1.1`. rp1's planner,
+value stack, and world-model backends are first-party code under `src/rp1/`;
 the small behavior deltas required by the paper campaigns (checkpoint
 compatibility, image-resized evaluation, recording, the no-move baseline,
-gradient-solver portability) live beside the RLP subsystem that owns each
+gradient-solver portability) live beside the rp1 subsystem that owns each
 behavior. See
 [docs/stable-worldmodel-compatibility.md](docs/stable-worldmodel-compatibility.md)
 for the pin rationale and the upstream migration checklist.
@@ -251,7 +251,7 @@ Large training datasets and generated checkpoints are not part of the source
 tree. The Cube expert set is ~20 GB and lives on HF
 (`galilai-group/ogb_cube_single`). The repository's prerequisite cube LeWM
 checkpoint is the exception: its 69 MiB payload is tracked through Git LFS.
-Built wheels include the RLP package and Hydra configs but intentionally omit
+Built wheels include the rp1 package and Hydra configs but intentionally omit
 that checkpoint; wheel-only users must supply an explicit local checkpoint
 path or supported Hugging Face identifier.
 

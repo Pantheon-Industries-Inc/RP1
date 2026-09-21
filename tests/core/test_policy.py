@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from rlp.core.agent.policy import PlanConfig, WorldModelPolicy
+from rp1.core.agent.policy import PlanConfig, WorldModelPolicy
 
 
 class _Space:
@@ -73,8 +73,8 @@ def test_policy_keeps_real_history_and_updates_deadline_on_replan() -> None:
 def test_unwrap_encoder_peels_cost_wrappers() -> None:
     from torch import nn
 
-    from rlp.core.agent.solver.lip import unwrap_encoder
-    from rlp.core.agent.value.adapter import LatentGoalCost
+    from rp1.core.agent.solver.base import unwrap_encoder
+    from rp1.core.agent.value.adapter import LatentGoalCost
 
     class WM(nn.Module):
         def encode(self, info: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:

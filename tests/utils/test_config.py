@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from omegaconf import OmegaConf
 
-from rlp.utils.config import compose_config, dispatch, get_config_root, run_hydra, validate_config
+from rp1.utils.config import compose_config, dispatch, get_config_root, run_hydra, validate_config
 
 CONFIG_ROOT = get_config_root()
 
@@ -26,7 +26,7 @@ def _entrypoints() -> list[tuple[str, str, list[str]]]:
 @pytest.mark.parametrize(("config_dir", "config_name", "overrides"), _entrypoints())
 def test_every_command_composes(config_dir: str, config_name: str, overrides: list[str]) -> None:
     config = compose_config(Path(config_dir), config_name, overrides)
-    assert config.entrypoint._target_.startswith("rlp.")
+    assert config.entrypoint._target_.startswith("rp1.")
 
 
 @pytest.mark.parametrize("benchmark", ["cube_lewm", "reacher", "tworoom"])
@@ -42,7 +42,7 @@ def test_pretraining_needs_no_further_values() -> None:
 
 
 def test_config_root_can_be_overridden(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RLP_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("RP1_CONFIG_DIR", str(tmp_path))
     assert get_config_root() == tmp_path
 
 
@@ -64,7 +64,7 @@ def test_run_hydra_selects_a_group_option(monkeypatch: pytest.MonkeyPatch, tmp_p
     arguments = ["prepare", "job=cache_latents", "preparation.wm=model.pt", "preparation.dataset=data.lance"]
     monkeypatch.setattr(sys, "argv", arguments)
     config = run_hydra(lambda cfg: cfg, config_dir="training/data", config_name="prepare")
-    assert config.entrypoint._target_ == "rlp.training.data.job.cache_latents.run"
+    assert config.entrypoint._target_ == "rp1.training.data.job.cache_latents.run"
     assert config.preparation.wm == "model.pt"
 
 
@@ -72,7 +72,7 @@ def test_run_hydra_takes_a_config_name(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["posttrain", "--config-name", "phases/agent/metric"])
     config = run_hydra(lambda cfg: cfg, config_dir="training", config_name="posttrain")
-    assert config.entrypoint._target_ == "rlp.training.phases.agent.metric.run"
+    assert config.entrypoint._target_ == "rp1.training.phases.agent.metric.run"
 
 
 def test_run_hydra_records_validation_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -89,7 +89,7 @@ def test_run_hydra_records_validation_failures(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_pipeline_caches_default_outside_checkout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("RLP_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("RP1_DATA_HOME", str(tmp_path))
     config = compose_config(Path("training"), "posttrain", [])
     assert config.training.cache_directory == str(tmp_path / "caches")
 

@@ -12,7 +12,7 @@ defaults:
   - tworoom
   - _self_
 data:
-  path: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/tworoom/tworoom.h5
+  path: ${oc.env:RP1_DATA_HOME,${oc.env:HOME}/.cache/rp1}/datasets/tworoom/tworoom.h5
 benchmark:
   callables:
     - method: _set_state

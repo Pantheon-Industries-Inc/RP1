@@ -2,7 +2,7 @@
 defaults:
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.data.job.cache_latents.run}
+entrypoint: {_target_: rp1.training.data.job.cache_latents.run}
 runtime:
   device: auto
 preparation:

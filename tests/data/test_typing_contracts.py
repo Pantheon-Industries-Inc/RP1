@@ -1,4 +1,4 @@
-"""Compile-time fixtures for RLP's public typing contracts."""
+"""Compile-time fixtures for rp1's public typing contracts."""
 
 from __future__ import annotations
 
@@ -8,13 +8,13 @@ import torch
 from omegaconf import DictConfig
 from torch import nn
 
-from rlp.core.agent.solver.lip import EncoderWorldModel
-from rlp.core.agent.value import MetricCost
-from rlp.core.agent.value.base import TensorInfo
-from rlp.core.world_model.rollout import rollout_terminal
-from rlp.training.harness.checkpointing import load_pretrained
-from rlp.training.phases.agent.samplers import PairBatch, TransitionBatch
-from rlp.utils.config import dispatch
+from rp1.core.agent.solver.base import EncoderWorldModel
+from rp1.core.agent.value import MetricCost
+from rp1.core.agent.value.base import TensorInfo
+from rp1.core.world_model.rollout import rollout_terminal
+from rp1.training.harness.checkpointing import load_pretrained
+from rp1.training.phases.agent.samplers import PairBatch, TransitionBatch
+from rp1.utils.config import dispatch
 
 
 def _metric_cost_contract(cost: MetricCost, info: TensorInfo, actions: torch.Tensor) -> None:

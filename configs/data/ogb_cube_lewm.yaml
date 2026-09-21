@@ -12,7 +12,7 @@ loader:
   pin_memory: true
   shuffle: true
 dataset:
-  name: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/ogb_cube_single.lance
+  name: ${oc.env:RP1_DATA_HOME,${oc.env:HOME}/.cache/rp1}/datasets/ogb_cube_single.lance
   num_steps: 4
   frameskip: 5
   keys_to_load: [pixels, action, observation]

@@ -1,4 +1,4 @@
-# L2O-MPC — Learning to Optimize in MPC as an RLP baseline
+# L2O-MPC — Learning to Optimize in MPC as an rp1 baseline
 
 Sacks, Boots, *Learning to Optimize in Model Predictive Control*, ICRA 2022
 ([arXiv:2212.02603](https://arxiv.org/abs/2212.02603), the direct predecessor
@@ -28,13 +28,13 @@ unlike DMPO (PPO → pathwise) no gradient-method substitution is needed.
 
 | Paper | Code |
 |---|---|
-| Gated update rule `m_theta` (GRU-style, sigmoid gates) | `L2ONet.forward` — `src/rlp/core/planner/l2o.py` |
+| Gated update rule `m_theta` (GRU-style, sigmoid gates) | `L2ONet.forward` — `src/rp1/core/planner/l2o.py` |
 | DMD-MPC / MPPI expert update (Eq. 12) | `mppi_update` (free function, arbitrary sample count) |
 | Fixed Halton sample set | `L2ONet.plans` via `gaussian_halton` (shared with DMPO) |
 | Standard shift warm start (no learned shift) | `L2ONet.warm_start` |
-| DAgger training, `beta_k = 0.8^k` over 20 rounds | `src/rlp/train/l2o.py`, `dagger_beta` |
+| DAgger training, `beta_k = 0.8^k` over 20 rounds | `src/rp1/train/l2o.py`, `dagger_beta` |
 | Fixed diagonal covariance (paper experiments) | `learn_std=false` default; the paper's gated covariance formulation behind `learn_std=true` |
-| Deployment | `L2OSolver` — `src/rlp/core/solver/l2o.py` |
+| Deployment | `L2OSolver` — `src/rp1/core/solver/l2o.py` |
 
 Paper hyperparameters carried over: two ReLU hidden layers with dropout 0.1,
 Adam at 1e-3, 20 DAgger rounds with decay 0.8, Halton samples, fixed diagonal
@@ -47,7 +47,7 @@ covariance, expert `N` ≫ learner `M`.
    shares that substitution; it is what makes the rows comparable, and it means
    L2O-MPC here inherits world-model error the paper's controllers never saw.
 2. **Plan costs are the goal-conditioned quasimetric critic**, not a
-   hand-designed task cost — the same critic the RLP, DMPO, and value-CEM/MPPI
+   hand-designed task cost — the same critic the rp1, DMPO, and value-CEM/MPPI
    rows plan against, so the table isolates the planner.
 3. **DAgger's state distribution is the inner loop, not the receding-horizon
    loop.** The paper visits states by running the controller closed loop in
@@ -75,7 +75,7 @@ covariance, expert `N` ≫ learner `M`.
 | Adam | 3,000 forward + 3,000 backward |
 | DMPO (defaults) | 256 forward (256 × 1) |
 | **L2O-MPC** (defaults) | **256 forward (64 × 4)** — DMPO's exact budget |
-| RLP / LIP | 9 forward + 8 backward |
+| rp1 / rp1 | 9 forward + 8 backward |
 
 The sample count is baked into the trained network (costs are read
 positionally); the iteration count can be varied at test time
@@ -84,15 +84,15 @@ positionally); the iteration count can be varied at test time
 ## Commands
 
 L2O-MPC trains against a frozen critic, so produce the caches and `value_td`
-first (the RLP pipeline with the planner stage skipped), then train and
+first (the rp1 pipeline with the planner stage skipped), then train and
 evaluate:
 
 ```bash
-pixi run train model=rlp skip=[planner] wm=assets/core/world_model/cube_lewm dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
+pixi run train model=rp1 skip=[planner] wm=assets/core/world_model/cube_lewm dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
 ```
 
 ```bash
-pixi run train model=l2o wm=assets/core/world_model/cube_lewm cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 init_value=logs/<date>/<time>/checkpoints/value_td core.planner.action_limit=1.6
+pixi run train model=l2o wm=assets/core/world_model/cube_lewm cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 init_value=logs/<date>/<time>/checkpoints/value_td core.planner.action_limit=1.6
 ```
 
 ```bash

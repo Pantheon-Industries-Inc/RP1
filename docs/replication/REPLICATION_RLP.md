@@ -1,46 +1,46 @@
 # Replicating "Reinforcement Learned Planning with Latent World Models"
 
 This is the command sheet for reproducing the paper's method and tables from
-this repository. The paper calls the learned planner **RLP**; in the code and
-checkpoints it is called **LIP** (Learned Iterative Planner) — they are the
+this repository. The paper calls the learned planner **rp1**; in the code and
+checkpoints it is called **rp1** (Learned Iterative Planner) — they are the
 same thing.
 
 | Paper concept | Code |
 |---|---|
-| RLP plan refiner `F_theta` (Eq. 10–13) | `src/rlp/core/planner/net.py`, trained by `src/rlp/training/lip_ac.py` |
-| Goal-conditioned quasimetric critic `V` (Eq. 4, App. B.1) | `src/rlp/core/value/head.py` (`QuasimetricHead`, an MRN), trained by `src/rlp/training/metric.py` (offline) and co-trained inside `lip_ac.py` |
-| Frozen world-model rollout `H_phi` (Eq. 1) | `src/rlp/core/rollout.py` |
-| RLP at plan time (9 forward + 8 backward unrolls) | `src/rlp/core/solver/lip.py` |
-| Baselines CEM / MPPI / Adam | `src/rlp/core/solver/{cem,mppi,gradient}.py`, configs `configs/core/solver/{cem,mppi,adam}.yaml` |
+| rp1 plan refiner `F_theta` (Eq. 10–13) | `src/rp1/core/planner/net.py`, trained by `src/rp1/training/rp1_ac.py` |
+| Goal-conditioned quasimetric critic `V` (Eq. 4, App. B.1) | `src/rp1/core/value/head.py` (`QuasimetricHead`, an MRN), trained by `src/rp1/training/metric.py` (offline) and co-trained inside `rp1_ac.py` |
+| Frozen world-model rollout `H_phi` (Eq. 1) | `src/rp1/core/rollout.py` |
+| rp1 at plan time (9 forward + 8 backward unrolls) | `src/rp1/core/solver/rp1.py` |
+| Baselines CEM / MPPI / Adam | `src/rp1/core/solver/{cem,mppi,gradient}.py`, configs `configs/core/solver/{cem,mppi,adam}.yaml` |
 | Latent vs. value objective (Sec. 6, App. C) | `configs/core/value/latent.yaml` vs. `core/value=metric core.value.checkpoints=[<value_ckpt>]` |
 | No-op floor (Cube "skill" normalization) | `configs/core/policy/no_move.yaml` |
 
 Setup (pixi, datasets, LFS checkpoint) is covered in the top-level
 [README](../../README.md). All commands below run from the repo root.
 
-## 1. One-command RLP training
+## 1. One-command rp1 training
 
-`model=rlp` runs the paper's full training stack against a frozen pretrained
+`model=rp1` runs the paper's full training stack against a frozen pretrained
 world model: latent caching (fs1 + frameskip-matched fs5), action-h5
 extraction, offline quasimetric value learning, and actor-critic planner
 training. Stage defaults are the paper's OGBench Cube recipe
-(Tab. "Selected RLP configurations for OGBench Cube").
+(Tab. "Selected rp1 configurations for OGBench Cube").
 
 ```bash
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
-pixi run training model=rlp \
+pixi run training model=rp1 \
     training.wm=assets/core/world_model/cube_lewm \
-    training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
+    training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_lewm training.planner.action_limit=1.6
 ```
 
 Outputs land in the run directory (`logs/<date>/<time>/checkpoints/`):
 `value_td` (offline critic), `value_ac` (co-trained teacher), `planner.pt`
-(the RLP refiner). Reusable caches go to `$RLP_DATA_HOME/caches/` and can be
+(the rp1 refiner). Reusable caches go to `$RP1_DATA_HOME/caches/` and can be
 reused across recipes with e.g. `skip=[cache,subsample,actions]`.
 
 Per-environment recipe deltas (everything else is shared, see
-`configs/training/rlp.yaml`):
+`configs/training/rp1.yaml`):
 
 | cell | override |
 |---|---|
@@ -51,7 +51,7 @@ Per-environment recipe deltas (everything else is shared, see
 
 ## 2. Evaluation — producing a table cell
 
-The evaluation driver is `rlp.inference.evaluate`; each invocation is one
+The evaluation driver is `rp1.inference.evaluate`; each invocation is one
 (environment × base × planner × objective × horizon) cell. Horizons:
 `benchmark.goal_offset_steps=25 planning.budget=50` (h25) or
 `goal_offset_steps=100 budget=200` (h100). Reporting protocol: seeds 42/43/44,
@@ -64,8 +64,8 @@ protocol note claiming Reacher replans every chunk is an error in the
 appendix, not the protocol.
 
 ```bash
-# RLP (9 rollouts/decision)
-pixi run inference benchmark=lewm core/solver=lip core.solver.checkpoint.path=<planner.pt>
+# rp1 (9 rollouts/decision)
+pixi run inference benchmark=lewm core/solver=rp1 core.solver.checkpoint.path=<planner.pt>
 
 # CEM / MPPI (9,000 rollouts) and Adam (3,000 fwd + 3,000 bwd), latent objective
 pixi run inference benchmark=lewm core/solver=cem
@@ -86,7 +86,7 @@ explicitly:
 
 ```bash
 pixi run inference benchmark=tworoom_lewm core.world_model.checkpoint=<tworoom_ckpt> \
-    core/solver=lip core.solver.checkpoint.path=<planner.pt>
+    core/solver=rp1 core.solver.checkpoint.path=<planner.pt>
 pixi run inference benchmark=reacher_lewm core.world_model.checkpoint=<reacher_ckpt> \
     core/solver=cem
 ```
@@ -113,7 +113,7 @@ pixi run training model=lewm training/data=reacher_lewm
 **PLDM** cells use the authors' pretrained PLDM checkpoint converted 1:1 into
 the LeWM key layout (both are vit_hf tiny/patch14/224; 303/303 keys map with
 identical shapes, validated to ~2e-6 agreement — see
-[docs/lip/lip_results.md](../lip/lip_results.md)). The converted cube
+[docs/rp1/lip_results.md](../rp1/lip_results.md)). The converted cube
 checkpoint is tracked in-tree at `assets/core/world_model/cube_pldm`, and the
 converter is a maintained tool for other PLDM exports:
 
@@ -129,7 +129,7 @@ unchanged with `wm=assets/core/world_model/cube_pldm` / `model=pldm`.
 terminal step with NaN actions. Any normalization must use `nanmean`/`nanstd`
 and assert finiteness — plain stats poison every action and training runs
 silently at 100% GPU producing NaNs. The in-tree trainers handle this
-(`lip_ac.py` is nan-aware); custom preprocessing must too.
+(`rp1_ac.py` is nan-aware); custom preprocessing must too.
 
 ## 4. Dyna finetuning round (Tab. 3, block d)
 
@@ -137,22 +137,22 @@ silently at 100% GPU producing NaNs. The in-tree trainers handle this
 tracked in-tree (`assets/core/world_model/{lewm,pldm}_cube_dyna`, the
 `dyna_wm_*` campaign artifacts' epoch-1 weights), so
 `pixi run inference benchmark=lewm_dyna ...` / `benchmark=pldm_dyna ...` reproduces the
-row-(d) cells with any planner. Retrain the row-(d) RLP actors against the
-finetuned base with `model=rlp wm=assets/core/world_model/cube_lewm_dyna`.
+row-(d) cells with any planner. Retrain the row-(d) rp1 actors against the
+finetuned base with `model=rp1 wm=assets/core/world_model/cube_lewm_dyna`.
 
 *Regenerating* the finetuned world models is a procedure, not a single entry
 point:
 
 1. **Collect** on-policy episodes with the trained planner on h25 tasks from
    the training split (episodes 0–7999, no termination at goal), recording
-   observations and actions (`pixi run inference core/solver=lip ...` with
+   observations and actions (`pixi run inference core/solver=rp1 ...` with
    recording enabled).
 2. **Mix** the collected episodes 50:50 with the original offline data.
 3. **Finetune** the world model on the mixture for 2 epochs at LR 1e-5 and
    keep epoch 1 (`pixi run training model=lewm core.world_model.checkpoint=<base>`
    with the mixed dataset).
 4. **Rebuild** the latent caches and retrain value + planner with the
-   unchanged recipe (`model=rlp wm=<finetuned>` — full rerun, no skips).
+   unchanged recipe (`model=rp1 wm=<finetuned>` — full rerun, no skips).
 5. Reuse the finetuned model as-is for h100 evaluation.
 
 The historical campaign harness for step 1–2 lives in git history on `main`
@@ -163,7 +163,7 @@ The historical campaign harness for step 1–2 lives in git history on `main`
 The split differs per environment; the configs encode the protocol each
 table's numbers were actually produced under:
 
-- **Cube** (all quoted RLP rows, from the 2026-08-05/06 open-loop sweep
+- **Cube** (all quoted rp1 rows, from the 2026-08-05/06 open-loop sweep
   onward): value and planner train on episodes 0–7999 (`train_episodes=8000`,
   a 1,608,000-row cache), eval tasks draw from 8000–9999
   (`benchmark.episode_range="8000:10000"`, pinned in the cube eval roots).
@@ -173,13 +173,13 @@ table's numbers were actually produced under:
 - **TwoRoom**: the shipped numbers follow the original LeWM/DINO-WM contract —
   training and evaluation share the full 10k-episode pool (no split). All
   planner arms draw tasks from the same pool, so the within-table comparison
-  is unaffected, but RLP and value-objective rows are formally upper bounds.
+  is unaffected, but rp1 and value-objective rows are formally upper bounds.
   For the held-out variant, train with `train_episodes=8000` and evaluate with
   `benchmark.episode_range="8000:10000"`.
 
 Hyperparameter selection uses eval seeds 50/51; report on 42/43/44 only.
 
-**Seed protocol — mandatory for reportable numbers.** Every quoted RLP cell
+**Seed protocol — mandatory for reportable numbers.** Every quoted rp1 cell
 averages over **three independent actor/critic training seeds** (`seed=0,1,2`;
 Reacher used six, 0–5) × the report eval draws. A single-seed run is a smoke
 check, not a replication: actor-seed variance on Cube alone spans several

@@ -9,7 +9,7 @@ action_range: 1.0      # the env's raw action box is [-action_range, action_rang
                        # DMPO clips to it per-dimension after z-scoring, as the
                        # reference does with action_lows/action_highs. null =
                        # fall back to the symmetric action_limit below.
-action_limit: 2.5      # symmetric fallback clip; unlike RLP's amax this is a
+action_limit: 2.5      # symmetric fallback clip; unlike rp1's amax this is a
                        # BOUND, not a tuned residual trust region
 init_std: 1.0          # initial sampling covariance (diagonal)
 temperature: 0.05      # MPPI temperature of the update the actor residuals on

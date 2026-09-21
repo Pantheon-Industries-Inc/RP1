@@ -4,19 +4,19 @@
 defaults:
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.phases.agent.pipeline.run}
+entrypoint: {_target_: rp1.training.phases.agent.pipeline.run}
 runtime:
   device: auto
   seed: 0
 training:
   wm: ???
   dataset: ???
-  name: rlp
+  name: rp1
   frameskip: 5
   state_key: null
   train_episodes: 8000
   train_res: null
-  cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
+  cache_directory: ${oc.env:RP1_DATA_HOME,${oc.env:HOME}/.cache/rp1}/caches
   stages: [cache, subsample, actions, value, planner]
 
 # Stage 4 -- offline quasimetric critic (training/metric, learner=td).
@@ -36,8 +36,8 @@ training:
     near_frac: null       # near-goal hindsight oversampling fraction
     near_max: null
 
-# Stage 5 -- RLP plan refiner (training/lip_ac, actor-critic tandem).
-# Keys are forwarded verbatim onto configs/training/lip_ac.yaml.
+# Stage 5 -- rp1 plan refiner (training/rp1_ac, actor-critic tandem).
+# Keys are forwarded verbatim onto configs/training/rp1_ac.yaml.
   planner:
     steps: 6000
     batch: 256

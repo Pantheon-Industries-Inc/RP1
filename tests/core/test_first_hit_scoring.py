@@ -7,7 +7,7 @@ evaluation world scores those columns itself; this guards the rule it applies.
 
 import numpy as np
 
-from rlp.environment import World
+from rp1.environment import World
 
 
 def test_worst_joint_rule() -> None:

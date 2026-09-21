@@ -1,15 +1,15 @@
 [workspace]
 authors = ["Armin SOMMER, Oliver SOMMER"]
 channels = ["https://prefix.dev/conda-forge"]
-name = "rlp"
+name = "rp1"
 platforms = [{ platform = "osx-arm64", macos = "14.0" }, "linux-64"]
 version = "0.1.0"
 
 [tasks]
-pretrain = "python -m rlp.training.pretrain"
-posttrain = "python -m rlp.training.posttrain"
-evaluate = "python -m rlp.inference.evaluate"
-prepare = "python -m rlp.training.data.prepare"
+pretrain = "python -m rp1.training.pretrain"
+posttrain = "python -m rp1.training.posttrain"
+evaluate = "python -m rp1.inference.evaluate"
+prepare = "python -m rp1.training.data.prepare"
 
 [dependencies]
 python = "3.13.*"
@@ -28,7 +28,7 @@ extra-index-urls = ["https://pypi.org/simple/"]
 index-strategy = "first-index"
 
 [pypi-dependencies]
-rlp = { path = ".", editable = true }
+rp1 = { path = ".", editable = true }
 hatchling = ">=1.31"
 datasets = ">=4.0"
 h5py = ">=3.16"

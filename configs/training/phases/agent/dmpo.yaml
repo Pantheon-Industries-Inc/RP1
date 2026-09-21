@@ -6,7 +6,7 @@ defaults:
   - /core/agent/value: temporal_distance
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.phases.agent.dmpo.run}
+entrypoint: {_target_: rp1.training.phases.agent.dmpo.run}
 runtime:
   device: auto
   seed: 0
@@ -25,7 +25,7 @@ training:
   actor_lr_final: 1e-5
   weight_decay: 1e-5
   max_grad_norm: 1.0     # reference trainer_config
-  mean_weight: 0.0       # average over inner iterations (RLP recipe knob; off for DMPO)
+  mean_weight: 0.0       # average over inner iterations (rp1 recipe knob; off for DMPO)
   temporal_objective: terminal
   cost_chunk: 0          # rollout chunk for the sampled plans; 0 = one batch
   warm_start_every: 0    # train the shift model every n-th step (0 = cold start only,

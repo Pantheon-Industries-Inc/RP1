@@ -1,29 +1,29 @@
-# DMPO — Deep Model Predictive Optimization as an RLP baseline
+# DMPO — Deep Model Predictive Optimization as an rp1 baseline
 
 Sacks, Rana, Huang, Spitzer, Shi, Boots, *Deep Model Predictive
 Optimization*, ICRA 2024 ([arXiv:2310.04590](https://arxiv.org/abs/2310.04590),
 code [`jisacks/dmpo`](https://github.com/jisacks/dmpo)).
 
-DMPO and RLP answer the same question — *replace the hand-designed planner with
-a learned one* — from opposite ends. RLP learns a **refiner** that moves a plan
+DMPO and rp1 answer the same question — *replace the hand-designed planner with
+a learned one* — from opposite ends. rp1 learns a **refiner** that moves a plan
 along the value gradient (9 world-model rollouts per decision). DMPO learns the
 **reduction inside a sampling optimizer**: keep MPPI's sample-rollout-reduce
 loop, and let an MLP turn the `N` rollout costs into the next sampling
 distribution. It is the strongest available "learned optimizer" baseline for
-the RLP tables, and it is a *residual* on MPPI, so the comparison is clean:
+the rp1 tables, and it is a *residual* on MPPI, so the comparison is clean:
 untrained, it reproduces the MPPI row exactly.
 
 ## Paper component → code
 
 | Paper | Code |
 |---|---|
-| Learned update rule `m_phi` (Eq. 13–14: gated MPPI residual, multiplicative covariance) | `DMPONet.forward` — `src/rlp/core/planner/dmpo.py` |
+| Learned update rule `m_phi` (Eq. 13–14: gated MPPI residual, multiplicative covariance) | `DMPONet.forward` — `src/rp1/core/planner/dmpo.py` |
 | Learned warm start / shift model `Phi_phi` (Sec. IV-D) | `DMPONet.warm_start` |
 | Fixed Halton sample set, current mean always sampled | `gaussian_halton`, `DMPONet.plans` |
 | MPPI inner update (Eq. 5–6, min-max cost scaling, dynamic mirror descent step) | `DMPONet.mppi_mean` |
 | `is_mppi` ablation | `core.solver.mppi_mode=true` |
-| Deployment (rollouts + cost + inner loop) | `DMPOSolver` — `src/rlp/core/solver/dmpo.py` |
-| Training | `src/rlp/train/dmpo.py`, config `configs/train/dmpo.yaml` |
+| Deployment (rollouts + cost + inner loop) | `DMPOSolver` — `src/rp1/core/solver/dmpo.py` |
+| Training | `src/rp1/train/dmpo.py`, config `configs/train/dmpo.yaml` |
 
 Reference hyperparameters (one 256-unit ReLU hidden layer, last layer
 `N(0, 1e-3)`, temperature 0.05, step size 0.8, cost scaling on, gate, learned
@@ -48,7 +48,7 @@ decisions, the reward is progress in the critic's cost-to-go
 differentiates through the world model, exactly as on hardware. It is the
 closer reproduction and the one to prefer when the DMPO row has to defend
 itself as DMPO; `model=dmpo` remains the cheaper apples-to-apples comparison
-against RLP, which is trained pathwise in the same way.
+against rp1, which is trained pathwise in the same way.
 
 Both write the same checkpoint format, so `core/solver=dmpo` deploys either
 (deployment always uses the distribution *locations* — the reference's
@@ -72,15 +72,15 @@ gap needs environment rollouts.
    stochastic search heads (`mean_search_std`, `std_search_std`), which exist
    only to give PPO a policy gradient, are dropped. Everything on the forward
    path is the reference computation. This makes the DMPO row *comparable* to
-   the RLP row (same data, same frozen critic, same objective, different
+   the rp1 row (same data, same frozen critic, same objective, different
    learned planning procedure) but it is **not** a replication of the paper's
    quadrotor result.
 2. **The gate is `tanh`, following the authors' code.** The paper's text
    describes a sigmoid gate in `[0, 1]`; `dmpo_policy.py` uses `tanh`.
    `core.planner.gate_activation=sigmoid` gives the paper-literal variant.
 3. **Costs are the goal-conditioned critic, not a task cost.** DMPO plans
-   against the same quasimetric value the RLP solver plans against (recorded in
-   its checkpoint), so a DMPO-vs-RLP table isolates the planner. `amax` (the
+   against the same quasimetric value the rp1 solver plans against (recorded in
+   its checkpoint), so a DMPO-vs-rp1 table isolates the planner. `amax` (the
    symmetric plan clip in z-scored action units) replaces the quadrotor's
    asymmetric thrust bounds.
 4. **The learned warm start is inert under the shipped eval protocol.** All
@@ -96,7 +96,7 @@ gap needs environment rollouts.
 | CEM / MPPI (repo defaults) | 9,000 forward (300 samples × 30 iterations) |
 | Adam | 3,000 forward + 3,000 backward |
 | **DMPO** (defaults) | **256 forward** (256 samples × 1 iteration), no backward |
-| RLP / LIP | 9 forward + 8 backward |
+| rp1 / rp1 | 9 forward + 8 backward |
 
 The sample count is baked into the trained network — the actor reads the `N`
 costs positionally — so it cannot be changed after training; the solver logs
@@ -106,19 +106,19 @@ test time (`core.solver.iters`), as the paper does.
 ## Commands
 
 DMPO trains against a frozen critic, so produce the caches and `value_td`
-first (the RLP pipeline with the planner stage skipped), then train and
+first (the rp1 pipeline with the planner stage skipped), then train and
 evaluate:
 
 ```bash
-pixi run train model=rlp skip=[planner] \
+pixi run train model=rp1 skip=[planner] \
     wm=assets/core/world_model/cube_lewm \
-    dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
+    dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
 ```
 
 ```bash
 pixi run train model=dmpo wm=assets/core/world_model/cube_lewm \
-    cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt \
-    h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 \
+    cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
+    h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
     init_value=logs/<date>/<time>/checkpoints/value_td \
     core.planner.action_limit=1.6
 ```
@@ -131,8 +131,8 @@ Offline DMPO (the PPO objective) swaps one command:
 
 ```bash
 pixi run train model=dmpo_ppo wm=assets/core/world_model/cube_lewm \
-    cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt \
-    h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 \
+    cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
+    h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
     init_value=logs/<date>/<time>/checkpoints/value_td \
     core.planner.action_limit=1.6
 ```
@@ -151,7 +151,7 @@ pixi run eval model=lewm core/solver=dmpo core.solver.actor_path=<dmpo.pt> core.
 Window critics (Reacher's three-frame quasimetric) are supported on both
 sides: the trainer and solver detect the context width from the critic's
 `latent_dim` and score the last `context` imagined frames the way
-`MetricCost` does at eval (`rlp.core.temporal.windowed_terminal_value`).
+`MetricCost` does at eval (`rp1.core.temporal.windowed_terminal_value`).
 
 Reporting protocol is the repository's: hyperparameter selection on eval seeds
 50/51, report on 42/43/44 × 50 episodes, and **three optimizer training seeds**

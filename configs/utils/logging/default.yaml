@@ -5,7 +5,7 @@ wandb:
   mode: disabled
   config:
     entity: null
-    project: rlp
+    project: rp1
     name: null
     id: null
     resume: allow

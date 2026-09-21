@@ -1,4 +1,4 @@
-"""Contract tests for RLP's adapters around the PyPI Stable World Model."""
+"""Contract tests for rp1's adapters around the PyPI Stable World Model."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ import torch
 from omegaconf import OmegaConf
 from torch import nn
 
-from rlp.core.agent.policy import NoMovePolicy
-from rlp.core.agent.value import LatentGoalCost
-from rlp.core.agent.value.base import TensorInfo
-from rlp.environment.world import _resize_images_like_env
-from rlp.training.harness import checkpointing as checkpoint_module
-from rlp.utils.config import compose_config
+from rp1.core.agent.policy import NoMovePolicy
+from rp1.core.agent.value import LatentGoalCost
+from rp1.core.agent.value.base import TensorInfo
+from rp1.environment.world import _resize_images_like_env
+from rp1.training.harness import checkpointing as checkpoint_module
+from rp1.utils.config import compose_config
 
 
 def test_stable_worldmodel_comes_from_pinned_distribution() -> None:
@@ -142,7 +142,7 @@ def test_dataset_images_are_resized_to_environment_shape() -> None:
 def test_hydra_configs_compose() -> None:
     cfg = compose_config(Path("inference"), "evaluate", ["core/agent/solver=adam"])
     assert cfg.environment.env_name == "swm/OGBCube-v0"
-    assert cfg.core.agent.solver._target_ == "rlp.core.agent.solver.GradientSolver"
+    assert cfg.core.agent.solver._target_ == "rp1.core.agent.solver.GradientSolver"
 
     cfg = compose_config(Path("training"), "pretrain", ["data=tworoom_lewm"])
     assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

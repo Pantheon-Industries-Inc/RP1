@@ -5,7 +5,7 @@
 #   sky jobs launch configs/training/cluster/replicate_cube.yaml -n cube-pldm \
 #       --env BASE=pldm --env ACTION_LIMIT=4.5 --env EXPERIMENT=cube-pldm -y
 #
-# Trains the agent on episodes 0-7999, then evaluates RLP, CEM and the no-move
+# Trains the agent on episodes 0-7999, then evaluates rp1, CEM and the no-move
 # floor on report seeds 42/43/44 with tasks drawn from episodes 8000-9999.
 # Caches live on the persistent volume, so a preempted job resumes after the
 # encoding stages.
@@ -20,7 +20,7 @@ envs:
   SEED: "0"             # agent training seed; a replication averages seeds 0, 1 and 2,
                         # one job each, sharing caches through CACHE_EXPERIMENT
   CACHE_EXPERIMENT: ""  # reuse another experiment's caches
-  EVAL_CONDITIONS: "rlp cem noop"
+  EVAL_CONDITIONS: "rp1 cem noop"
   VOLUME_ROOT: /persistent  # mount point of the persistent volume
   EXPERIMENT: cube
 
@@ -53,8 +53,8 @@ run: |
   # environment's toolchain.
   export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
   export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
-  export RLP_DATA_HOME=/tmp/rlp-data
-  mkdir -p "$RLP_DATA_HOME"
+  export RP1_DATA_HOME=/tmp/rp1-data
+  mkdir -p "$RP1_DATA_HOME"
   OUT=$VOLUME_ROOT/$EXPERIMENT
   CACHES=$VOLUME_ROOT/${CACHE_EXPERIMENT:-$EXPERIMENT}/caches
   mkdir -p "$OUT" "$CACHES"
@@ -76,8 +76,8 @@ run: |
 
   if [ ! -f "$OUT/checkpoints/planner.pt" ]; then
     pixi run posttrain \
-      training.wm="$PWD/assets/core/world_model/${BASE}_cube" \
-      training.dataset="$RLP_DATA_HOME/datasets/ogb_cube_single.lance" \
+      training.wm="$PWD/assets/core/world_model/cube_${BASE}" \
+      training.dataset="$RP1_DATA_HOME/datasets/ogb_cube_single.lance" \
       training.name="cube_${BASE}" training.cache_directory="$CACHES" runtime.seed=$SEED \
       training.planner.action_limit=$ACTION_LIMIT "training.stages=[$STAGES]" $EXTRA
     RUN=$(ls -dt logs/*/* | head -1)
@@ -96,7 +96,7 @@ run: |
   for seed in $EVAL_SEEDS; do
     for condition in $EVAL_CONDITIONS; do
       case $condition in
-        rlp) evaluate rlp $seed core/agent/solver=lip core.agent.solver.checkpoint.path="$OUT/checkpoints/planner.pt";;
+        rp1) evaluate rp1 $seed core/agent/solver=rp1 core.agent.solver.checkpoint.path="$OUT/checkpoints/planner.pt";;
         cem) evaluate cem $seed core/agent/solver=cem;;
         noop) evaluate noop $seed core/agent/policy=no_move;;
       esac
