@@ -1,6 +1,5 @@
 # @package data
-# LeWM world-model training on TwoRoom play data. Generate the dataset with
-# `pixi run prepare job=collect_tworoom_mixed` (see docs/replication/REPLICATION_RLP.md).
+# produced by `pixi run prepare job=collect_tworoom_mixed`
 cache_dir: null
 image_size: 224
 action_stats: null

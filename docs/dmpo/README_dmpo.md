@@ -17,22 +17,22 @@ untrained, it reproduces the MPPI row exactly.
 
 | Paper | Code |
 |---|---|
-| Learned update rule `m_phi` (Eq. 13–14: gated MPPI residual, multiplicative covariance) | `DMPONet.forward` — `src/rp1/core/planner/dmpo.py` |
+| Learned update rule `m_phi` (Eq. 13–14: gated MPPI residual, multiplicative covariance) | `DMPONet.forward` — `rp1.core.agent.planner.dmpo` |
 | Learned warm start / shift model `Phi_phi` (Sec. IV-D) | `DMPONet.warm_start` |
 | Fixed Halton sample set, current mean always sampled | `gaussian_halton`, `DMPONet.plans` |
 | MPPI inner update (Eq. 5–6, min-max cost scaling, dynamic mirror descent step) | `DMPONet.mppi_mean` |
-| `is_mppi` ablation | `core.solver.mppi_mode=true` |
-| Deployment (rollouts + cost + inner loop) | `DMPOSolver` — `src/rp1/core/solver/dmpo.py` |
-| Training | `src/rp1/train/dmpo.py`, config `configs/train/dmpo.yaml` |
+| `is_mppi` ablation | `core.agent.solver.mppi_mode=true` |
+| Deployment (rollouts + cost + inner loop) | `DMPOSolver` — `rp1.core.agent.solver.dmpo` |
+| Training | `rp1.training.phases.agent.dmpo`, config `configs/training/phases/agent/dmpo.yaml` |
 
 Reference hyperparameters (one 256-unit ReLU hidden layer, last layer
 `N(0, 1e-3)`, temperature 0.05, step size 0.8, cost scaling on, gate, learned
 covariance, one inner iteration) are the defaults in
-`configs/core/planner/dmpo.yaml`.
+`configs/core/agent/planner/dmpo.yaml`.
 
-## Two trainers: `model=dmpo` and `model=dmpo_ppo`
+## Two trainers: `phases/agent/dmpo` and `phases/agent/dmpo_ppo`
 
-| | `model=dmpo` (pathwise) | `model=dmpo_ppo` (offline DMPO) |
+| | `phases/agent/dmpo` (pathwise) | `phases/agent/dmpo_ppo` (offline DMPO) |
 |---|---|---|
 | objective | `V(z_T(mu_K), z_g)` of **one** decision | discounted return over `decisions` closed-loop decisions |
 | algorithm | backprop through the frozen world model | PPO + GAE, forward-only rollouts |
@@ -41,13 +41,13 @@ covariance, one inner iteration) are the defaults in
 | trains the shift model | no (single decision) | yes (credit crosses decisions) |
 | env steps | 0 | 0 |
 
-`model=dmpo_ppo` is the paper's *algorithm*, closed inside the world model:
+`phases/agent/dmpo_ppo` is the paper's *algorithm*, closed inside the world model:
 each imagined episode runs the whole MPC-in-the-loop policy for several
 decisions, the reward is progress in the critic's cost-to-go
 `V(z_t, z_g) - V(z_{t+1}, z_g)`, and PPO optimizes the discounted sum. Nothing
 differentiates through the world model, exactly as on hardware. It is the
 closer reproduction and the one to prefer when the DMPO row has to defend
-itself as DMPO; `model=dmpo` remains the cheaper apples-to-apples comparison
+itself as DMPO; `phases/agent/dmpo` remains the cheaper apples-to-apples comparison
 against rp1, which is trained pathwise in the same way.
 
 Both write the same checkpoint format, so `core/solver=dmpo` deploys either
@@ -63,7 +63,7 @@ gap needs environment rollouts.
 
 ## What differs from the paper, and why
 
-1. **Pathwise gradients instead of PPO** (`model=dmpo`; `model=dmpo_ppo` closes
+1. **Pathwise gradients instead of PPO** (`phases/agent/dmpo`; `phases/agent/dmpo_ppo` closes
    this gap for the algorithm, though not for the on-system objective). DMPO is trained with PPO because its
    costs come from a real quadrotor: no analytic gradient exists. Here the
    world model is differentiable, so the same networks are trained by
@@ -77,7 +77,7 @@ gap needs environment rollouts.
    quadrotor result.
 2. **The gate is `tanh`, following the authors' code.** The paper's text
    describes a sigmoid gate in `[0, 1]`; `dmpo_policy.py` uses `tanh`.
-   `core.planner.gate_activation=sigmoid` gives the paper-literal variant.
+   `core.agent.planner.gate_activation=sigmoid` gives the paper-literal variant.
 3. **Costs are the goal-conditioned critic, not a task cost.** DMPO plans
    against the same quasimetric value the rp1 solver plans against (recorded in
    its checkpoint), so a DMPO-vs-rp1 table isolates the planner. `amax` (the
@@ -101,71 +101,42 @@ gap needs environment rollouts.
 The sample count is baked into the trained network — the actor reads the `N`
 costs positionally — so it cannot be changed after training; the solver logs
 and ignores a mismatching config value. The iteration count can be varied at
-test time (`core.solver.iters`), as the paper does.
+test time (`core.agent.solver.iters`), as the paper does.
 
 ## Commands
 
-DMPO trains against a frozen critic, so produce the caches and `value_td`
-first (the rp1 pipeline with the planner stage skipped), then train and
-evaluate:
+DMPO trains against a frozen value, so first run the agent pipeline without its planner stage to
+produce the caches and `value_td`:
 
 ```bash
-pixi run train model=rp1 skip=[planner] \
-    wm=assets/core/world_model/cube_lewm \
-    dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
+pixi run posttrain training.wm=assets/core/world_model/cube_lewm \
+    training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance training.name=cube_lewm \
+    "training.stages=[cache,subsample,actions,value]"
 ```
+
+Then train and evaluate:
 
 ```bash
-pixi run train model=dmpo wm=assets/core/world_model/cube_lewm \
-    cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
-    h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
-    init_value=logs/<date>/<time>/checkpoints/value_td \
-    core.planner.action_limit=1.6
+pixi run posttrain --config-name phases/agent/dmpo training.wm=assets/core/world_model/cube_lewm \
+    training.cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
+    training.h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
+    training.init_value=<run>/checkpoints/value_td core.agent.planner.action_limit=1.6
+pixi run evaluate benchmark=cube_lewm core/agent/solver=dmpo core.agent.solver.checkpoint.path=<dmpo.pt>
 ```
+
+Offline DMPO (the PPO objective) trains with `--config-name phases/agent/dmpo_ppo` and the same
+arguments. The hand-written update DMPO learns a residual on, under the same value:
 
 ```bash
-pixi run eval model=lewm core/solver=dmpo core.solver.actor_path=<dmpo.pt>
+pixi run evaluate benchmark=cube_lewm core/agent/solver=mppi \
+    core/agent/value=metric core.agent.value.checkpoints=[<value_td>]
+pixi run evaluate benchmark=cube_lewm core/agent/solver=dmpo \
+    core.agent.solver.checkpoint.path=<dmpo.pt> core.agent.solver.mppi_mode=true
 ```
 
-Offline DMPO (the PPO objective) swaps one command:
+Window values (Reacher's three-frame quasimetric) work on both sides: trainer and solver read the window
+width off the value's `latent_dim` and score the last imagined frames the way `MetricCost` does at
+evaluation (`rp1.core.agent.value.temporal.windowed_terminal_value`).
 
-```bash
-pixi run train model=dmpo_ppo wm=assets/core/world_model/cube_lewm \
-    cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
-    h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
-    init_value=logs/<date>/<time>/checkpoints/value_td \
-    core.planner.action_limit=1.6
-```
-
-Baselines for the same cell — the hand-written update DMPO learns a residual
-on, under the same critic:
-
-```bash
-pixi run eval model=lewm core/solver=mppi core/value=metric core.value.checkpoints=[<value_td>]
-```
-
-```bash
-pixi run eval model=lewm core/solver=dmpo core.solver.actor_path=<dmpo.pt> core.solver.mppi_mode=true
-```
-
-Window critics (Reacher's three-frame quasimetric) are supported on both
-sides: the trainer and solver detect the context width from the critic's
-`latent_dim` and score the last `context` imagined frames the way
-`MetricCost` does at eval (`rp1.core.temporal.windowed_terminal_value`).
-
-Reporting protocol is the repository's: hyperparameter selection on eval seeds
-50/51, report on 42/43/44 × 50 episodes, and **three optimizer training seeds**
-per quoted cell.
-
-## Results
-
-All measured cells — TwoRoom, Reacher, and OGBench Cube, plus the wall-clock
-benchmark, scope caveats and provenance — are in one record:
-[RESULTS_dmpo_20260816.md](RESULTS_dmpo_20260816.md).
-
-## Cluster campaign
-
-`scripts/sky/dmpo_campaign.yaml` runs one cell (environment × base × value
-window) per managed job: dataset → caches → `value_td` → DMPO per train seed →
-h25 evaluation of DMPO and MPPI-under-the-same-value on report seeds. Launch
-examples are in the file header.
+Reporting follows the repository's protocol: selection on evaluation seeds 50/51, reports on 42/43/44
+with 50 episodes each, and three training seeds per cell.

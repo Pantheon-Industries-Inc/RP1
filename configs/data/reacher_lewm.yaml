@@ -1,8 +1,5 @@
 # @package data
-# LeWM world-model training on DM-Control Reacher random-play data.
-# Note: the public reacher h5 pads every episode-terminal step with NaN
-# actions; the LeWM z-score path must use nan-aware stats (see
-# docs/replication/REPLICATION_RLP.md).
+# The public Reacher h5 pads every episode's terminal step with NaN actions.
 cache_dir: null
 image_size: 224
 action_stats: null
