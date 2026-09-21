@@ -67,7 +67,7 @@ class TDConfig:
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
 
 
-def _expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
+def expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
     """Expectile-weighted Huber loss."""
     huber = torch.nn.functional.smooth_l1_loss(diff, torch.zeros_like(diff), beta=beta, reduction="none")
     weight = torch.where(diff > 0, 1.0 - expectile, expectile)  # diff=pred-target
@@ -178,7 +178,7 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str) -> MetricHead:
                 c = (1.0 - disc) / (1.0 - g)
             tgt = reached * dist + (1.0 - reached) * (c + disc * d_next)
         pred = value(z_t, z_g)
-        loss = _expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
+        loss = expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
         if cfg.rank_weight > 0:
             z_near, z_far, z_rank_goal, gap = (item.to(device) for item in rank_batch(cfg.batch_size))
             rank_loss = torch.relu(
@@ -209,4 +209,4 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str) -> MetricHead:
     return value
 
 
-__all__ = ["TDConfig", "fit", "_expectile_loss"]
+__all__ = ["TDConfig", "expectile_loss", "fit"]

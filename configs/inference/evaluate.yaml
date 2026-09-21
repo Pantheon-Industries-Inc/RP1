@@ -3,7 +3,7 @@ defaults:
   - _self_
   - benchmark: cube_lewm
 entrypoint:
-  _target_: rlp.inference.evaluate.run
+  _target_: rlp.inference.benchmark.run
 runtime:
   seed: 42
   device: auto

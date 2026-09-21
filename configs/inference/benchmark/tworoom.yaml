@@ -7,6 +7,7 @@ defaults:
   - /core/agent/value: latent
   - _self_
 benchmark:
+  wall_center: 112.0
   # TwoRoom's shipped numbers follow the original LeWM/DINO-WM contract:
   # training and evaluation share the full 10k-episode pool (no episode
   # split was applied in the producing campaigns). Set

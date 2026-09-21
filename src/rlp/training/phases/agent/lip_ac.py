@@ -1,49 +1,38 @@
 """LIP-AC: train the TD value (critic) and the LIP planner (actor) in tandem.
 
-The sequential pipeline (metric.py -> select TD by CEM -> lip.py)
-selects the value by a zeroth-order criterion — CEM only needs correct *ranking*
-of sampled plans — but LIP consumes the value's *gradient field* through the WM,
-so the CEM-best TD need not be the best LIP teacher (observed on PushT, where a
-rugged plan landscape reversed the method ordering). Here the two train jointly,
-DDPG/TD3-style, with the planner as a K-step learned-optimizer actor:
+The planner consumes the value's *gradient field* through the world model, so
+the two train jointly, DDPG/TD3-style, with the planner as a K-step
+learned-optimizer actor:
 
   critic   d_phi(z, z_g): n-step expectile TD on the dense (fs1) latent cache.
-           This TD loss is the ONLY gradient that reaches phi — the actor loss
-           is computed through the frozen-parameter teacher, so the critic can
-           never learn to "make plans look good" (the classic collapse).
-  teacher  d_bar = EMA(d_phi) (Polyak, ``ema_tau``): serves TD bootstrap targets
-           AND the actor (gradient features, refinement loss, and what we save
-           for deployment — so training matches LIPSolver's plan-time value).
-  actor    f_theta: exactly lip.py's objective, against the teacher.
+           This TD loss is the only gradient that reaches phi; the actor loss
+           goes through the frozen-parameter teacher, so the critic cannot learn
+           to make plans look good.
+  teacher  d_bar = EMA(d_phi) (Polyak, ``ema_tau``): serves the TD bootstrap
+           targets and the actor, and is the value saved for deployment, so
+           training matches the solver's plan-time value.
+  actor    f_theta: refines a zero plan for K iterations against the teacher.
 
 Schedule: ``pretrain`` critic-only warmup (auto: 2000 if fresh, 0 if warm-started
-via ``init_value``), then ``critic_ratio`` critic steps per actor step, critic+EMA
-frozen after ``freeze_critic_frac`` of actor steps so the planner settles on a
-stationary teacher (LIP is lr-sensitive; a moving target late in training makes
-it chase noise).
+via ``init_value``), then ``critic_ratio`` critic steps per actor step, critic and
+EMA frozen after ``freeze_critic_frac`` of actor steps so the planner settles on
+a stationary teacher.
 
-Optional feedback loop (``expand_weight > 0``): the actor's own imagined terminal
-latents become extra TD backups  d(z0,zg) <- H*fs + d_bar(z_T,zg)  — value
-expansion on planner-visited states, shaping d exactly where the planner
-travels. Low expectile makes this a one-sided (optimistic) bound absorber:
-good plans tighten d, bad plans barely raise it. Off by default: it lets the
-pair co-exploit WM errors, so compare against expand-weight 0 before trusting.
+``expand_weight > 0`` turns the actor's imagined terminal latents into extra TD
+backups  d(z0,zg) <- H*fs + d_bar(z_T,zg)  -- value expansion on the states the
+planner visits. A low expectile makes this a one-sided bound: good plans
+tighten d, bad plans barely raise it. It lets the pair co-exploit world-model
+errors, so compare against ``expand_weight=0``. ``expand_traj`` adds the H
+single-block backups  d(z_t,zg) <- fs + d_bar(z_{t+1},zg)  along the same
+rollout, at no extra world-model cost.
 
-``expand_traj`` additionally reuses the actor's final refinement rollout as H
-single-block backups  d(z_t,zg) <- fs + d_bar(z_{t+1},zg)  along the imagined
-path (consecutive latents are one fs-step action block apart). The rollout is
-already computed for the actor loss, so this densifies the critic's expansion
-signal H-fold per actor batch without any extra world-model queries. Same
-co-exploitation caveat as the endpoint term; requires ``expand_weight > 0``.
-
-Outputs are written to the run's ``checkpoints/`` directory. The planner
-checkpoint records the value-checkpoint path, so ``rlp.inference.evaluate`` with
-``solver=lip`` works unchanged and the same value can be CEM-evaluated for an
-apples-to-apples comparison.
+The planner checkpoint records the value's path, so the solver finds the
+teacher it was trained against.
 """
 
 import copy
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 import h5py
@@ -55,28 +44,399 @@ from typing import cast
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch import nn
 
 from rlp.core.agent.planner import PlannerNet
-from rlp.core.agent.solver.lip import ValueFunction
 from rlp.core.agent.value import build_metric
-from rlp.core.agent.value.temporal import trajectory_value, window_pair, windowed_trajectory_value
+from rlp.core.agent.value.temporal import ValueFunction, trajectory_value, window_pair, windowed_trajectory_value
 from rlp.core.world_model.base import LatentWorldModel
 from rlp.core.world_model.rollout import rollout_traj
 from rlp.data import LatentCache
 from rlp.data.base import load_action_stats
 from rlp.training.harness.checkpointing import load_metric, load_pretrained, save_metric
 from rlp.training.harness.schedule import cosine_interpolate
-from rlp.training.phases.agent.learners.td import _expectile_loss
+from rlp.training.phases.agent.learners.td import expectile_loss
 from rlp.training.phases.agent.samplers import NStepGoalSampler
 from rlp.utils.config import phase_config
 from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
-# (z0, imagined trajectory (B, H, D), zg) — the endpoint backup uses traj[:, -1];
+# (z0, imagined trajectory (B, H, D), zg) -- the endpoint backup uses traj[:, -1];
 # expand_traj additionally consumes every consecutive pair along the trajectory.
-# With a windowed value (vframes > 1) the tuple instead carries pre-stacked
+# With a windowed value (frames > 1) the tuple instead carries pre-stacked
 # (start window, terminal window, tiled goal), all 2-D.
 type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+
+
+class ActionBlocks:
+    """Normalized action blocks of ``frameskip`` primitive steps, read from an action h5."""
+
+    def __init__(self, path: str, frameskip: int, stats: str | None) -> None:
+        with h5py.File(path, "r") as file:
+            actions = file["action"][:]
+            self.offsets = file["ep_offset"][:]
+            self.lengths = file["ep_len"][:] if "ep_len" in file else None
+        # nan-aware: some datasets pad episode-terminal steps with NaN actions;
+        # those rows are never sampled but must not poison the statistics
+        mean, std = np.nanmean(actions, 0), np.nanstd(actions, 0) + 1e-6
+        if stats is not None:
+            mean, std = load_action_stats(stats)
+            if mean.shape != (actions.shape[-1],):
+                raise ValueError(f"action statistics have shape {mean.shape}; actions have {actions.shape[-1]}")
+            logger.info(f"Actions normalized with statistics from {stats}")
+        self.normalized = ((actions - mean) / std).astype(np.float32)
+        self.frameskip = frameskip
+        self.dim = actions.shape[-1] * frameskip
+
+    def __call__(self, episode: int, block: int) -> np.ndarray:
+        offset = self.frameskip * block
+        if self.lengths is not None:
+            offset = min(offset, max(0, int(self.lengths[episode]) - self.frameskip))
+        start = int(self.offsets[episode] + offset)
+        return np.asarray(self.normalized[start : start + self.frameskip]).reshape(-1)
+
+
+class PlanningTasks:
+    """Three-frame latent histories, their two action blocks, and a goal latent."""
+
+    def __init__(
+        self,
+        cache: LatentCache,
+        blocks: ActionBlocks,
+        *,
+        max_delta: int,
+        p_cross: float,
+        rng: np.random.Generator,
+        device: str,
+    ) -> None:
+        self.z = cache.z.to(device).float()
+        episodes = cache.episodes()
+        keys = [key for key in episodes if len(episodes[key]) > max_delta + 4]
+        if not keys:
+            longest = max((len(rows) for rows in episodes.values()), default=0)
+            raise ValueError(
+                f"no episode is longer than max_delta+4 = {max_delta + 4} blocks "
+                f"(longest is {longest}); lower planner.max_delta or use a cache with longer episodes"
+            )
+        self.rows = {key: np.asarray(episodes[key]) for key in keys}
+        self.episodes = np.array(keys)
+        self.blocks = blocks
+        self.max_delta = max_delta
+        self.p_cross = p_cross
+        self.rng = rng
+        self.device = device
+
+    def sample(self, batch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        z, rng = self.z, self.rng
+        histories: list[torch.Tensor] = []
+        actions: list[np.ndarray] = []
+        goals: list[torch.Tensor] = []
+        for _ in range(batch):
+            episode = int(self.episodes[rng.integers(len(self.episodes))])
+            rows = self.rows[episode]
+            length = len(rows)
+            t = int(rng.integers(2, length - 2))
+            histories.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
+            actions.append(np.stack([self.blocks(episode, t - 2), self.blocks(episode, t - 1)]))
+            if rng.random() < self.p_cross:
+                other = self.rows[int(self.episodes[rng.integers(len(self.episodes))])]
+                goals.append(z[other[rng.integers(len(other))]])
+            else:
+                delta = int(rng.integers(1, self.max_delta + 1))
+                goals.append(z[rows[min(t + delta, length - 1)]])
+        return torch.stack(histories), torch.from_numpy(np.stack(actions)).to(self.device), torch.stack(goals)
+
+
+@dataclass(frozen=True)
+class Returns:
+    """Discounted cost and continuation factor of a full plan and of one action block."""
+
+    plan_cost: float
+    plan_discount: float
+    block_cost: float
+    block_discount: float
+
+    @classmethod
+    def of(cls, gamma: float, horizon: int, frameskip: int) -> "Returns":
+        if gamma >= 1.0:
+            return cls(float(horizon * frameskip), 1.0, float(frameskip), 1.0)
+        plan_discount, block_discount = gamma ** (horizon * frameskip), gamma**frameskip
+        return cls(
+            (1.0 - plan_discount) / (1.0 - gamma), plan_discount, (1.0 - block_discount) / (1.0 - gamma), block_discount
+        )
+
+
+class Critic:
+    """The TD critic, its EMA teacher, and the optimizer that trains the critic."""
+
+    def __init__(self, a: DictConfig, module: nn.Module, cache: LatentCache | None, frames: int, device: str) -> None:
+        module.train()
+        self.module = module
+        self.teacher = copy.deepcopy(module).to(device)
+        for parameter in self.teacher.parameters():
+            parameter.requires_grad_(False)  # the actor loss flows through the teacher, never into it
+        self.teacher.eval()
+        self.cache = cache
+        self.frames = frames
+        self.a = a
+        self.device = device
+        self.returns = Returns.of(a.gamma, a.horizon, a.frameskip)
+        self.sampler = (
+            None
+            if cache is None
+            else NStepGoalSampler(
+                cache,
+                n_step=a.n_step,
+                p_cross=a.td_p_cross,
+                n_buckets=a.td_n_buckets,
+                balanced=True,
+                seed=a.seed,
+                max_delta=a.td_max_delta,
+                near_frac=a.near_frac,
+                near_max=a.near_max,
+            )
+        )
+        self.optimizer = (
+            None if cache is None else torch.optim.AdamW(module.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
+        )
+
+    @property
+    def value(self) -> ValueFunction:
+        return cast(ValueFunction, self.module)
+
+    @property
+    def target(self) -> ValueFunction:
+        return cast(ValueFunction, self.teacher)
+
+    def windows(self, indices: torch.Tensor) -> torch.Tensor:
+        """Dense-cache rows stacked into windows of ``frames`` latents one action block apart.
+
+        The same construction as ``LatentCache.windowed``: oldest first, clamped
+        to the episode's first row at episode starts.
+        """
+        if self.cache is None:
+            raise RuntimeError("window rows requested without the dense TD cache")
+        step = self.cache.step_idx[indices]
+        columns = []
+        for k in range(self.frames - 1, -1, -1):
+            offset = k * self.a.frameskip
+            rows = torch.where(step < offset, indices - step, indices - offset)
+            columns.append(self.cache.z[rows])
+        return torch.cat(columns, dim=-1)
+
+    def step(self, expand: ExpandBatch | None, tau: float, lr: float) -> float:
+        if self.sampler is None or self.optimizer is None:
+            raise RuntimeError("critic step during actor-only training")
+        a, device = self.a, self.device
+        for group in self.optimizer.param_groups:
+            group["lr"] = lr
+        batch = self.sampler.sample(a.td_batch)
+        if self.frames > 1:
+            # every query is a window rebuilt from the dense cache; the goal side
+            # is the sampled goal frame's own window
+            z_t, z_tn, z_g = (self.windows(batch[key]).to(device) for key in ("t_idx", "tn_idx", "g_idx"))
+        else:
+            z_t, z_tn, z_g = batch["z_t"].to(device), batch["z_tn"].to(device), batch["z_g"].to(device)
+        steps, reached, distance = batch["n_eff"].to(device), batch["reached"].to(device), batch["dist"].to(device)
+        with torch.no_grad():
+            bootstrap = self.target(z_tn, z_g)
+            if a.gamma >= 1.0:
+                cost, discount = steps, torch.ones_like(steps)
+            else:
+                discount = a.gamma**steps
+                cost = (1.0 - discount) / (1.0 - a.gamma)
+            target = reached * distance + (1.0 - reached) * (cost + discount * bootstrap)
+        loss = expectile_loss(self.value(z_t, z_g) - target, tau, a.huber_beta)
+        if expand is not None:
+            loss = loss + a.expand_weight * self._expansion_loss(expand, tau)
+        self.optimizer.zero_grad(set_to_none=True)
+        loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature here.
+        self.optimizer.step()
+        with torch.no_grad():
+            for target_parameter, parameter in zip(self.teacher.parameters(), self.module.parameters(), strict=True):
+                target_parameter.mul_(1.0 - a.ema_tau).add_(a.ema_tau * parameter)
+        return float(loss.item())
+
+    def _expansion_loss(self, expand: ExpandBatch, tau: float) -> torch.Tensor:
+        """Value-expansion backups on the actor's imagined rollouts."""
+        a, returns = self.a, self.returns
+        start, trajectory, goal = expand
+        # windowed values receive pre-stacked endpoint windows (2-D)
+        endpoint = trajectory if self.frames > 1 else trajectory[:, -1]
+        with torch.no_grad():
+            target = returns.plan_cost + returns.plan_discount * self.target(endpoint, goal)
+        loss = expectile_loss(self.value(start, goal) - target, tau, a.huber_beta)
+        if a.expand_traj:
+            _, horizon, dim = trajectory.shape
+            sources = torch.cat([start.unsqueeze(1), trajectory[:, :-1]], dim=1).reshape(-1, dim)
+            goals = goal.repeat_interleave(horizon, dim=0)
+            with torch.no_grad():
+                targets = returns.block_cost + returns.block_discount * self.target(trajectory.reshape(-1, dim), goals)
+            loss = loss + expectile_loss(self.value(sources, goals) - targets, tau, a.huber_beta)
+        return loss
+
+
+def build_critic(a: DictConfig, latent_dim: int, cache: LatentCache | None, device: str) -> tuple[nn.Module, int]:
+    """The initial critic and the number of frames its windows stack.
+
+    A warm-started value may take a window of ``m`` latents (width ``m * D``).
+    """
+    if a.init_value:
+        critic = load_metric(a.init_value, device=device)
+        value_dim = int(cast(int, critic.latent_dim))
+        if value_dim % latent_dim:
+            raise ValueError(
+                f"init-value width {value_dim} is not an integer multiple of cache latent dim {latent_dim}"
+            )
+        return critic, value_dim // latent_dim
+    if cache is None:
+        raise RuntimeError("critic cache unavailable")
+    architecture = {
+        "head": a.head,
+        "hidden_dim": a.hidden_dim,
+        "depth": a.depth,
+        "embed_dim": a.embedding_dim,
+        "softplus": True,
+        "symmetric": False,
+        "sym_frac": a.sym_frac,
+        "num_components": a.num_components,
+        "alpha_init": a.alpha_init,
+        "scale": a.scale,
+    }
+    return build_metric("td", cache.latent_dim, architecture).to(device), 1
+
+
+def window_lag(a: DictConfig, frames: int) -> int | None:
+    """Frame spacing of a windowed value, which must be one action block."""
+    if frames == 1:
+        return None
+    lag = a.frameskip if a.window_lag is None else int(a.window_lag)
+    if lag != a.frameskip:
+        raise ValueError(
+            f"window lag {lag} != action block {a.frameskip}: consecutive imagined latents are one action "
+            "block apart, so the deployed window would not match the trained one"
+        )
+    if a.expand_traj:
+        raise ValueError("expand_traj is not supported with a windowed init_value")
+    logger.info(f"LIP-AC consuming a {frames}-frame window value (lag {lag})")
+    return lag
+
+
+class Actor:
+    """The planner network, its optimizer, and the replay of its own imagined histories."""
+
+    def __init__(self, a: DictConfig, action_dim: int, device: str) -> None:
+        self.net = PlannerNet(
+            horizon=a.horizon,
+            action_dim=action_dim,
+            hidden_dim=a.hidden_dim,
+            action_limit=a.action_limit,
+            head_scale=a.head_scale,
+        ).to(device)
+        self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=a.actor_lr, weight_decay=a.actor_weight_decay)
+        self.a = a
+        self.action_dim = action_dim
+        self.device = device
+        self.replay: tuple[torch.Tensor, torch.Tensor] | None = None
+
+    def _replayed(
+        self, histories: torch.Tensor, actions: torch.Tensor, goals: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Swap a ``replay_prob`` share of the batch for the previous step's imagined endpoints."""
+        if self.a.replay_prob <= 0 or self.replay is None:
+            return histories, actions, goals
+        replay_histories, replay_goals = self.replay
+        picked = torch.nonzero(torch.rand(self.a.batch, device=self.device) < self.a.replay_prob).squeeze(1)
+        if not picked.numel():
+            return histories, actions, goals
+        take = torch.randint(0, replay_histories.shape[0], (picked.numel(),), device=self.device)
+        histories, actions, goals = histories.clone(), actions.clone(), goals.clone()
+        histories[picked] = replay_histories[take]
+        goals[picked] = replay_goals[take]
+        actions[picked] = 0.0  # deployed replans query with zero action history
+        return histories, actions, goals
+
+    def step(
+        self, tasks: PlanningTasks, wm: LatentWorldModel, teacher: ValueFunction, frames: int
+    ) -> tuple[float, float, ExpandBatch]:
+        a = self.a
+        histories, actions, goals = self._replayed(*tasks.sample(a.batch))
+        start = histories[:, -1]
+
+        def score(trajectory: torch.Tensor) -> torch.Tensor:
+            if frames > 1:
+                return windowed_trajectory_value(teacher, trajectory, goals, histories, frames, a.temporal_objective)
+            return trajectory_value(teacher, trajectory, goals, start, a.temporal_objective)
+
+        plan = torch.zeros(a.batch, a.horizon, self.action_dim, device=self.device)
+        energies: list[torch.Tensor] = []
+        trajectory: torch.Tensor | None = None
+        if a.reuse_refinement_rollouts:
+            reused_plan = plan.detach().requires_grad_(True)
+            reused_score = score(rollout_traj(wm, histories, actions, reused_plan))
+        for k in range(a.iterations):
+            # the gradient is an input to the learned rule, not part of the training path
+            if a.reuse_refinement_rollouts:
+                (gradient,) = torch.autograd.grad(reused_score.sum(), reused_plan, retain_graph=k > 0)
+                energy = reused_score.detach()
+            else:
+                with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
+                    probe = plan.detach().requires_grad_(True)
+                    probe_score = score(rollout_traj(wm, histories, actions, probe))
+                    (gradient,) = torch.autograd.grad(probe_score.sum(), probe)
+                energy = probe_score.detach()
+            plan = self.net(plan, gradient.detach(), energy)
+            trajectory = rollout_traj(wm, histories, actions, plan)
+            plan_score = score(trajectory)
+            energies.append(plan_score.mean())
+            if a.reuse_refinement_rollouts and k + 1 < a.iterations:
+                reused_plan, reused_score = plan, plan_score
+        if trajectory is None:
+            raise RuntimeError("the planner ran no refinement iteration")
+        if a.replay_prob > 0:
+            self.replay = (trajectory[:, -3:].detach(), goals.detach())
+
+        loss = energies[-1] + a.mean_weight * torch.stack(energies).mean()
+        if a.ac_weight > 0:
+            # anti-constancy: the batch-level constancy of the net plan displacement,
+            # ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0, 1]. A planner that exploits
+            # the world model emits a near-constant plan whatever the task.
+            displacement = plan.sum(1)
+            constancy = displacement.mean(0).pow(2).sum() / (displacement.pow(2).sum(1).mean() + 1e-8)
+            loss = loss + a.ac_weight * constancy
+        self.optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
+        self.optimizer.step()
+
+        if frames > 1:
+            # the expansion tuple in the window value's input space: start window from
+            # the real history, terminal window from the rollout, goal tiled to match
+            start_window, goal_window = window_pair(histories, goals, frames)
+            end_window, _ = window_pair(trajectory, goals, frames)
+            expand = (start_window.detach(), end_window.detach(), goal_window.detach())
+        else:
+            expand = (start.detach(), trajectory.detach(), goals.detach())
+        return float(energies[0].item()), float(energies[-1].item()), expand
+
+
+def planner_payload(
+    a: DictConfig, state_dict: dict[str, torch.Tensor], action_dim: int, value: Path, frames: int, lag: int | None
+) -> dict[str, object]:
+    """The deployable planner checkpoint around an actor state dict."""
+    return {
+        "state_dict": state_dict,
+        "horizon": a.horizon,
+        "iterations": a.iterations,
+        "action_dim": action_dim,
+        "action_limit": a.action_limit,
+        "hidden_dim": a.hidden_dim,
+        "head_scale": a.head_scale,
+        "value": str(value),
+        "temporal_objective": a.temporal_objective,
+        "window_frames": frames,
+        "window_lag": lag,
+    }
 
 
 def run(cfg: DictConfig) -> None:
@@ -87,520 +447,68 @@ def run(cfg: DictConfig) -> None:
         raise ValueError("actor_only=true requires init_value")
     if not a.actor_only and not a.cache_td:
         raise ValueError("cache_td is required unless actor_only=true")
-    dev = pick_device(a.device)
+    device = pick_device(a.device)
     rng = np.random.default_rng(a.seed)
     torch.manual_seed(a.seed)
 
-    wm_module = load_pretrained(a.wm).to(dev).eval()
+    wm_module = load_pretrained(a.wm).to(device).eval()
     wm_module.requires_grad_(False)
     wm = cast(LatentWorldModel, wm_module)
 
-    c = LatentCache.load(a.cache, mmap=bool(a.cache_mmap))
-    cap = a.get("max_episodes")
-    if cap:
-        # ids are e*P+k under phase multiplexing, so cap in ORIGINAL episodes
-        c = c.first_episodes(int(cap) * c.phase_multiplex)
-        logger.info(f"Data-volume cap: actor training on episodes [0, {int(cap)})")
-    z = c.z.to(dev).float()
-    eps = c.episodes()
-    keys = [k for k in eps if len(eps[k]) > a.max_delta + 4]
-    if not keys:
-        longest = max((len(v) for v in eps.values()), default=0)
-        raise ValueError(
-            f"no episode in {a.cache} is longer than max_delta+4 = {a.max_delta + 4} blocks "
-            f"(longest is {longest}); lower planner.max_delta or use a cache with longer episodes"
-        )
-    ep_rows = {e: np.asarray(eps[e]) for e in keys}
-    ep_ids = np.array(keys)
-    BANDS = _parse_bands(a.get("band_mix", None))
-    if BANDS and max(BANDS) > a.max_delta:
-        raise ValueError(f"band_mix {BANDS} exceeds max_delta {a.max_delta}")
-    logger.info(
-        f"actor goal band: max_delta={a.max_delta} blocks, "
-        f"{'MIXTURE over deployment bands ' + str(BANDS) if BANDS else 'uniform'}, p_cross={a.p_cross}; "
-        f"episodes kept {len(keys)}/{len(eps)} (len > max_delta+4)"
+    blocks = ActionBlocks(a.h5, a.frameskip, a.action_stats)
+    tasks = PlanningTasks(
+        LatentCache.load(a.cache, mmap=bool(a.cache_mmap)),
+        blocks,
+        max_delta=a.max_delta,
+        p_cross=a.p_cross,
+        rng=rng,
+        device=device,
     )
-    with h5py.File(a.h5, "r") as h:
-        act = h["action"][:]
-        ep_off = h["ep_offset"][:]
-        ep_len_h5 = h["ep_len"][:] if "ep_len" in h else None
-    # nan-aware: some datasets (e.g. lewm-cube) pad episode-terminal steps with
-    # NaN actions; those rows are never sampled (history blocks stop before the
-    # terminal step) but must not poison the normalization stats
-    amu, astd = np.nanmean(act, 0), np.nanstd(act, 0) + 1e-6
-    if a.action_stats is not None:
-        amu, astd = load_action_stats(a.action_stats)
-        if amu.shape != (act.shape[-1],):
-            raise ValueError(f"action statistics have shape {amu.shape}; the action dimension is {act.shape[-1]}")
-        logger.info(f"Actions normalized with statistics from {a.action_stats}")
-    act_n = ((act - amu) / astd).astype(np.float32)
-    fs = a.frameskip
-    a_dim = act.shape[-1] * fs
+    dense = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
+    if a.near_frac > 0:
+        logger.info(f"LIP-AC co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps")
+    module, frames = build_critic(a, int(tasks.z.shape[-1] if dense is None else dense.latent_dim), dense, device)
+    lag = window_lag(a, frames)
+    critic = Critic(a, module, dense, frames, device)
+    actor = Actor(a, blocks.dim, device)
 
-    # phase-multiplexed fs5 caches (tools/subsample_cache phases>1) store each
-    # residue class of the stride as its own episode, id = e * P + k; the h5
-    # is indexed by the ORIGINAL episode, and block t of phase k starts at
-    # primitive step k + fs*t. Hand this trainer an fs1 cache instead and it
-    # would read past the episode (h0 = ep_off + fs*t assumes block indices).
-    phase_mult = c.phase_multiplex
-    if phase_mult > 1:
-        logger.info(f"LIP-AC actor cache is phase-multiplexed x{phase_mult} (every residue class of the stride)")
-
-    def block_row(e: int, t: int) -> int:
-        """h5 row of block ``t``'s first primitive step in (phase-multiplexed) episode ``e``."""
-        src_e, phase = divmod(e, phase_mult) if phase_mult > 1 else (e, 0)
-        offset = phase + fs * t
-        if ep_len_h5 is not None:
-            offset = min(offset, max(0, int(ep_len_h5[src_e]) - fs))
-        return int(ep_off[src_e] + offset)
-
-    def blocks(e: int, t: int) -> np.ndarray:
-        h0 = block_row(e, t)
-        return np.asarray(act_n[h0 : h0 + fs]).reshape(-1)
-
-    def sample(B: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """History windows, action history, goals -- and, for the grounding term, the
-        real agent position (px) at the plan's start and the commanded displacement
-        (px) of the primitive step before it (zeros when grounding is off)."""
-        zh: list[torch.Tensor] = []
-        ah: list[np.ndarray] = []
-        zg: list[torch.Tensor] = []
-        ag0 = np.zeros((B, 2), dtype=np.float32)
-        u_prev = np.zeros((B, act.shape[-1]), dtype=np.float32)
-        for i in range(B):
-            e = int(ep_ids[rng.integers(len(ep_ids))])
-            rows = ep_rows[e]
-            L = len(rows)
-            t = int(rng.integers(2, L - 2))
-            zh.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
-            ah.append(np.stack([blocks(e, t - 2), blocks(e, t - 1)]))
-            if state_all is not None:
-                h0 = block_row(e, t)
-                ag0[i] = state_all[h0, :2]
-                src_e = e // phase_mult if phase_mult > 1 else e
-                if h0 - 1 >= int(ep_off[src_e]):
-                    u_prev[i] = np.nan_to_num(act[h0 - 1]) * ACTION_SCALE
-            if rng.random() < a.p_cross:
-                e2 = int(ep_ids[rng.integers(len(ep_ids))])
-                r2 = ep_rows[e2]
-                zg.append(z[r2[rng.integers(len(r2))]])
-            else:
-                d = _band_offset(rng, min(a.max_delta, L - 1 - t) if BANDS else a.max_delta, BANDS)
-                zg.append(z[rows[min(t + d, L - 1)]])
-        return (
-            torch.stack(zh),
-            torch.from_numpy(np.stack(ah)).to(dev),
-            torch.stack(zg),
-            torch.from_numpy(ag0).to(dev),
-            torch.from_numpy(u_prev).to(dev),
-        )
-
-    c_td = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
-    # ------------------------------------------------------------ physics grounding (PushT)
-    # Calibrated on the UNCAPPED fs1 cache plus the dataset's state column, before
-    # any data-volume cap: the probe and thresholds describe the encoder and the
-    # environment, not the ablation. The module travels in the actor checkpoint so
-    # the deployed energy is the trained one.
-    grounding: GroundingPenalty | None = None
-    state_all: np.ndarray | None = None
-    if a.get("grounding"):
-        if a.grounding != "pusht":
-            raise ValueError(f"unsupported grounding {a.grounding!r} (expected 'pusht')")
-        if c_td is None:
-            raise ValueError("grounding needs the dense fs1 cache (cache_td) to fit the state probe")
-        if not a.get("state_h5"):
-            raise ValueError("grounding=pusht needs state_h5: the dataset h5 with its 'state' column")
-        n_rows = int(c_td.z.shape[0])
-        with h5py.File(a.state_h5, "r") as hs:
-            st_epi = np.asarray(hs["episode_idx"][:n_rows]).reshape(-1)
-            if len(st_epi) != n_rows or not np.array_equal(st_epi, c_td.episode_idx.numpy()):
-                raise RuntimeError(f"{a.state_h5} rows do not align with the fs1 cache {a.cache_td}")
-            state_all = np.asarray(hs["state"][:], dtype=np.float32)
-        if state_all.shape[0] < act.shape[0]:
-            raise RuntimeError(
-                f"{a.state_h5} has fewer rows ({state_all.shape[0]}) than the action h5 ({act.shape[0]})"
-            )
-        grounding, ground_report = calibrate_pusht_grounding(
-            c_td.z,
-            state_all[:n_rows],
-            act[:n_rows],
-            c_td.episode_idx.numpy(),
-            amu=amu,
-            astd=astd,
-            fs=fs,
-            horizon=a.horizon,
-            margin=a.get("ground_margin"),
-            tau=float(a.ground_tau),
-            ref=float(a.ground_ref),
-            weight=float(a.ground_weight),
-            deadzone=a.get("ground_deadzone"),
-            quantile=float(a.ground_quantile),
-            seed=int(a.seed),
-        )
-        grounding = grounding.to(dev)
-        logger.info(
-            "LIP-AC physics grounding calibrated: " + " ".join(f"{k}={v:.4g}" for k, v in ground_report.items())
-        )
-    if cap and c_td is not None:
-        c_td = c_td.first_episodes(int(cap))
-    td_near_frac = float(a.get("near_frac", 0.0) or 0.0)
-    td_near_max = int(a.get("near_max", 3) or 3)
-    if td_near_frac > 0:
-        logger.info(f"LIP-AC co-critic near-goal oversampling: frac={td_near_frac} max={td_near_max} steps")
-    base_dim = int(z.shape[-1] if c_td is None else c_td.latent_dim)
-    if a.init_value:
-        critic = load_metric(a.init_value, device=dev)
-        value_dim = int(cast(int, critic.latent_dim))
-        if value_dim % base_dim:
-            raise ValueError(f"init-value width {value_dim} is not an integer multiple of cache latent dim {base_dim}")
-        # m-frame window values declare latent_dim = m * D; any integer
-        # multiple >= 1 is valid (do not restrict to the paper's {1, 3}).
-        vframes = value_dim // base_dim
-    else:
-        if c_td is None:
-            raise RuntimeError("critic cache unavailable")
-        vframes = 1
-        critic = build_metric(
-            "td",
-            c_td.latent_dim,
-            {
-                "head": a.head,
-                "hidden_dim": a.hidden_dim,
-                "depth": a.depth,
-                "embed_dim": a.embedding_dim,
-                "softplus": True,
-                "symmetric": False,
-            },
-        ).to(dev)
-    value_window_lag = None
-    if vframes > 1:
-        value_window_lag = fs if a.window_lag is None else int(a.window_lag)
-        if value_window_lag != fs:
-            raise ValueError(
-                f"window lag {value_window_lag} != action block {fs}: consecutive imagined "
-                "latents are one action block apart, so the deployed window would not match "
-                "the trained one"
-            )
-        if a.expand_traj:
-            raise ValueError("expand_traj is not supported with a windowed init_value (vframes > 1)")
-        logger.info(f"LIP-AC consuming a {vframes}-frame window value (lag {value_window_lag})")
-    critic.train()
-    teacher = copy.deepcopy(critic).to(dev)
-    for prm in teacher.parameters():
-        prm.requires_grad_(False)  # actor loss flows THROUGH, never INTO
-    teacher.eval()
-    critic_fn = cast(ValueFunction, critic)
-    teacher_fn = cast(ValueFunction, teacher)
-
-    td_sampler = (
-        None
-        if c_td is None
-        else NStepGoalSampler(
-            c_td,
-            n_step=a.n_step,
-            p_cross=a.td_p_cross,
-            n_buckets=a.td_n_buckets,
-            balanced=True,
-            seed=a.seed,
-            max_delta=a.td_max_delta,
-            near_frac=td_near_frac,
-            near_max=td_near_max,
-        )
-    )
-    # a parameter-free critic (learner=l2: the latent distance itself) can only
-    # ever be frozen, so it gets no optimizer and no co-training phase
-    critic_trainable = any(True for _ in critic.parameters())
-    if not critic_trainable and not a.actor_only and a.freeze_critic_frac > 0:
-        raise ValueError(
-            f"critic {type(critic).__name__} has no parameters, so it cannot be co-trained; "
-            "set planner.freeze_critic_frac=0"
-        )
-    c_opt = (
-        None
-        if a.actor_only or not critic_trainable
-        else torch.optim.AdamW(critic.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
-    )
-
-    def _window_rows(indices: torch.Tensor, source: LatentCache | None = None) -> torch.Tensor:
-        """Stack dense TD-cache rows into m-frame windows.
-
-        Exactly the ``LatentCache.windowed`` construction: frames one action
-        block (``fs`` primitive steps) apart, oldest first, clamped to the
-        episode's first row at episode starts. ``source`` reads the latents
-        from a row-aligned cache (the agent-displaced one) with the same
-        episode bookkeeping.
-        """
-        if c_td is None:
-            raise RuntimeError("window rows requested without the dense TD cache")
-        src = c_td if source is None else source
-        columns = []
-        for k in range(vframes - 1, -1, -1):
-            offset = k * fs
-            j = indices - offset
-            j = torch.where(c_td.step_idx[indices] < offset, indices - c_td.step_idx[indices], j)
-            columns.append(src.z[j])
-        return torch.cat(columns, dim=-1)
-
-    n_plan = a.horizon * fs  # plan length in primitive steps
-    if a.gamma >= 1.0:
-        plan_cost, plan_disc = float(n_plan), 1.0
-        block_cost, block_disc = float(fs), 1.0
-    else:
-        plan_disc = a.gamma**n_plan
-        plan_cost = (1.0 - plan_disc) / (1.0 - a.gamma)
-        block_disc = a.gamma**fs
-        block_cost = (1.0 - block_disc) / (1.0 - a.gamma)
-
-    def critic_step(expand: ExpandBatch | None = None, tau: float | None = None, lr: float | None = None) -> float:
-        if td_sampler is None or c_opt is None:
-            raise RuntimeError("critic_step called during actor-only training")
-        tau = a.expectile if tau is None else tau
-        if lr is not None:
-            for pg in c_opt.param_groups:
-                pg["lr"] = lr
-        b = td_sampler.sample(a.td_batch)
-        if vframes > 1:
-            # window critics: every query is an m-frame stack rebuilt from the
-            # dense cache; the goal side is the sampled goal frame's own window
-            z_t = _window_rows(b["t_idx"]).to(dev)
-            z_tn = _window_rows(b["tn_idx"]).to(dev)
-            z_g = _window_rows(b["g_idx"]).to(dev)
-        else:
-            z_t, z_tn, z_g = b["z_t"].to(dev), b["z_tn"].to(dev), b["z_g"].to(dev)
-        ne, reached, dist = (
-            b["n_eff"].to(dev),
-            b["reached"].to(dev),
-            b["dist"].to(dev),
-        )
-        with torch.no_grad():
-            d_next = teacher_fn(z_tn, z_g)
-            if a.gamma >= 1.0:
-                cost, disc = ne, torch.ones_like(ne)
-            else:
-                disc = a.gamma**ne
-                cost = (1.0 - disc) / (1.0 - a.gamma)
-            tgt = reached * dist + (1.0 - reached) * (cost + disc * d_next)
-        loss = _expectile_loss(critic_fn(z_t, z_g) - tgt, tau, a.huber_beta)
-        if expand is not None:  # value expansion on planner rollouts
-            z0e, traje, zge = expand
-            # windowed values receive pre-stacked endpoint windows (2-D);
-            # single-frame values the full trajectory (endpoint = last frame)
-            endpoint = traje if vframes > 1 else traje[:, -1]
-            with torch.no_grad():
-                tgt_e = plan_cost + plan_disc * teacher_fn(endpoint, zge)
-            loss_e = _expectile_loss(critic_fn(z0e, zge) - tgt_e, tau, a.huber_beta)
-            if a.expand_traj:
-                # single-block backups along the reused refinement rollout:
-                # consecutive imagined latents are one fs-step block apart
-                Be, He, De = traje.shape
-                src = torch.cat([z0e.unsqueeze(1), traje[:, :-1]], dim=1).reshape(-1, De)
-                zg_rep = zge.repeat_interleave(He, dim=0)
-                with torch.no_grad():
-                    tgt_t = block_cost + block_disc * teacher_fn(traje.reshape(-1, De), zg_rep)
-                loss_e = loss_e + _expectile_loss(critic_fn(src, zg_rep) - tgt_t, tau, a.huber_beta)
-            loss = loss + a.expand_weight * loss_e
-        c_opt.zero_grad(set_to_none=True)
-        loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature here.
-        c_opt.step()
-        with torch.no_grad():
-            for tp, sp in zip(teacher.parameters(), critic.parameters(), strict=True):
-                tp.mul_(1.0 - a.ema_tau).add_(a.ema_tau * sp)
-        return float(loss.item())
-
-    net = PlannerNet(
-        horizon=a.horizon,
-        action_dim=a_dim,
-        hidden_dim=a.hidden_dim,
-        action_limit=a.action_limit,
-        head_scale=a.head_scale,
-    ).to(dev)
-    a_opt = torch.optim.AdamW(net.parameters(), lr=a.actor_lr, weight_decay=a.actor_weight_decay)
-
-    replay_buf: dict[str, torch.Tensor | None] = {
-        "zh": None,
-        "zg": None,
-        "agent": None,  # grounding: agent position at the end of the replayed rollout
-        "u_prev": None,  # grounding: last commanded displacement of that rollout
-    }  # previous step's final imagined windows
-    ground_log: dict[str, float] = {}
-
-    def actor_step() -> tuple[float, float, ExpandBatch]:
-        zh, ah, zg, ag0, u_prev = sample(a.batch)
-        replay_zh = replay_buf["zh"]
-        replay_zg = replay_buf["zg"]
-        if a.replay_prob > 0 and replay_zh is not None and replay_zg is not None:
-            pick = torch.rand(a.batch, device=dev) < a.replay_prob
-            idx = torch.nonzero(pick).squeeze(1)
-            if idx.numel():
-                take = torch.randint(0, replay_zh.shape[0], (idx.numel(),), device=dev)
-                zh, ah, zg = zh.clone(), ah.clone(), zg.clone()
-                zh[idx] = replay_zh[take]
-                zg[idx] = replay_zg[take]
-                ah[idx] = 0.0  # deployed replans query with zero action history
-                replay_agent, replay_u = replay_buf["agent"], replay_buf["u_prev"]
-                if grounding is not None and replay_agent is not None and replay_u is not None:
-                    # the replayed start is the previous rollout's imagined end: the agent
-                    # sits where that plan's commands took it (exact under the kinematics)
-                    ag0, u_prev = ag0.clone(), u_prev.clone()
-                    ag0[idx] = replay_agent[take]
-                    u_prev[idx] = replay_u[take]
-        z0 = zh[:, -1]
-
-        def score_trajectory(trajectory: torch.Tensor, plan: torch.Tensor) -> torch.Tensor:
-            """Deploy-matched trajectory score (m-frame windows when vframes > 1), plus
-            the physics-grounding term when enabled -- the same energy the solver
-            descends at deploy, so its gradient and value are the actor's inputs too."""
-            if vframes > 1:
-                energy = windowed_trajectory_value(teacher_fn, trajectory, zg, zh, vframes, a.temporal_objective)
-            else:
-                energy = trajectory_value(teacher_fn, trajectory, zg, z0, a.temporal_objective)
-            if grounding is not None:
-                energy = energy + grounding(z0, trajectory, plan, ag0, u_prev)
-            return energy
-
-        A = torch.zeros(a.batch, a.horizon, a_dim, device=dev)
-        e_path: list[torch.Tensor] = []
-        zT: torch.Tensor | None = None
-        tr: torch.Tensor | None = None
-        rollout_action: torch.Tensor | None = None
-        rollout_trajectory: torch.Tensor | None = None
-        rollout_score: torch.Tensor | None = None
-        if a.reuse_refinement_rollouts:
-            rollout_action = A.detach().requires_grad_(True)
-            rollout_trajectory = rollout_traj(wm, zh, ah, rollout_action)
-            rollout_score = score_trajectory(rollout_trajectory)
-        for k in range(a.iterations):
-            # gradient feature (detached — input to the learned rule, not the training path)
-            if a.reuse_refinement_rollouts:
-                if rollout_action is None or rollout_trajectory is None or rollout_score is None:
-                    raise RuntimeError("refinement rollout was not initialized")
-                (gA,) = torch.autograd.grad(rollout_score.sum(), rollout_action, retain_graph=k > 0)
-                E_feat = rollout_score.detach()
-            else:
-                with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
-                    A_in = A.detach().requires_grad_(True)
-                    traj = rollout_traj(wm, zh, ah, A_in)
-                    score = score_trajectory(traj, A_in)
-                    (gA,) = torch.autograd.grad(score.sum(), A_in)
-                E_feat = score.detach()
-            A = net(A, gA.detach(), E_feat)
-            tr = rollout_traj(wm, zh, ah, A)
-            zT = tr[:, -1]
-            score = score_trajectory(tr, A)
-            e_path.append(score.mean())
-            if a.reuse_refinement_rollouts and k + 1 < a.iterations:
-                rollout_action, rollout_trajectory, rollout_score = A, tr, score
-        if a.replay_prob > 0:
-            if tr is None:
-                raise RuntimeError("actor produced no rollout trajectory")
-            replay_buf["zh"] = tr[:, -3:].detach()
-            replay_buf["zg"] = zg.detach()
-            if grounding is not None:
-                with torch.no_grad():
-                    replay_buf["agent"] = grounding.agent_path(A.detach(), ag0, u_prev)[:, -1]
-                    replay_buf["u_prev"] = grounding.commands(A.detach())[:, -1]
-        if grounding is not None and tr is not None:
-            with torch.no_grad():
-                gt = grounding.terms(z0, tr.detach(), A.detach(), ag0, u_prev)
-                ground_log["penalty"] = float(grounding.weight * gt["penalty"].mean())
-                ground_log["disp_end"] = float(gt["displacement"][:, -1].mean())
-                ground_log["unsupported_end"] = float(gt["unsupported"][:, -1].mean())
-        loss = e_path[-1] + a.mean_weight * torch.stack(e_path).mean()
-        if a.get("ac_weight", 0.0) > 0:
-            # anti-constancy: penalize batch-level constancy of net plan
-            # displacement, ||E_b[sum_t A]||^2 / E_b||sum_t A||^2 in [0,1].
-            # An honest planner must vary its plan with the (z0, zg) task; a
-            # world-model-exploit basin emits a near-constant plan (~0.8 vs
-            # ~0.3 honest). Scale-free, rollout-free.
-            _disp = A.sum(1)
-            _const = _disp.mean(0).pow(2).sum() / (_disp.pow(2).sum(1).mean() + 1e-8)
-            loss = loss + a.ac_weight * _const
-        a_opt.zero_grad(set_to_none=True)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), 10.0)
-        a_opt.step()
-        if zT is None or tr is None:
-            raise RuntimeError("actor produced no terminal latent")
-        if vframes > 1:
-            # stack the expansion tuple into the window value's input space:
-            # start window from the real history, terminal window from the
-            # rollout, goal tiled to match
-            e0, eg = window_pair(zh, zg, vframes)
-            eT, _ = window_pair(tr, zg, vframes)
-            expand = (e0.detach(), eT.detach(), eg.detach())
-        else:
-            expand = (z0.detach(), tr.detach(), zg.detach())
-        return float(e_path[0].item()), float(e_path[-1].item()), expand
-
-    # ------------------------------------------------------------ checkpoint layout
-    # Defined before the loop so periodic snapshots are structurally identical
-    # to the final save. The value path is the run-deterministic location the
-    # final ``save_metric`` writes to; snapshots reference the same teacher.
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
+    # where the final save_metric writes the teacher; snapshots reference it too
     value_checkpoint = Path(str(a.run.directory)).resolve() / "checkpoints" / str(a.output.value_checkpoint)
 
-    def deployable_planner(state_dict: dict[str, torch.Tensor]) -> dict[str, object]:
-        """The full deployable planner payload around an actor state dict."""
-        return {
-            "state_dict": state_dict,
-            "horizon": a.horizon,
-            "iterations": a.iterations,
-            "action_dim": a_dim,
-            "action_limit": a.action_limit,
-            "hidden_dim": a.hidden_dim,
-            "head_scale": a.head_scale,
-            "value": str(value_checkpoint),
-            "temporal_objective": a.temporal_objective,
-            "window_frames": vframes,
-            "window_lag": value_window_lag,
-            # physics grounding (probe + calibrated thresholds); the solver adds the
-            # same term to its energy when present
-            "grounding": grounding.export() if grounding is not None else None,
-        }
-
-    # ------------------------------------------------------------ schedule
     pretrain = 0 if a.actor_only else (a.pretrain if a.pretrain >= 0 else (0 if a.init_value else 2000))
     for i in range(pretrain):
-        cl = critic_step()
+        loss = critic.step(None, a.expectile, a.critic_lr)
         if i % 500 == 0:
-            logger.info(f"LIP-AC pretrain {i}/{pretrain}: td_loss={cl:.4f}")
+            logger.info(f"LIP-AC pretrain {i}/{pretrain}: td_loss={loss:.4f}")
 
     freeze_at = 0 if a.actor_only else int(a.freeze_critic_frac * a.steps)
-    expand = None
+    expand: ExpandBatch | None = None
     for step in range(a.steps):
-        critic_live = step < freeze_at
         if step == freeze_at:
             logger.info(f"LIP-AC step {step}: critic and teacher frozen for {a.steps - freeze_at} steps")
-        # during-run schedules: teacher converges (lr decay) and sharpens
-        # (expectile anneal) over the live phase; actor lr decays over all steps
-        tau_s = (
+        # the teacher converges (lr decay) and sharpens (expectile anneal) over the
+        # live phase; the actor lr decays over all steps
+        tau = (
             a.expectile
             if a.expectile_final is None
-            else (a.expectile + (a.expectile_final - a.expectile) * min(step, freeze_at) / max(freeze_at, 1))
+            else a.expectile + (a.expectile_final - a.expectile) * min(step, freeze_at) / max(freeze_at, 1)
         )
-        clr_s = cosine_interpolate(a.critic_lr, a.critic_lr_final, step, freeze_at)
-        alr_s = cosine_interpolate(a.actor_lr, a.actor_lr_final, step, a.steps)
-        for pg in a_opt.param_groups:
-            pg["lr"] = alr_s
-        cl = float("nan")
-        if critic_live:
+        critic_lr = cosine_interpolate(a.critic_lr, a.critic_lr_final, step, freeze_at)
+        actor_lr = cosine_interpolate(a.actor_lr, a.actor_lr_final, step, a.steps)
+        for group in actor.optimizer.param_groups:
+            group["lr"] = actor_lr
+        td_loss = float("nan")
+        if step < freeze_at:
             for _ in range(a.critic_ratio):
-                cl = critic_step(
-                    expand if a.expand_weight > 0 else None,
-                    tau=tau_s,
-                    lr=clr_s,
-                )
-                expand = None  # consume each actor batch once
-        e_first, e_final, expand = actor_step()
+                td_loss = critic.step(expand if a.expand_weight > 0 else None, tau, critic_lr)
+                expand = None  # each actor batch is consumed once
+        first, final, expand = actor.step(tasks, wm, critic.target, frames)
         if a.ckpt_every and (step + 1) % int(a.ckpt_every) == 0 and (step + 1) < a.steps:
-            # periodic deployable snapshot so a selection pass can early-stop
-            # on held-out success rather than on the training objective
             snapshot = planner_checkpoint.with_name(f"{planner_checkpoint.stem}_step{step + 1}.pt")
             snapshot.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(
-                deployable_planner({k: v.detach().cpu().clone() for k, v in net.state_dict().items()}),
-                snapshot,
-            )
+            state = {key: value.detach().cpu().clone() for key, value in actor.net.state_dict().items()}
+            torch.save(planner_payload(a, state, blocks.dim, value_checkpoint, frames, lag), snapshot)
             logger.info(f"Saved planner snapshot at step {step + 1} to {snapshot}")
         if step % 500 == 0:
             ground_msg = (
@@ -610,14 +518,15 @@ def run(cfg: DictConfig) -> None:
                 else ""
             )
             logger.info(
-                f"step {step}: E_final {e_final:.3f} E_first {e_first:.3f} "
-                f"td_loss {cl:.4f} tau {tau_s:.3f} clr {clr_s:.2e} alr {alr_s:.2e}{ground_msg}"
+                f"step {step}: E_final {final:.3f} E_first {first:.3f} "
+                f"td_loss {td_loss:.4f} tau {tau:.3f} clr {critic_lr:.2e} alr {actor_lr:.2e}"
             )
 
-    # ------------------------------------------------------------ save (teacher first;
-    # the actor checkpoint references it, and it is what the actor optimized against)
-    saved_value = save_metric(teacher.cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory)
+    # the teacher first: the planner checkpoint references it
+    saved_value = save_metric(critic.teacher.cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory)
     logger.success(f"Saved teacher value to {saved_value}")
-    net.eval()
-    torch.save(deployable_planner(net.cpu().state_dict()), planner_checkpoint)
+    actor.net.eval()
+    torch.save(
+        planner_payload(a, actor.net.cpu().state_dict(), blocks.dim, value_checkpoint, frames, lag), planner_checkpoint
+    )
     logger.success(f"Saved learned planner to {planner_checkpoint}")
