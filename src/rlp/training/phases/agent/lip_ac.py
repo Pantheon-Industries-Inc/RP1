@@ -68,7 +68,7 @@ from rlp.training.harness.checkpointing import load_metric, load_pretrained, sav
 from rlp.training.harness.schedule import cosine_interpolate
 from rlp.training.phases.agent.learners.td import _expectile_loss
 from rlp.training.phases.agent.samplers import NStepGoalSampler
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
@@ -79,29 +79,8 @@ from rlp.utils.logging import logger
 type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
-
-def _band_offset(rng, hi: int, bands=None) -> int:
-    """Hindsight-goal offset in fs5 blocks. Legacy: uniform 1..hi. With ``bands``
-    (one entry per deployment horizon, in blocks, e.g. [6, 21] for h25+h100)
-    a band is drawn uniformly first and the offset uniformly within
-    1..min(band, hi): every deployment horizon gets equal mass, so ONE actor
-    serves h25 and h100 without the short horizon being 4x under-weighted.
-    Equal-width buckets over 1..hi would NOT do this -- that is uniform again."""
-    if hi < 1:
-        return 1
-    if not bands:
-        return int(rng.integers(1, hi + 1))
-    b = int(bands[int(rng.integers(len(bands)))])
-    return int(rng.integers(1, min(b, hi) + 1))
-
-
-def _parse_bands(v):
-    if v is None or v is False or str(v).strip() in ("", "None", "null", "false"):
-        return None
-    return [int(float(x)) for x in str(v).replace(";", ",").split(",") if x.strip()]
-
-def _run(cfg: DictConfig) -> None:
-    a = phase_config(cfg, "training", cfg.core.planner, cfg.core.value)
+def run(cfg: DictConfig) -> None:
+    a = phase_config(cfg, "training", cfg.core.agent.planner, cfg.core.agent.value)
     if a.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
         raise ValueError(f"unsupported temporal objective: {a.temporal_objective}")
     if a.actor_only and not a.init_value:
@@ -642,11 +621,3 @@ def _run(cfg: DictConfig) -> None:
     net.eval()
     torch.save(deployable_planner(net.cpu().state_dict()), planner_checkpoint)
     logger.success(f"Saved learned planner to {planner_checkpoint}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/lip_ac")
-
-
-if __name__ == "__main__":
-    main()

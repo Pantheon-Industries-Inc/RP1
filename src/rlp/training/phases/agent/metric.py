@@ -25,13 +25,13 @@ from rlp.training.phases.agent import learners
 from rlp.training.phases.agent.learners.contrastive import ContrastiveConfig
 from rlp.training.phases.agent.learners.regression import RegressionConfig
 from rlp.training.phases.agent.learners.td import TDConfig
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
-    args = phase_config(cfg, "training", cfg.core.value)
+def run(cfg: DictConfig) -> None:
+    args = phase_config(cfg, "training", cfg.core.agent.value)
     args.embed_dim = args.embedding_dim
     args.rep_dim = args.representation_dim
 
@@ -128,11 +128,3 @@ def _run(cfg: DictConfig) -> None:
         module = learners.contrastive.fit(cache, contrastive_cfg, device)
     checkpoint = save_metric(module.cpu(), run_name=args.output.checkpoint, cache_dir=args.run.directory)
     logger.success(f"Saved {learner} metric to {checkpoint}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/metric")
-
-
-if __name__ == "__main__":
-    main()

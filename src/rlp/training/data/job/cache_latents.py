@@ -21,12 +21,12 @@ from rlp.core.world_model.featurize import build_featurizer
 from rlp.data import encode_dataset
 from rlp.data.base import Dataset, RowRange, episode_index
 from rlp.training.harness.checkpointing import load_wm
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
 
     device = pick_device(args.device)
@@ -64,11 +64,3 @@ def _run(cfg: DictConfig) -> None:
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     cache.save(args.out)
     logger.success(f"Cached {len(cache.z)} latents (dim={cache.latent_dim}) at {args.out}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/cache_latents")
-
-
-if __name__ == "__main__":
-    main()

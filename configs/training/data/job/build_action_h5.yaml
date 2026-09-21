@@ -2,7 +2,7 @@
 defaults:
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.data.job.build_action_h5._run}
+entrypoint: {_target_: rlp.training.data.job.build_action_h5.run}
 preparation:
   dataset: ???
   output: ???

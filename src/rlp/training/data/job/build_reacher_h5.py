@@ -23,7 +23,7 @@ import stable_worldmodel as swm
 from omegaconf import DictConfig
 
 from rlp.data.base import Dataset
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 SCALAR_COLS = [
@@ -67,7 +67,7 @@ def write_scalars(f: Any, ds: Any, n_rows: int, ep: np.ndarray, st: np.ndarray) 
     return cols
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
     train_out = Path(args.train_out)
     eval_out = Path(args.eval_out)
@@ -126,11 +126,3 @@ def _run(cfg: DictConfig) -> None:
     else:
         logger.info(f"Evaluation HDF5 already exists: {args.eval_out}")
     logger.success("HDF5 build completed")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/build_reacher_h5")
-
-
-if __name__ == "__main__":
-    main()

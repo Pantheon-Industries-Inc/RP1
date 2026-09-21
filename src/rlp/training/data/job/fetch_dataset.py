@@ -20,7 +20,7 @@ from huggingface_hub.hf_api import DatasetInfo, RepoSibling
 from omegaconf import DictConfig
 
 from rlp.data import DatasetSpec, data_home, dataset_path, get_dataset_spec
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 
@@ -258,7 +258,7 @@ def fetch_dataset(
     return result
 
 
-def _run(cfg: DictConfig) -> FetchResult | None:
+def run(cfg: DictConfig) -> FetchResult | None:
     args = phase_config(cfg, "preparation")
     return fetch_dataset(
         str(args.dataset),
@@ -268,11 +268,3 @@ def _run(cfg: DictConfig) -> FetchResult | None:
         max_workers=int(args.max_workers),
         min_free_gib=float(args.min_free_gib),
     )
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/fetch_dataset")
-
-
-if __name__ == "__main__":
-    main()

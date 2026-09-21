@@ -56,7 +56,7 @@ from rlp.core.world_model.rollout import rollout_traj
 from rlp.training.harness.checkpointing import load_metric, load_pretrained, save_metric
 from rlp.training.harness.schedule import cosine_interpolate
 from rlp.training.phases.agent.windows import WindowSampler
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 __all__ = ["dagger_beta"]
@@ -78,8 +78,8 @@ def _device(requested: str) -> str:
     return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def _run(cfg: DictConfig) -> None:
-    a = phase_config(cfg, "training", cfg.core.planner)
+def run(cfg: DictConfig) -> None:
+    a = phase_config(cfg, "training", cfg.core.agent.planner)
     if not isinstance(a, DictConfig):
         raise TypeError("merged planner configuration must be a mapping")
     for short, long in {"iters": "iterations", "amax": "action_limit"}.items():
@@ -271,11 +271,3 @@ def _run(cfg: DictConfig) -> None:
     net.eval()
     torch.save(_payload(), planner_checkpoint)
     logger.success(f"Saved the L2O-MPC optimizer to {planner_checkpoint}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/l2o")
-
-
-if __name__ == "__main__":
-    main()

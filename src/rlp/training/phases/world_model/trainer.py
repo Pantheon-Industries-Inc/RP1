@@ -16,7 +16,6 @@ from rlp.data.base import load_action_stats
 from rlp.training.harness.callbacks import NonFiniteGradientGuard, PortableCheckpointCallback
 from rlp.training.harness.tracking import make_logger
 from rlp.training.harness.transforms import image_preprocessor
-from rlp.utils.config import dispatch, run_hydra
 from rlp.utils.logging import logger
 
 
@@ -69,7 +68,7 @@ def lejepa_forward(self: Any, batch: dict[str, torch.Tensor], stage: str, cfg: D
     return output
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     raw_dataset_cfg = OmegaConf.to_container(cfg.data.dataset, resolve=True)
     if not isinstance(raw_dataset_cfg, Mapping):
         raise TypeError("data.dataset must resolve to a mapping")
@@ -204,11 +203,3 @@ def _run(cfg: DictConfig) -> None:
 
     manager()
     return
-
-
-def run() -> object:
-    return run_hydra(dispatch, config_name="training/lewm")
-
-
-if __name__ == "__main__":
-    run()

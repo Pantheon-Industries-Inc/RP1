@@ -12,7 +12,7 @@ from rlp.training.phases.agent import pipeline as rlp_pipeline
 from rlp.utils.config import run_hydra
 
 
-def test_pipeline_composes_and_skips_all_stages(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_pipeline_composes_with_no_stages(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys,
@@ -22,10 +22,10 @@ def test_pipeline_composes_and_skips_all_stages(monkeypatch: pytest.MonkeyPatch,
             "training.wm=unused",
             "training.dataset=unused",
             f"training.cache_directory={tmp_path}/caches",
-            "training.skip=[cache,subsample,actions,value,planner]",
+            "training.stages=[]",
         ],
     )
-    run_hydra(lambda cfg: rlp_pipeline._run(cfg), config_name="training/rlp")
+    run_hydra(lambda cfg: rlp_pipeline.run(cfg), config_dir="training", config_name="posttrain")
 
 
 def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -50,7 +50,7 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
             cfg,
             2,
             "value",
-            "training/metric",
+            "training/phases/agent/metric",
             **{
                 "training.cache": str(inp),
                 "training.learner": "td",
@@ -64,7 +64,7 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["rlp", "training.wm=unused", "training.dataset=unused"])
-    run_hydra(task, config_name="training/rlp")
+    run_hydra(task, config_dir="training", config_name="posttrain")
 
     sub = LatentCache.load(str(out), mmap=False)
     assert len(sub.z) == 10  # every 2nd frame of two 10-step episodes

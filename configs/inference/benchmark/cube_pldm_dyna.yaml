@@ -1,0 +1,11 @@
+# @package _global_
+# OGBench Cube evaluation on the Dyna-finetuned PLDM (Table 3 row d;
+# artifact dyna_wm_pldm_olr_a4.5_m0.3_l3e-4, weights_epoch_1).
+defaults:
+  - cube
+  - /core/world_model: pldm
+  - override /core/agent/policy: world_model
+  - _self_
+core:
+  world_model:
+    checkpoint: assets/core/world_model/pldm_cube_dyna

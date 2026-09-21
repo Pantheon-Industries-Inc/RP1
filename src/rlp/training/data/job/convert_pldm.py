@@ -22,7 +22,7 @@ import re
 import torch
 from omegaconf import DictConfig
 
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 
@@ -42,7 +42,7 @@ def remap_key(key: str) -> str:
     return f"encoder.layers.{layer}.{rest}"
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
     checkpoint = torch.load(args.src, map_location="cpu")
     state_dict = checkpoint.get("state_dict", checkpoint)
@@ -56,11 +56,3 @@ def _run(cfg: DictConfig) -> None:
     else:
         torch.save(remapped, args.dst)
     logger.success(f"Converted PLDM checkpoint: keys={len(remapped)} renamed={renamed} -> {args.dst}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/convert_pldm")
-
-
-if __name__ == "__main__":
-    main()

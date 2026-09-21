@@ -2,7 +2,7 @@
 defaults:
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.data.job.fetch_dataset._run}
+entrypoint: {_target_: rlp.training.data.job.fetch_dataset.run}
 preparation:
   dataset: ogb_cube
   cache_root: null

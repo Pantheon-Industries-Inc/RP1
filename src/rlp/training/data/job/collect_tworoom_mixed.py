@@ -21,11 +21,11 @@ from stable_worldmodel.envs.two_room import ExpertPolicy
 from stable_worldmodel.policy import RandomPolicy
 
 from rlp.environment import World
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
 
     path = Path(swm.data.utils.get_cache_dir()) / "datasets" / args.out
@@ -46,11 +46,3 @@ def _run(cfg: DictConfig) -> None:
     world.collect(path, episodes=args.random, seed=rng.integers(0, 1_000_000).item())
 
     logger.success(f"Collected mixed TwoRoom dataset expert={args.expert} random={args.random} path={path}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/collect_tworoom_mixed")
-
-
-if __name__ == "__main__":
-    main()

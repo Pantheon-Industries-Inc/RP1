@@ -46,7 +46,7 @@ def get_dataset(cfg: DictConfig, dataset_name: str) -> Dataset:
     return cast(Dataset, raw_dataset)
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     if cfg.planning.horizon * cfg.planning.action_block > cfg.planning.budget:
         raise ValueError("planning horizon x action block must not exceed the evaluation budget")
     device = pick_device(cfg.runtime.device)
@@ -95,10 +95,10 @@ def _run(cfg: DictConfig) -> None:
         if col != "action":
             process[f"goal_{col}"] = process[col]
 
-    policy_kind = cfg.core.policy.kind
+    policy_kind = cfg.core.agent.policy.kind
 
     if policy_kind == "world_model":
-        model = load_pretrained(cfg.core.policy.checkpoint)
+        model = load_pretrained(cfg.core.agent.policy.checkpoint)
         if cfg.runtime.bfloat16:
             model = model.to(torch.bfloat16)
         model = model.to(device)
@@ -132,23 +132,23 @@ def _run(cfg: DictConfig) -> None:
         if not isinstance(planning_cost, nn.Module):
             raise TypeError("planning cost must also be a torch module")
         cost_model: nn.Module = planning_cost
-        metric_paths = list(cfg.core.value.checkpoints)
-        if cfg.core.value.kind == "metric":
+        metric_paths = list(cfg.core.agent.value.checkpoints)
+        if cfg.core.agent.value.kind == "metric":
             loaded_metrics = [load_metric(path, device=device) for path in metric_paths]
             if not loaded_metrics:
                 raise ValueError("metric planning requires at least one checkpoint")
             cost_model = MetricCost(
                 cost_model,
                 loaded_metrics[0],
-                cfg.core.value.mode,
-                lam=float(cfg.core.value.blend_weight),
+                cfg.core.agent.value.mode,
+                lam=float(cfg.core.agent.value.blend_weight),
                 metrics=loaded_metrics,
-                deadline_mode=str(cfg.core.value.deadline_mode),
+                deadline_mode=str(cfg.core.agent.value.deadline_mode),
             )
-            logger.info(f"Plan-score metrics={metric_paths} mode={cfg.core.value.mode}")
+            logger.info(f"Plan-score metrics={metric_paths} mode={cfg.core.agent.value.mode}")
 
         solver = hydra.utils.instantiate(
-            cfg.core.solver,
+            cfg.core.agent.solver,
             model=cost_model,
             device=device,
             seed=cfg.runtime.seed,
@@ -267,9 +267,9 @@ def _run(cfg: DictConfig) -> None:
     logger.info(f"Evaluation results saved to {results_path}")
 
 
-def run() -> object:
-    return run_hydra(dispatch, config_name="inference/benchmark/lewm", selector=("benchmark", "inference/benchmark"))
+def main() -> object:
+    return run_hydra(dispatch, config_dir="inference", config_name="evaluate")
 
 
 if __name__ == "__main__":
-    run()
+    main()

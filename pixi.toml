@@ -6,9 +6,10 @@ platforms = [{ platform = "osx-arm64", macos = "14.0" }, "linux-64"]
 version = "0.1.0"
 
 [tasks]
-training = "python -m rlp.training"
-inference = "python -m rlp.inference.evaluate"
-prepare = "python -m rlp.training.data.preparation"
+pretrain = "python -m rlp.training.pretrain"
+posttrain = "python -m rlp.training.posttrain"
+evaluate = "python -m rlp.inference.evaluate"
+prepare = "python -m rlp.training.data.prepare"
 
 [dependencies]
 python = "3.13.*"

@@ -17,11 +17,11 @@ import torch
 from omegaconf import DictConfig
 
 from rlp.data import LatentCache
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
 
     c = LatentCache.load(args.inp, mmap=bool(args.cache_mmap))
@@ -53,11 +53,3 @@ def _run(cfg: DictConfig) -> None:
         f"len[min/med/max]={min(lens)}/{int(np.median(lens))}/{max(lens)}"
     )
     out.save(args.out)
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/subsample_cache")
-
-
-if __name__ == "__main__":
-    main()

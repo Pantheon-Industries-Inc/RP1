@@ -1,11 +1,10 @@
 # @package _global_
 defaults:
-  - _world_model
   - /environment: reacher
-  - /inference/benchmark/data: reacher
-  - /core/policy: random
-  - /core/solver: cem
-  - /core/value: latent
+  - /data: reacher
+  - /core/agent/policy: random
+  - /core/agent/solver: cem
+  - /core/agent/value: latent
   - _self_
 planning:
   # Open loop, like every other environment: the full 5-chunk plan (25

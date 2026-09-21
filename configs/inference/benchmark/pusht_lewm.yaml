@@ -7,7 +7,7 @@
 defaults:
   - pusht
   - /core/world_model: lewm
-  - override /core/policy: world_model
+  - override /core/agent/policy: world_model
   - _self_
 core:
   world_model:

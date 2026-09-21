@@ -1,0 +1,20 @@
+# @package core.agent.planner
+# L2O-MPC learned-optimizer architecture (arXiv:2212.02603 Sec. IV; reference
+# hyperparameters from the paper's implementation details).
+horizon: 5             # plan blocks, must match the world model's frameskip cadence
+iterations: 4          # inner-loop iterations per decision; 64 x 4 = 256 rollouts,
+                       # DMPO's deployed budget, so the two rows share compute
+num_samples: 64        # learner particles per iteration; fixes the network's input width
+hidden: 1024           # two ReLU hidden layers (reference: 1024-4096 by task size)
+action_limit: 2.5      # plan clip, the repository's amax
+init_std: 1.0          # fixed diagonal sampling covariance (paper: no adaptation)
+dropout: 0.1           # reference dropout probability
+learn_std: false       # paper formulation gates the covariance too; experiments fix it
+gate_bias: 0.0         # gate-head bias init (0.0 = paper-plain: untrained gate is 0.5)
+init_scale: 0.001      # last-layer init N(0, init_scale)
+halton: true           # fixed quasi-random sample set (reference)
+seed_val: 0            # sample-set seed (recorded in the checkpoint)
+temperature: 0.05      # the DAgger expert's MPPI softmax temperature
+step_size: 0.8         # the DAgger expert's dynamic-mirror-descent step size
+scale_costs: true      # min-max scale costs inside the expert's softmax
+expert_samples: 512    # the expert's sample budget (paper: expert N >> learner M)

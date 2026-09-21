@@ -9,11 +9,11 @@ import numpy as np
 import stable_worldmodel as swm
 from omegaconf import DictConfig
 
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
 
     ds = swm.data.load_dataset(args.dataset)
@@ -34,11 +34,3 @@ def _run(cfg: DictConfig) -> None:
         f"wrote {args.output}: action{act.shape} episodes={len(ep_offset)} "
         f"ep_len(min/med/max)={ep_len.min()}/{int(np.median(ep_len))}/{ep_len.max()}"
     )
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/build_action_h5")
-
-
-if __name__ == "__main__":
-    main()

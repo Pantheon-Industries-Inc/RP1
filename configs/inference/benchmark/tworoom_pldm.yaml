@@ -1,11 +1,10 @@
 # @package _global_
 # TwoRoom evaluation on the tracked PLDM base (converted to the LeWM layout).
 defaults:
-  - tworoom_pixels
-  - /core/world_model: lewm
-  - override /core/policy: world_model
+  - tworoom
+  - /core/world_model: pldm
+  - override /core/agent/policy: world_model
   - _self_
 core:
   world_model:
-    name: pldm
     checkpoint: assets/core/world_model/pldm_tworoom

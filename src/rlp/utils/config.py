@@ -51,17 +51,17 @@ def validate_config(cfg: DictConfig) -> None:
         if mode not in {"online", "offline", "disabled"}:
             raise ValueError(f"Unsupported logging.wandb.mode: {mode}")
 
-    core = cfg.get("core")
-    if core is not None and "policy" in core:
-        if core.policy.kind not in {"random", "no_move", "world_model"}:
-            raise ValueError(f"Unsupported core.policy.kind: {core.policy.kind}")
-        if core.policy.kind == "world_model" and not core.policy.checkpoint:
-            raise ValueError("core.policy.checkpoint is required for a world-model policy")
-    if core is not None and "value" in core and "kind" in core.value:
-        if core.value.kind not in {"latent", "metric"}:
-            raise ValueError(f"Unsupported core.value.kind: {core.value.kind}")
-        if core.value.kind == "metric" and not core.value.checkpoints:
-            raise ValueError("core.value.checkpoints must not be empty for a metric value")
+    agent = cfg.get("core", {}).get("agent")
+    if agent is not None and "policy" in agent:
+        if agent.policy.kind not in {"random", "no_move", "world_model"}:
+            raise ValueError(f"Unsupported core.agent.policy.kind: {agent.policy.kind}")
+        if agent.policy.kind == "world_model" and not agent.policy.checkpoint:
+            raise ValueError("core.agent.policy.checkpoint is required for a world-model policy")
+    if agent is not None and "value" in agent and "kind" in agent.value:
+        if agent.value.kind not in {"latent", "metric"}:
+            raise ValueError(f"Unsupported core.agent.value.kind: {agent.value.kind}")
+        if agent.value.kind == "metric" and not agent.value.checkpoints:
+            raise ValueError("core.agent.value.checkpoints must not be empty for a metric value")
 
     benchmark = cfg.get("benchmark")
     if benchmark is not None:
@@ -116,27 +116,37 @@ def dispatch(cfg: DictConfig) -> object:
     return cast(object, call(cfg.entrypoint, cfg=cfg, _recursive_=False))
 
 
-def run_hydra[ResultT](
-    task: Callable[[DictConfig], ResultT],
-    *,
-    config_name: str,
-    selector: tuple[str, str] | None = None,
-) -> ResultT:
-    overrides = list(sys.argv[1:])
-    if selector is not None:
-        field, group = selector
-        prefix = f"{field}="
-        matches = [(index, arg.removeprefix(prefix)) for index, arg in enumerate(overrides) if arg.startswith(prefix)]
-        if len(matches) > 1:
-            raise SystemExit(f"Specify {field}=<name> only once")
-        if matches:
-            index, name = matches[0]
-            if not name or "/" in name or name.startswith("."):
-                raise SystemExit(f"Invalid {field} selection: {name!r}")
-            config_name = f"{group}/{name}"
-            del overrides[index]
-    with initialize_config_dir(config_dir=str(get_config_root()), version_base=None):
-        cfg = compose(config_name=config_name, overrides=overrides)
+def _split_config_name(arguments: list[str], default: str) -> tuple[str, list[str]]:
+    """Take Hydra's ``--config-name``/``-cn`` flag out of ``arguments``."""
+    name, overrides = default, []
+    iterator = iter(arguments)
+    for argument in iterator:
+        if argument in ("--config-name", "-cn"):
+            name = next(iterator, "")
+        elif argument.startswith("--config-name="):
+            name = argument.split("=", 1)[1]
+        else:
+            overrides.append(argument)
+    if not name:
+        raise SystemExit("--config-name needs a value")
+    return name, overrides
+
+
+def compose_config(config_dir: Path, config_name: str, overrides: list[str]) -> DictConfig:
+    """Compose ``config_name`` from ``config_dir`` with the whole config tree on the search path.
+
+    Groups under ``config_dir`` are selected by their short name (``benchmark=``,
+    ``job=``); everything else is reachable by its absolute path (``/core/...``).
+    """
+    root = get_config_root()
+    with initialize_config_dir(config_dir=str(root / config_dir), version_base=None):
+        return compose(config_name=config_name, overrides=[*overrides, f"hydra.searchpath=[file://{root}]"])
+
+
+def run_hydra[ResultT](task: Callable[[DictConfig], ResultT], *, config_dir: str, config_name: str) -> ResultT:
+    """Compose the command-line config, then run ``task`` inside a fresh run directory."""
+    config_name, overrides = _split_config_name(list(sys.argv[1:]), config_name)
+    cfg = compose_config(Path(config_dir), config_name, overrides)
     paths = RunPaths.create(cfg.logging.run_root)
     paths.attach(cfg)
     level = str(cfg.logging.level)
@@ -163,4 +173,4 @@ def run_hydra[ResultT](
         return result
 
 
-__all__ = ["dispatch", "get_config_root", "phase_config", "run_hydra", "validate_config"]
+__all__ = ["compose_config", "dispatch", "get_config_root", "phase_config", "run_hydra", "validate_config"]

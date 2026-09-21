@@ -10,7 +10,6 @@ import numpy as np
 import pytest
 import stable_worldmodel
 import torch
-from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 from torch import nn
 
@@ -19,6 +18,7 @@ from rlp.core.agent.value import LatentGoalCost
 from rlp.core.agent.value.base import TensorInfo
 from rlp.environment.world import _resize_images_like_env
 from rlp.training.harness import checkpointing as checkpoint_module
+from rlp.utils.config import compose_config
 
 
 def test_stable_worldmodel_comes_from_pinned_distribution() -> None:
@@ -140,12 +140,9 @@ def test_dataset_images_are_resized_to_environment_shape() -> None:
 
 
 def test_hydra_configs_compose() -> None:
-    config_root = Path("configs").resolve()
-    with initialize_config_dir(config_dir=str(config_root), version_base=None):
-        cfg = compose(config_name="inference/benchmark/lewm", overrides=["core/solver=adam"])
+    cfg = compose_config(Path("inference"), "evaluate", ["core/agent/solver=adam"])
     assert cfg.environment.env_name == "swm/OGBCube-v0"
-    assert cfg.core.solver._target_ == "rlp.core.agent.solver.GradientSolver"
+    assert cfg.core.agent.solver._target_ == "rlp.core.agent.solver.GradientSolver"
 
-    with initialize_config_dir(config_dir=str(config_root), version_base=None):
-        cfg = compose(config_name="training/lewm", overrides=["training/data=tworoom_lewm"])
+    cfg = compose_config(Path("training"), "pretrain", ["data=tworoom_lewm"])
     assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

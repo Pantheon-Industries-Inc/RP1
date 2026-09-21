@@ -4,12 +4,11 @@
 # Success is the env's built-in DINO-WM criterion (agent+block position error
 # < 20 px AND block angle error < 20 deg), checked by `swm/PushT-v1` itself.
 defaults:
-  - _world_model
   - /environment: pusht
-  - /inference/benchmark/data: pusht_eval
-  - /core/policy: random
-  - /core/solver: cem
-  - /core/value: latent
+  - /data: pusht
+  - /core/agent/policy: random
+  - /core/agent/solver: cem
+  - /core/agent/value: latent
   - _self_
 benchmark:
   # Held-out protocol for the counterstrike RLP run: value/planner train on

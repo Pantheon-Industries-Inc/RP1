@@ -24,12 +24,12 @@ from rlp.core.world_model.featurize import build_featurizer
 from rlp.data import encode_dataset
 from rlp.data.base import Dataset, RowRange
 from rlp.training.harness.checkpointing import load_wm
-from rlp.utils.config import dispatch, phase_config, run_hydra
+from rlp.utils.config import phase_config
 from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     a = phase_config(cfg, "preparation")
 
     device = pick_device(a.device)
@@ -48,11 +48,3 @@ def _run(cfg: DictConfig) -> None:
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     cache.save(a.out)
     logger.success(f"Cached shard rows=[{s}:{e}] latents={len(cache.z)} path={a.out}")
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/data/job/cache_lance_shard")
-
-
-if __name__ == "__main__":
-    main()

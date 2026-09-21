@@ -16,8 +16,8 @@ Example (OGBench Cube on the tracked LeWM checkpoint)::
         training.name=cube_lewm training.planner.action_limit=1.6
 
 Stages write reusable artifacts (caches, h5) into ``cache_directory`` and
-checkpoints into the run's ``checkpoints/`` directory. Re-runs can skip
-completed stages, e.g. ``skip=[cache,subsample,actions]`` to iterate on the value
+checkpoints into the run's ``checkpoints/`` directory. Re-runs can select
+stages, e.g. ``training.stages=[value,planner]`` to iterate on the value
 or planner recipe against existing caches. Per-stage hyperparameters are
 overridable through the ``value.*`` and ``planner.*`` subtrees; their defaults
 are the paper's OGBench Cube recipe.
@@ -28,9 +28,11 @@ from pathlib import Path
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf, open_dict
 
-from rlp.utils.config import dispatch, get_config_root, phase_config, run_hydra
+from rlp.utils.config import dispatch, get_config_root, phase_config
 from rlp.utils.logging import logger
 from rlp.utils.run import save_stage_config
+
+STAGES = ("cache", "subsample", "actions", "value", "planner")
 
 
 def _stage(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
@@ -58,13 +60,12 @@ def _overrides(subtree: DictConfig) -> dict[str, object]:
     return {str(key): value for key, value in flat.items() if value is not None}
 
 
-def _run(cfg: DictConfig) -> None:
+def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "training")
-    raw_skip = args.skip if isinstance(args.skip, str) else " ".join(args.skip)
-    skip = {name.strip() for name in raw_skip.replace(",", " ").split() if name.strip()}
-    unknown = skip - {"cache", "subsample", "actions", "value", "planner"}
+    stages = set(args.stages)
+    unknown = stages - set(STAGES)
     if unknown:
-        raise ValueError(f"unknown skip stages: {sorted(unknown)}")
+        raise ValueError(f"unknown stages {sorted(unknown)}; choose from {list(STAGES)}")
     cache_directory = Path(str(args.cache_directory)).expanduser()
     cache_directory.mkdir(parents=True, exist_ok=True)
     cache_fs1 = str(cache_directory / f"{args.name}_fs1.pt")
@@ -88,7 +89,7 @@ def _run(cfg: DictConfig) -> None:
         stage_index += 1
         return _stage(cfg, stage_index, name, config_name, **values)
 
-    if "cache" not in skip:
+    if "cache" in stages:
         run_stage(
             "cache",
             "training/data/job/cache_latents",
@@ -102,7 +103,7 @@ def _run(cfg: DictConfig) -> None:
                 "runtime.device": args.device,
             },
         )
-    if "subsample" not in skip:
+    if "subsample" in stages:
         run_stage(
             "subsample",
             "training/data/job/subsample_cache",
@@ -112,7 +113,7 @@ def _run(cfg: DictConfig) -> None:
                 "preparation.frameskip": args.frameskip,
             },
         )
-    if "actions" not in skip:
+    if "actions" in stages:
         run_stage(
             "actions",
             "training/data/job/build_action_h5",
@@ -129,28 +130,16 @@ def _run(cfg: DictConfig) -> None:
             f"value.window_frames={window_frames} requires value.window_lag == "
             f"frameskip ({args.frameskip}), got {window_lag}"
         )
-    if "value" not in skip:
+    if "value" in stages:
         value_overrides = _overrides(args.value)
         # `depth` is a value-architecture knob (MRN head), not a trainer flag;
         # route it onto the composed value group where training/metric reads it.
         value_depth = value_overrides.pop("depth", None)
         if value_depth is not None:
-            value_overrides["core.value.depth"] = value_depth
-        # `head` / `symmetric` likewise live on the value-architecture group:
-        # quasimetric (MRN, default) | iqe | mlp (plain pairwise MLP V(z, g))
-        for arch_key in ("head", "symmetric"):
-            arch_val = value_overrides.pop(arch_key, None)
-            if arch_val is not None:
-                value_overrides[f"core.value.{arch_key}"] = arch_val
-        # same for the eikonal gradient penalty: a value-architecture/objective
-        # knob that train/metric reads off the composed value group.
-        eikonal = value_overrides.pop("eikonal_weight", None)
-        if eikonal is not None:
-            value_overrides["core.value.eikonal_weight"] = eikonal
-        learner = str(value_overrides.pop("learner", "td"))
+            value_overrides["core.agent.value.depth"] = value_depth
         run_stage(
             "value",
-            "training/metric",
+            "training/phases/agent/metric",
             **{
                 "training.cache": cache_fs1,
                 "training.learner": "td",
@@ -162,19 +151,19 @@ def _run(cfg: DictConfig) -> None:
                 (key if key.startswith("core.") else f"training.{key}"): value for key, value in value_overrides.items()
             },
         )
-    if "planner" not in skip:
+    if "planner" in stages:
         planner_overrides = _overrides(args.planner)
         # `action_limit` and `iterations` are planner-architecture knobs, not
         # trainer flags; route them onto the composed planner group where
         # lip_ac reads them.
         action_limit = planner_overrides.pop("action_limit")
-        planner_overrides["core.planner.action_limit"] = action_limit
+        planner_overrides["core.agent.planner.action_limit"] = action_limit
         iterations = planner_overrides.pop("iterations", None)
         if iterations is not None:
-            planner_overrides["core.planner.iterations"] = iterations
+            planner_overrides["core.agent.planner.iterations"] = iterations
         run_stage(
             "planner",
-            "training/lip_ac",
+            "training/phases/agent/lip_ac",
             **{
                 "training.cache": cache_fs5,
                 "training.cache_td": cache_fs1,
@@ -196,11 +185,3 @@ def _run(cfg: DictConfig) -> None:
         "RLP pipeline finished. Evaluate with: "
         f"pixi run inference core/solver=lip core.solver.checkpoint.path={Path(cfg.run.checkpoints) / 'planner.pt'}"
     )
-
-
-def main() -> object:
-    return run_hydra(dispatch, config_name="training/rlp")
-
-
-if __name__ == "__main__":
-    main()
