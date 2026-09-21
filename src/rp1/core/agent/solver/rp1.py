@@ -1,5 +1,4 @@
 import time
-from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -12,12 +11,6 @@ from rp1.core.agent.value.temporal import ValueFunction, trajectory_value, windo
 from rp1.core.world_model.base import LatentWorldModel
 from rp1.core.world_model.rollout import rollout_terminal, rollout_traj
 from rp1.utils.logging import logger
-
-# Mech-interp hook: ``probe_directory`` dumps per-replan
-# (z0, imagined-terminal latent, its value, goal latent) so an open-loop eval
-# yields imagined-vs-actually-reached (consecutive replans) for the A/B probe.
-_RP1_PROBE_N = 0
-
 
 __all__ = ["RP1Solver"]
 
@@ -44,10 +37,8 @@ class RP1Solver(CEMSolver):
         init_scale: float,
         cem_init_steps: int,
         iters_override: int | None,
-        graphed: bool | str,
+        graphed: bool,
         graph_warmup_iters: int,
-        record_probes: bool,
-        probe_directory: str | None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -70,17 +61,10 @@ class RP1Solver(CEMSolver):
         # iters_override: deploy-time K (None = the checkpoint's trained K).
         # 0 = emit the initial plan untouched; >K = continuation diagnostic.
         self.iters_override = None if iters_override is None else int(iters_override)
-        # Opt-in CUDA-graphed inference (see solver/graphed.py). False = the
-        # untouched eager path; True = graph-captured refinement;
-        # "verify" = graphed, plus an eager recomputation
-        # each iteration with the max deviation logged. Lazily initialised on
-        # first solve so construction stays checkpoint-only.
+        # CUDA-graphed refinement (GraphedRefinement), captured on the first solve
         self.graphed = graphed
         self.graph_warmup_iters = graph_warmup_iters
         self._graphed_refinement: Any = None
-        self.probe_directory = Path(probe_directory) if record_probes and probe_directory else None
-        if self.probe_directory is not None:
-            self.probe_directory.mkdir(parents=True, exist_ok=True)
 
         payload = checkpoint.payload
         horizon = int(payload["horizon"])
@@ -313,7 +297,6 @@ class RP1Solver(CEMSolver):
         self._last_encode_seconds = time.time() - encode_start
         B = n_envs
         zh_r, zg_r = z_hist, zg
-        z0_r = zh_r[:, -1]
         a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
         if self.use_action_history and "action_hist" in info_dict:
             # rlp.core.policy buffers the solver's OUTPUT actions before it inverse-transforms
@@ -345,40 +328,20 @@ class RP1Solver(CEMSolver):
             A = self._value_init(wm, z_hist, a_hist, zg)
         elif self.init_mode == "cem":
             A = self._cem_init(info_dict, B).clamp(-self.actor.action_limit, self.actor.action_limit)
-        A_init = A.detach().clone()
-        e_iters: list[torch.Tensor] = []  # E(A_k) before the k-th update, k = 0..K-1
-        lat_iters: list[torch.Tensor] = []  # imagined terminal latent distance of A_k
         graphed_ref = self._graphed_for(wm, zh_r, a_hist, zg_r) if self.graphed else None
         buf: list[torch.Tensor] = []
-        for iteration in range(self.rp1_iterations):
+        for _ in range(self.rp1_iterations):
             if graphed_ref is not None:
-                # one forward-graph + one backward-graph replay; the gradient
-                # unroll's trajectory doubles as the actor features (reuse)
-                E_graphed, traj_f, gA = graphed_ref.step(A)
-                if self.graphed == "verify":
-                    with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
-                        A_ref = A.detach().requires_grad_(True)
-                        traj_ref = rollout_traj(wm, zh_r, a_hist, A_ref)
-                        score_ref = trajectory_value(self.rp1_value, traj_ref, zg_r, z0_r, self.temporal_objective)
-                        (gA_ref,) = torch.autograd.grad(score_ref.sum(), A_ref)
-                    logger.info(
-                        f"Graphed verification iteration={iteration} "
-                        f"gradient={float((gA - gA_ref).abs().max()):.3e} "
-                        f"score={float((E_graphed - score_ref.detach()).abs().max()):.3e} "
-                        f"trajectory={float((traj_f - traj_ref.detach()).abs().max()):.3e}"
-                    )
+                # one forward-graph and one backward-graph replay
+                E_graphed, _, gA = graphed_ref.step(A)
             else:
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch 2.7 context-manager stub is untyped.
                     A_in = A.detach().requires_grad_(True)
                     traj = rollout_traj(wm, zh_r, a_hist, A_in)
                     score = self._score(traj, zg_r, zh_r, A_in)
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
-                traj_f = traj.detach()
             with torch.no_grad():
                 E = E_graphed if graphed_ref is not None else score.detach()
-                if self.probe_directory is not None:
-                    e_iters.append(E.detach().float().clone())
-                    lat_iters.append((traj_f[:, -1].float() - zg_r).norm(dim=-1).detach())
                 A = self.actor(A, gA, E)
                 buf.append(A.clone())
         with torch.no_grad():
@@ -398,39 +361,6 @@ class RP1Solver(CEMSolver):
                 Ef = self._score(final_trajectory, zg_c, zh_c, cf).view(B, C)
             best = Ef.argmin(dim=1)
             A = cands.view(B, C, self.horizon, self.action_dim)[torch.arange(B, device=self.device), best]
-        if self.probe_directory is not None:
-            global _RP1_PROBE_N
-            with torch.no_grad():
-                z_traj = rollout_traj(wm, z_hist, a_hist[:B], A)  # (B,H,D) imagined path
-                z_imag = z_traj[:, -1]
-                e_imag = self._score(z_traj, zg, z_hist, A)
-                # candidate population under both objectives (probe-only rollout;
-                # Ef is the critic energy the deployed argmin actually used)
-                traj_c = rollout_traj(wm, zh_c, ah_c, cf)
-                lat_pop = (traj_c[:, -1] - zg_c).norm(dim=-1).view(B, C)
-                lat_traj = (z_traj - zg.unsqueeze(1)).norm(dim=-1)  # (B,H)
-            torch.save(
-                {
-                    "z0": z_hist[:, -1].detach().cpu(),
-                    "z_traj": z_traj.detach().cpu(),
-                    "z_imag": z_imag.detach().cpu(),
-                    "A": A.detach().cpu(),
-                    "E": e_imag.detach().cpu(),
-                    "zg": zg.detach().cpu(),
-                    "Ef_pop": Ef.detach().cpu(),
-                    "lat_pop": lat_pop.detach().cpu(),
-                    "best": best.detach().cpu(),
-                    "lat_traj": lat_traj.detach().cpu(),
-                    "cands": cands.view(B, C, self.horizon, self.action_dim).detach().cpu(),
-                    "A_init": A_init.cpu(),
-                    "E_iters": torch.stack(e_iters).cpu() if e_iters else torch.zeros(0),
-                    "lat_iters": torch.stack(lat_iters).cpu() if lat_iters else torch.zeros(0),
-                    "init_mode": self.init_mode,
-                    "iters": int(self.rp1_iterations),
-                },
-                self.probe_directory / f"probe_{_RP1_PROBE_N:04d}.pt",
-            )
-            _RP1_PROBE_N += 1
         return A.detach().to(self.dtype)
 
     def solve(self, info_dict: dict[str, Any], init_action: torch.Tensor | None = None) -> dict[str, Any]:

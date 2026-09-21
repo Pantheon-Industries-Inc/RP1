@@ -44,12 +44,10 @@ def run(cfg: DictConfig) -> None:
     cache = base_cache.windowed(int(args.window_frames), int(args.window_lag))
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 
-    learner = "shuffled" if (args.learner == "regression" and args.labels == "shuffled") else args.learner
-
     module: nn.Module
     if args.learner == "l2":
         module = build_metric("l2", cache.latent_dim, {})
-    elif args.learner == "regression":
+    elif args.learner in ("regression", "shuffled"):
         scale = args.scale
         if scale is None:  # default scale ~ horizon so targets aren't dwarfed
             import numpy as np
@@ -68,7 +66,7 @@ def run(cfg: DictConfig) -> None:
             steps=args.steps,
             n_buckets=args.n_buckets,
             max_delta=args.max_delta,
-            shuffle_labels=(args.labels == "shuffled"),
+            shuffle_labels=args.learner == "shuffled",
             seed=args.seed,
             huber_beta=args.huber_beta,
         )
@@ -127,4 +125,4 @@ def run(cfg: DictConfig) -> None:
         )
         module = learners.contrastive.fit(cache, contrastive_cfg, device)
     checkpoint = save_metric(module.cpu(), run_name=args.output.checkpoint, cache_dir=args.run.directory)
-    logger.success(f"Saved {learner} metric to {checkpoint}")
+    logger.success(f"Saved {args.learner} metric to {checkpoint}")

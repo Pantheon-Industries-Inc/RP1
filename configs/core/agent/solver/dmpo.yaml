@@ -17,4 +17,4 @@ iters: null  # inner-loop iterations; null = the trained count
 mppi_mode: false  # bypass the learned heads (the hand-written update DMPO residuals on)
 cost_chunk: 0  # rollout chunk size for the sampled plans; 0 = one batch
 report_cost: false  # true adds one rollout per decision to score the final mean (diagnostic only)
-graphed: false  # CUDA-graph the sampled-cost evaluation (true | "verify"); needs a static batch
+graphed: false  # CUDA-graph the sampled-cost evaluation; needs a static batch

@@ -21,8 +21,6 @@ def _solver(world_model: Path, planner: Path, **overrides: Any) -> RP1Solver:
         "iters_override": None,
         "graphed": False,
         "graph_warmup_iters": 5,
-        "record_probes": False,
-        "probe_directory": None,
     }
     solver = RP1Solver(
         model=load_wm(str(world_model)),

@@ -19,7 +19,6 @@ training:
   batch_size: 1024
   scale: null
   max_delta: null
-  labels: "true"
   learning_rate: 1e-3
   weight_decay: 1e-4
   n_buckets: 10

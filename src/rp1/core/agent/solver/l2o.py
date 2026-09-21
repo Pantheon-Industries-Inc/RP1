@@ -73,13 +73,11 @@ class L2OSolver(CEMSolver):
         checkpoint: PlannerCheckpoint,
         iters: int | None = None,
         cost_chunk: int = 0,
-        graphed: bool | str = False,
+        graphed: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.cost_chunk = int(cost_chunk)
-        if graphed not in (True, False, "verify"):
-            raise ValueError(f"graphed must be true, false, or 'verify' (got {graphed!r})")
         self.graphed = graphed
         self._graph: Any = None
 
@@ -191,12 +189,7 @@ class L2OSolver(CEMSolver):
             if self.graphed and chunk <= 0:
                 # the captured graph owns the whole row count; chunking would
                 # change the shape per call and defeat the capture
-                graphed_costs = cast(torch.Tensor, self._graph.costs(zh, ah, zg, flat))
-                if self.graphed == "verify":
-                    eager = score_rows(zh, ah, zg, flat)
-                    deviation = float((graphed_costs - eager).abs().max().item())
-                    logger.info(f"L2O graphed verify: max_deviation {deviation:.3e}")
-                return graphed_costs.view(batch, samples)
+                return cast(torch.Tensor, self._graph.costs(zh, ah, zg, flat)).view(batch, samples)
             size = flat.shape[0] if chunk <= 0 else chunk
             scored: list[torch.Tensor] = [
                 score_rows(

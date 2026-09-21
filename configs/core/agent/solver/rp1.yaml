@@ -11,10 +11,8 @@ checkpoint:
   path: ???
   value_path: null  # override the value recorded in the checkpoint
 rp1_select: last
-graphed: false  # CUDA-graphed inference mode (true | "verify"); requires static batch
+graphed: false  # CUDA-graphed refinement; needs a static batch
 graph_warmup_iters: 5
-record_probes: false
-probe_directory: ${run.artifacts}/probes
 # Refinement starts from the zero plan, or from the lowest-value plan among
 # zero, iid-Gaussian and time-tiled Gaussian candidates ("value"), or from the
 # mean of a CEM run on the planning cost ("cem").
