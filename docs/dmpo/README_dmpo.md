@@ -111,12 +111,12 @@ evaluate:
 
 ```bash
 pixi run train model=rlp skip=[planner] \
-    wm=assets/core/world_model/lewm_cube \
+    wm=assets/core/world_model/cube_lewm \
     dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
 ```
 
 ```bash
-pixi run train model=dmpo wm=assets/core/world_model/lewm_cube \
+pixi run train model=dmpo wm=assets/core/world_model/cube_lewm \
     cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt \
     h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 \
     init_value=logs/<date>/<time>/checkpoints/value_td \
@@ -130,7 +130,7 @@ pixi run eval model=lewm core/solver=dmpo core.solver.actor_path=<dmpo.pt>
 Offline DMPO (the PPO objective) swaps one command:
 
 ```bash
-pixi run train model=dmpo_ppo wm=assets/core/world_model/lewm_cube \
+pixi run train model=dmpo_ppo wm=assets/core/world_model/cube_lewm \
     cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt \
     h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 \
     init_value=logs/<date>/<time>/checkpoints/value_td \

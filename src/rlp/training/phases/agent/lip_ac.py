@@ -473,8 +473,8 @@ def run(cfg: DictConfig) -> None:
     actor = Actor(a, blocks.dim, device)
 
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
-    # where the final save_metric writes the teacher; snapshots reference it too
-    value_checkpoint = Path(str(a.run.directory)).resolve() / "checkpoints" / str(a.output.value_checkpoint)
+    # the teacher is saved next to the planner, so checkpoints refer to it by name
+    value_checkpoint = Path(str(a.output.value_checkpoint))
 
     pretrain = 0 if a.actor_only else (a.pretrain if a.pretrain >= 0 else (0 if a.init_value else 2000))
     for i in range(pretrain):

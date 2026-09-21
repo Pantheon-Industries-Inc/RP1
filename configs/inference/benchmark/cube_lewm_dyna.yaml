@@ -8,4 +8,4 @@ defaults:
   - _self_
 core:
   world_model:
-    checkpoint: assets/core/world_model/lewm_cube_dyna
+    checkpoint: assets/core/world_model/cube_lewm_dyna

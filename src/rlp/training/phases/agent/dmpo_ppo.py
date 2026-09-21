@@ -340,7 +340,7 @@ def run(cfg: DictConfig) -> None:
             "learn_search_std": True,
             "mean_search_std": float(a.mean_search_std),
             "std_search_std": float(a.std_search_std),
-            "value": str(value_checkpoint),
+            "value": str(a.output.value_checkpoint),
             "value_context": context,
             "temporal_objective": "terminal",
             "objective": "ppo",

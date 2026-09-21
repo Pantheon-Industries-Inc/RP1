@@ -11,7 +11,7 @@ pretrained world model:
 
 Example (OGBench Cube on the tracked LeWM checkpoint)::
 
-    pixi run training model=rlp training.wm=assets/core/world_model/lewm_cube \
+    pixi run training model=rlp training.wm=assets/core/world_model/cube_lewm \
         training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
         training.name=cube_lewm training.planner.action_limit=1.6
 

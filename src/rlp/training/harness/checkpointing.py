@@ -12,7 +12,6 @@ from stable_worldmodel.wm.utils import save_pretrained as _save_pretrained
 from torch import nn
 
 from rlp.core.agent.solver.base import PlannerCheckpoint
-from rlp.utils.logging import logger
 
 
 def load_pretrained(
@@ -108,23 +107,16 @@ def load_metric(
 def load_planner(path: str, value_path: str | None) -> PlannerCheckpoint:
     """Load a learned planner checkpoint and the value it plans against.
 
-    The checkpoint records the value's path at training time. When that path
-    does not exist here, the value is looked up next to the checkpoint, under
-    the recorded name or its stem.
+    The checkpoint records the value's path; a relative one is resolved against
+    the checkpoint's directory. ``value_path`` replaces the recorded one.
     """
     payload = torch.load(path, map_location="cpu", weights_only=False)
     if not isinstance(payload, dict):
         raise TypeError(f"planner checkpoint {path} must contain a mapping")
-    reference = value_path or str(payload["value"])
-    if value_path is None and not Path(reference).exists():
-        recorded = Path(reference)
-        directory = Path(path).resolve().parent
-        for candidate in (directory / recorded.name, directory / recorded.stem):
-            if candidate.exists():
-                logger.info(f"Value {reference} not found; using {candidate}")
-                reference = str(candidate)
-                break
-    return PlannerCheckpoint(payload=payload, value=load_metric(reference))
+    value = Path(value_path or str(payload["value"]))
+    if not value.is_absolute():
+        value = Path(path).resolve().parent / value
+    return PlannerCheckpoint(payload=payload, value=load_metric(value))
 
 
 __all__ = [

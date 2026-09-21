@@ -32,8 +32,8 @@ refiner (Eq. 10).
 ## Replicating RLP: LeWM and PLDM
 
 Both pretrained OGBench Cube world models are tracked in-tree via Git LFS —
-`assets/core/world_model/lewm_cube` (LeWM) and
-`assets/core/world_model/pldm_cube` (the authors' PLDM checkpoint, converted
+`assets/core/world_model/cube_lewm` (LeWM) and
+`assets/core/world_model/cube_pldm` (the authors' PLDM checkpoint, converted
 1:1 into the LeWM key layout; converter: `pixi run prepare job=convert_pldm`).
 Replication is therefore self-contained: fetch the public dataset once, then
 train and evaluate per base.
@@ -50,12 +50,12 @@ clip range `amax`:
 
 ```bash
 # LeWM base (amax 1.6)
-pixi run training model=rlp training.wm=assets/core/world_model/lewm_cube \
+pixi run training model=rlp training.wm=assets/core/world_model/cube_lewm \
     training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_lewm training.planner.action_limit=1.6
 
 # PLDM base (amax 4.5)
-pixi run training model=rlp training.wm=assets/core/world_model/pldm_cube \
+pixi run training model=rlp training.wm=assets/core/world_model/cube_pldm \
     training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_pldm training.planner.action_limit=4.5
 ```
@@ -162,7 +162,7 @@ cd RLP_original
 
 git lfs pull
 git lfs fsck
-ls -lh assets/core/world_model/lewm_cube/weights_epoch_22.pt
+ls -lh assets/core/world_model/cube_lewm/weights_epoch_22.pt
 
 pixi install --all
 pixi run -e dev hooks

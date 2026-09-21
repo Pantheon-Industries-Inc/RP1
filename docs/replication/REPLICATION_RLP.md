@@ -29,7 +29,7 @@ training. Stage defaults are the paper's OGBench Cube recipe
 ```bash
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
 pixi run training model=rlp \
-    training.wm=assets/core/world_model/lewm_cube \
+    training.wm=assets/core/world_model/cube_lewm \
     training.dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance \
     training.name=cube_lewm training.planner.action_limit=1.6
 ```
@@ -98,7 +98,7 @@ switching renderers.
 ## 3. World-model bases
 
 **LeWM (cube)** is tracked in-tree via Git LFS
-(`assets/core/world_model/lewm_cube`) and is bit-replicable from scratch —
+(`assets/core/world_model/cube_lewm`) and is bit-replicable from scratch —
 see [REPLICATION_CUBE.md](cube/REPLICATION_CUBE.md) for the dataset
 fingerprint, the seven known replication traps, and the exact training
 command. For TwoRoom/Reacher bases, train LeWM on the corresponding play
@@ -114,7 +114,7 @@ pixi run training model=lewm training/data=reacher_lewm
 the LeWM key layout (both are vit_hf tiny/patch14/224; 303/303 keys map with
 identical shapes, validated to ~2e-6 agreement — see
 [docs/lip/lip_results.md](../lip/lip_results.md)). The converted cube
-checkpoint is tracked in-tree at `assets/core/world_model/pldm_cube`, and the
+checkpoint is tracked in-tree at `assets/core/world_model/cube_pldm`, and the
 converter is a maintained tool for other PLDM exports:
 
 ```bash
@@ -122,8 +122,8 @@ pixi run prepare job=convert_pldm preparation.src=<authors_pldm.pt> preparation.
 ```
 
 Pair the converted weights with a LeWM-target `config.json` (copy the one in
-`assets/core/world_model/pldm_cube/`). Everything in Sections 1–2 then applies
-unchanged with `wm=assets/core/world_model/pldm_cube` / `model=pldm`.
+`assets/core/world_model/cube_pldm/`). Everything in Sections 1–2 then applies
+unchanged with `wm=assets/core/world_model/cube_pldm` / `model=pldm`.
 
 **Caveat on Reacher data**: the public reacher h5 pads every episode's
 terminal step with NaN actions. Any normalization must use `nanmean`/`nanstd`
@@ -138,7 +138,7 @@ tracked in-tree (`assets/core/world_model/{lewm,pldm}_cube_dyna`, the
 `dyna_wm_*` campaign artifacts' epoch-1 weights), so
 `pixi run inference benchmark=lewm_dyna ...` / `benchmark=pldm_dyna ...` reproduces the
 row-(d) cells with any planner. Retrain the row-(d) RLP actors against the
-finetuned base with `model=rlp wm=assets/core/world_model/lewm_cube_dyna`.
+finetuned base with `model=rlp wm=assets/core/world_model/cube_lewm_dyna`.
 
 *Regenerating* the finetuned world models is a procedure, not a single entry
 point:

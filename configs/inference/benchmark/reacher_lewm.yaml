@@ -7,4 +7,4 @@ defaults:
   - _self_
 core:
   world_model:
-    checkpoint: assets/core/world_model/lejepa_reacher
+    checkpoint: assets/core/world_model/reacher_lewm

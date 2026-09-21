@@ -6,4 +6,4 @@ defaults:
   - lewm
   - _self_
 name: pldm
-checkpoint: assets/core/world_model/pldm_cube
+checkpoint: assets/core/world_model/cube_pldm

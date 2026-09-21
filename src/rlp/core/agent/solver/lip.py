@@ -1,5 +1,4 @@
 import time
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,15 +12,6 @@ from rlp.core.agent.value.temporal import ValueFunction, trajectory_value, windo
 from rlp.core.world_model.base import LatentWorldModel
 from rlp.core.world_model.rollout import rollout_terminal, rollout_traj
 from rlp.utils.logging import logger
-
-
-def _checkpoint_value(checkpoint: Mapping[str, Any], key: str, legacy_key: str) -> Any:
-    if key in checkpoint:
-        return checkpoint[key]
-    if legacy_key in checkpoint:
-        return checkpoint[legacy_key]
-    raise KeyError(f"planner checkpoint is missing {key!r}")
-
 
 # Mech-interp hook: ``probe_directory`` dumps per-replan
 # (z0, imagined-terminal latent, its value, goal latent) so an open-loop eval
@@ -127,26 +117,21 @@ class LIPSolver(CEMSolver):
             self.probe_directory.mkdir(parents=True, exist_ok=True)
 
         payload = checkpoint.payload
-        if payload.get("vnorm", "none") != "none":
-            # PlannerNet consumes the raw critic value E; a vnorm-trained
-            # state_dict has the same in_dim, so it would load and silently
-            # deploy on an input scale it never saw.
-            raise ValueError(f"payload was trained with vnorm={payload['vnorm']!r}, which PlannerNet does not support")
         horizon = int(payload["horizon"])
         self.actor = PlannerNet(
             horizon=horizon,
-            action_dim=int(_checkpoint_value(payload, "action_dim", "a_dim")),
-            hidden_dim=int(_checkpoint_value(payload, "hidden_dim", "hidden")),
-            action_limit=float(_checkpoint_value(payload, "action_limit", "amax")),
+            action_dim=int(payload["action_dim"]),
+            hidden_dim=int(payload["hidden_dim"]),
+            action_limit=float(payload["action_limit"]),
             head_scale=float(payload["head_scale"]),
         ).to(self.device)
-        state_dict = _checkpoint_value(payload, "state_dict", "sd")
+        state_dict = payload["state_dict"]
         if not isinstance(state_dict, dict):
             raise TypeError("planner payload state_dict must contain a mapping")
         self.actor.load_state_dict(state_dict)
         self.actor.eval()
         self._actor_horizon = horizon
-        self.lip_iterations = int(_checkpoint_value(payload, "iterations", "iters"))
+        self.lip_iterations = int(payload["iterations"])
         if self.iters_override is not None:
             logger.info(f"LIP iterations overridden at deploy: {self.lip_iterations} -> {self.iters_override}")
             self.lip_iterations = self.iters_override
@@ -156,18 +141,9 @@ class LIPSolver(CEMSolver):
         value_module = checkpoint.value.to(self.device)
         value_module.eval()
         self.lip_value = cast(ValueFunction, value_module)
-        # m-frame window values score a stack of the last `vframes` imagined
-        # frames with the (static) goal frame duplicated to match. Trainers
-        # record `window_frames` in the planner payload; checkpoints without
-        # it fall back to the declared latent widths.
-        value_dim = int(getattr(value_module, "latent_dim", 0))
-        declared_frames = payload.get("window_frames")
-        if declared_frames is not None:
-            self.vframes = int(declared_frames)
-        elif "z_dim" in payload and value_dim:
-            self.vframes = max(value_dim // int(payload["z_dim"]), 1)
-        else:
-            self.vframes = 1
+        # window values score a stack of the last `vframes` imagined frames
+        # against the goal frame repeated as often
+        self.vframes = int(payload["window_frames"])
         if self.vframes > 1:
             logger.info(f"LIP window value: {self.vframes} frames")
             if self.graphed:

@@ -88,11 +88,11 @@ first (the RLP pipeline with the planner stage skipped), then train and
 evaluate:
 
 ```bash
-pixi run train model=rlp skip=[planner] wm=assets/core/world_model/lewm_cube dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
+pixi run train model=rlp skip=[planner] wm=assets/core/world_model/cube_lewm dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
 ```
 
 ```bash
-pixi run train model=l2o wm=assets/core/world_model/lewm_cube cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 init_value=logs/<date>/<time>/checkpoints/value_td core.planner.action_limit=1.6
+pixi run train model=l2o wm=assets/core/world_model/cube_lewm cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 init_value=logs/<date>/<time>/checkpoints/value_td core.planner.action_limit=1.6
 ```
 
 ```bash

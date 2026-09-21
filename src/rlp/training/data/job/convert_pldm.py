@@ -8,7 +8,7 @@ architecture (vit_hf tiny / patch14 / 224) — verified 2026-08-06: 303 keys map
 1:1 with identical shapes. All non-encoder components already share names.
 
 The output pairs with a LeWM-target ``config.json`` (the tracked
-``assets/core/world_model/pldm_cube/config.json`` is one) and then loads
+``assets/core/world_model/cube_pldm/config.json`` is one) and then loads
 through every LeWM code path unchanged.
 
 Example::

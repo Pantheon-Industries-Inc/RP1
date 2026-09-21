@@ -34,7 +34,7 @@ Example (TwoRoom on the tracked LeJEPA base, after ``model=rlp skip=[planner]``
 has produced the caches and ``value_td``)::
 
     pixi run train model=l2o \
-        wm=assets/core/world_model/lejepa_tworoom \
+        wm=assets/core/world_model/tworoom_lewm \
         cache=$RLP_DATA_HOME/caches/tworoom_fs5.pt \
         h5=$RLP_DATA_HOME/caches/tworoom_actions.h5 \
         init_value=logs/<date>/<time>/checkpoints/value_td
@@ -246,7 +246,7 @@ def run(cfg: DictConfig) -> None:
             "gate_bias": float(a.gate_bias),
             "halton": bool(a.halton),
             "seed_val": int(a.seed_val),
-            "value": str(value_checkpoint),
+            "value": str(a.output.value_checkpoint),
             "value_context": context,
             "temporal_objective": str(a.temporal_objective),
         }
