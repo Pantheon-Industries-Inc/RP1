@@ -5,8 +5,8 @@ in discounted reachability, following contrastive RL (Eysenbach et al.). For a
 batch of anchors ``S`` and geometric-future goals ``G`` (positives on the
 diagonal), the symmetric InfoNCE objective is::
 
-    logits = phi(S) @ psi(G)^T  / temperature        # (B, B)
-    L = 0.5 * ( CE(logits, arange(B)) + CE(logits^T, arange(B)) )
+    logits = phi(S) @ psi(G) ^ T / temperature  # (B, B)
+    L = 0.5 * (CE(logits, arange(B)) + CE(logits ^ T, arange(B)))
 
 A high critic value means "goal is reachable from state", so the terminal cost
 handed to the planner is the negative critic: ``cost = -f(z_pred, z_goal)``

@@ -10,8 +10,8 @@ softmax-weighted elite (MPPI, Eq. 12), a two-layer MLP reads the current
 sampling-distribution parameters together with the ``N`` rollout costs and
 emits a GRU-style gated replacement::
 
-    g_mu, h_mu = m_theta([costs, mu, sigma])          # g through a sigmoid
-    mu         = (1 - g_mu) . mu  +  g_mu . h_mu
+    g_mu, h_mu = m_theta([costs, mu, sigma])  # g through a sigmoid
+    mu = (1 - g_mu).mu + g_mu.h_mu
 
 This is the structural difference from DMPO, which keeps the hand-written
 MPPI reduction and learns a *residual* on it: L2O-MPC's network never sees an

@@ -7,6 +7,13 @@
 # Run artefacts
 logs/
 
+# Hydra default output dirs
+outputs/
+multirun/
+
+# pytest-testmon dependency database
+.testmondata*
+
 # torch.compile kernel cache (TORCHINDUCTOR_CACHE_DIR)
 .torch_cache/
 

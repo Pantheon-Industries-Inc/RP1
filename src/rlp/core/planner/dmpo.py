@@ -13,13 +13,13 @@ reduction. Two MLPs replace the hand-written update:
   with a gate and a multiplicative covariance update (Eq. 13-14)::
 
       mu_hat, g, log_sigma = m_phi([costs_z, mu_n, sigma_n])
-      mu    = (1 - g) * mu_MPPI + g * mu_hat
+      mu = (1 - g) * mu_MPPI + g * mu_hat
       sigma = sigma_init * exp(log_sigma)
 
 - **shift model** ``Phi_phi``: learns the warm start, as a residual on the
   standard shift-forward of the previous decision's parameters (Sec. IV-D)::
 
-      mu_tilde    = mu_SHIFT    + Phi_mu(theta_prev)
+      mu_tilde = mu_SHIFT + Phi_mu(theta_prev)
       sigma_tilde = sigma_SHIFT * exp(Phi_sigma(theta_prev))
 
 The optimizer never sees the state: its only task-specific signal is the cost

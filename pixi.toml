@@ -65,22 +65,38 @@ pytorch = "==2.7.1"
 torchvision = "==0.22.1"
 
 [feature.dev.pypi-dependencies]
+matplotlib = ">=3.10"
 prek = ">=0.4.11"
 pytest = ">=9.1.1"
-pytest-xdist = ">=3.8"
+pytest-testmon = ">=2.2"
 pytest-timeout = ">=2.3"
+pytest-xdist = ">=3.8"
 ruff = ">=0.16"
 ty = ">=0.0.64"
 
 [feature.dev.tasks]
-typecheck = "ty check src tests"
-lint = "ruff check src tests"
 format = "ruff format src tests"
 format-check = "ruff format --check src tests"
+lint = "ruff check src tests"
+typecheck = "ty check src tests"
 test = "pytest"
-hooks = "prek install"
+# `--testmon-forceselect` and not `--testmon`: testmon switches its selection off whenever `-m` is
+# passed, and `addopts` always passes `-m "not slow"`. Forcing it intersects the two instead.
+test-changed = "pytest --testmon-forceselect"
+test-slow = "pytest -m slow"
 check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
+hooks = "prek install"
+
+# `no-default-feature` drops the workspace default whole, and that includes the interpreter.
+[feature.cluster.dependencies]
+python = "3.13.*"
+
+[feature.cluster.pypi-dependencies]
+skypilot = { version = ">=0.10", extras = ["kubernetes"] }
 
 [environments]
 default = { features = [], solve-group = "default" }
 dev = { features = ["dev"], solve-group = "default" }
+# Alone in its solve group: SkyPilot's closure pins versions (e.g. `click`) that would otherwise be
+# imposed on hydra and wandb in the training solve.
+cluster = { features = ["cluster"], no-default-feature = true }
