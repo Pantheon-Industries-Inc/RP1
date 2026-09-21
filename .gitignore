@@ -11,6 +11,12 @@ logs/
 outputs/
 multirun/
 
+# Material kept on this machine only: replication specs for external code,
+# diagnostics, figure builders and results records
+configs/training/cluster/local/
+scripts/local/
+docs/local/
+
 # pytest-testmon dependency database
 .testmondata*
 

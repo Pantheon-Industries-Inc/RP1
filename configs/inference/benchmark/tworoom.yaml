@@ -8,11 +8,9 @@ defaults:
   - _self_
 benchmark:
   wall_center: 112.0
-  # TwoRoom's shipped numbers follow the original LeWM/DINO-WM contract:
-  # training and evaluation share the full 10k-episode pool (no episode
-  # split was applied in the producing campaigns). Set
-  # benchmark.episode_range="8000:10000" and train with
-  # train_episodes=8000 for the held-out variant.
+  # The LeWM/DINO-WM protocol: training and evaluation share the full pool.
+  # For a held-out split, set episode_range="8000:10000" here and
+  # training.train_episodes=8000 when training.
   episode_range: null
   callables:
     - method: _set_state

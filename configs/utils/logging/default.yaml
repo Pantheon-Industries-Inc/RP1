@@ -4,8 +4,8 @@ level: INFO
 wandb:
   mode: disabled
   config:
-    entity: stable-wm
-    project: stable-wm
+    entity: null
+    project: rlp
     name: null
     id: null
     resume: allow

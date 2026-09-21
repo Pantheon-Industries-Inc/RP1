@@ -1,0 +1,104 @@
+# OGBench Cube replication, one world model per job:
+#
+#   sky jobs launch configs/training/cluster/replicate_cube.yaml -n cube-lewm \
+#       --env BASE=lewm --env ACTION_LIMIT=1.6 --env EXPERIMENT=cube-lewm -y
+#   sky jobs launch configs/training/cluster/replicate_cube.yaml -n cube-pldm \
+#       --env BASE=pldm --env ACTION_LIMIT=4.5 --env EXPERIMENT=cube-pldm -y
+#
+# Trains the agent on episodes 0-7999, then evaluates RLP, CEM and the no-move
+# floor on report seeds 42/43/44 with tasks drawn from episodes 8000-9999.
+# Caches live on the persistent volume, so a preempted job resumes after the
+# encoding stages.
+
+name: cube-replication
+
+envs:
+  BASE: lewm            # lewm | pldm
+  ACTION_LIMIT: "1.6"   # 1.6 for lewm, 4.5 for pldm
+  EVAL_SEEDS: "42 43 44"
+  SMOKE: "0"            # 1 = tiny budgets, an end-to-end path check
+  SEED: "0"             # agent training seed; a replication averages seeds 0, 1 and 2,
+                        # one job each, sharing caches through CACHE_EXPERIMENT
+  CACHE_EXPERIMENT: ""  # reuse another experiment's caches
+  EVAL_CONDITIONS: "rlp cem noop"
+  VOLUME_ROOT: /persistent  # mount point of the persistent volume
+  EXPERIMENT: cube
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+
+volumes:
+  /persistent: persistent  # a volume created with `sky volumes apply` on your cluster
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null)
+  curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  pixi install -e default
+
+run: |
+  set -euo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  # The base image's LD_LIBRARY_PATH carries a libstdc++ older than the pixi
+  # environment's toolchain.
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0
+  export RLP_DATA_HOME=/tmp/rlp-data
+  mkdir -p "$RLP_DATA_HOME"
+  OUT=$VOLUME_ROOT/$EXPERIMENT
+  CACHES=$VOLUME_ROOT/${CACHE_EXPERIMENT:-$EXPERIMENT}/caches
+  mkdir -p "$OUT" "$CACHES"
+
+  pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
+
+  STAGES="value,planner"
+  [ -f "$CACHES/cube_${BASE}_actions.h5" ] || STAGES="actions,$STAGES"
+  [ -f "$CACHES/cube_${BASE}_fs5.pt" ] || STAGES="subsample,$STAGES"
+  [ -f "$CACHES/cube_${BASE}_fs1.pt" ] || STAGES="cache,$STAGES"
+
+  EXTRA=""
+  EVAL_EPISODES=50
+  if [ "$SMOKE" = 1 ]; then
+    EXTRA="training.train_episodes=64 training.value.steps=60 training.planner.steps=30"
+    EVAL_EPISODES=2
+    EVAL_SEEDS=42
+  fi
+
+  if [ ! -f "$OUT/checkpoints/planner.pt" ]; then
+    pixi run posttrain \
+      training.wm="$PWD/assets/core/world_model/${BASE}_cube" \
+      training.dataset="$RLP_DATA_HOME/datasets/ogb_cube_single.lance" \
+      training.name="cube_${BASE}" training.cache_directory="$CACHES" runtime.seed=$SEED \
+      training.planner.action_limit=$ACTION_LIMIT "training.stages=[$STAGES]" $EXTRA
+    RUN=$(ls -dt logs/*/* | head -1)
+    rm -rf "$OUT/checkpoints"
+    cp -r "$RUN/checkpoints" "$OUT/checkpoints"
+  fi
+
+  evaluate () {  # evaluate <label> <seed> <overrides...>
+    local label=$1 seed=$2; shift 2
+    pixi run evaluate benchmark=cube_$BASE runtime.seed=$seed benchmark.num_episodes=$EVAL_EPISODES "$@"
+    local run=$(ls -dt logs/*/* | head -1)
+    cp "$run"/metrics/*results*.txt "$OUT/results_${label}_s${seed}.txt"
+    cat "$OUT/results_${label}_s${seed}.txt"
+  }
+
+  for seed in $EVAL_SEEDS; do
+    for condition in $EVAL_CONDITIONS; do
+      case $condition in
+        rlp) evaluate rlp $seed core/agent/solver=lip core.agent.solver.checkpoint.path="$OUT/checkpoints/planner.pt";;
+        cem) evaluate cem $seed core/agent/solver=cem;;
+        noop) evaluate noop $seed core/agent/policy=no_move;;
+      esac
+    done
+  done

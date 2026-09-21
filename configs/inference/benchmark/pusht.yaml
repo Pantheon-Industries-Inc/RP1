@@ -11,8 +11,7 @@ defaults:
   - /core/agent/value: latent
   - _self_
 benchmark:
-  # Held-out protocol for the counterstrike RLP run: value/planner train on
-  # episodes 0-15999 (train_episodes=16000), eval tasks draw from the rest.
+  # held out: the agent trains on episodes 0-15999 (training.train_episodes=16000)
   episode_range: "16000:18685"
   callables:
     - method: _set_state

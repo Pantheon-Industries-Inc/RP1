@@ -12,8 +12,7 @@ planning:
   # "replanning every chunk" for Reacher is WRONG — do not set this to 1.
   receding_horizon: 5
 benchmark:
-  # Held-out protocol (matches the rlp12 reacher_w1 campaign): value/planner
-  # train on episodes 0-7999, eval tasks draw from 8000-9999.
+  # held out: the agent trains on episodes 0-7999
   episode_range: "8000:10000"
   callables:
     - method: set_state

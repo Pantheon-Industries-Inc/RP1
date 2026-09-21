@@ -1,11 +1,6 @@
-# Composed RLP replication pipeline: latent caches -> offline value -> planner.
-# Stage defaults are **config B** (docs/campaigns/2026-08-27/HANDOFF_CONFIGS_20260903.md):
-# gamma 0.98, teacher n-step 1, expectile 0.03, amax 2.5, max-delta 20, K 8,
-# depth 2 at 1x budgets, acr 0.5, fine ES, ema 0.005 -- the single recipe that
-# covers TwoRoom, Cube, Reacher and PushT. Per-environment properties that
-# config B does not unify (window frames, step budgets, replay_prob,
-# expand_weight) are overridden through the value.* / planner.* subtrees; see
-# docs/replication/REPLICATION_RLP.md.
+# The stage settings are the one recipe used on every environment; what differs
+# per environment (window frames, step budgets, replay_prob, expand_weight) is
+# overridden through training.value.* and training.planner.*.
 defaults:
   - /utils/logging: default
   - _self_
