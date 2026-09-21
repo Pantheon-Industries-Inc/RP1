@@ -71,22 +71,22 @@ run: |
   ls -la "$H5"
 
   # every epoch's export is mirrored to the volume as it appears (preemption-safe)
-  export_loop() {
-    while true; do
-      RUN=$(ls -dt logs/*/* 2>/dev/null | head -1)
-      if [ -n "$RUN" ] && [ -d "$RUN/checkpoints/pldm_pusht" ]; then
-        for f in "$RUN"/checkpoints/pldm_pusht/weights_epoch_*.pt; do
-          [ -f "$f" ] || continue
-          e=$(basename "$f" .pt | sed 's/weights_epoch_//'); d="$OUT/wm_epoch$e"
-          if [ ! -f "$d/weights.pt" ]; then
-            mkdir -p "$d" && cp "$f" "$d/weights.pt.tmp" && mv "$d/weights.pt.tmp" "$d/weights.pt" \
-              && cp "$RUN/checkpoints/pldm_pusht/config.json" "$d/config.json" && echo "[export] epoch $e -> $d"
-          fi
-        done
+  # The run dir is the one that holds checkpoints/pldm_pusht (DDP ranks create
+  # extra log dirs without checkpoints, so `ls -dt logs/*/* | head -1` is NOT it).
+  export_once() {
+    local CK
+    CK=$(ls -dt logs/*/*/checkpoints/pldm_pusht 2>/dev/null | head -1)
+    [ -n "$CK" ] || return 0
+    for f in "$CK"/weights_epoch_*.pt; do
+      [ -f "$f" ] || continue
+      e=$(basename "$f" .pt | sed 's/weights_epoch_//'); d="$OUT/wm_epoch$e"
+      if [ ! -f "$d/weights.pt" ]; then
+        mkdir -p "$d" && cp "$f" "$d/weights.pt.tmp" && mv "$d/weights.pt.tmp" "$d/weights.pt" \
+          && cp "$CK/config.json" "$d/config.json" && echo "[export] epoch $e -> $d"
       fi
-      sleep 300
     done
   }
+  export_loop() { while true; do export_once; sleep 300; done; }
   export_loop &
   LOOP=$!
 
@@ -100,12 +100,8 @@ run: |
   RC=${PIPESTATUS[0]}
   set -e
   kill $LOOP 2>/dev/null || true
-  RUN=$(ls -dt logs/*/* | head -1)
-  cp -r "$RUN/checkpoints/pldm_pusht" "$OUT/" 2>/dev/null || true
-  for f in "$OUT"/pldm_pusht/weights_epoch_*.pt; do
-    [ -f "$f" ] || continue
-    e=$(basename "$f" .pt | sed 's/weights_epoch_//'); d="$OUT/wm_epoch$e"
-    [ -f "$d/weights.pt" ] || { mkdir -p "$d"; cp "$f" "$d/weights.pt"; cp "$OUT/pldm_pusht/config.json" "$d/config.json"; echo "[export] epoch $e -> $d"; }
-  done
-  ls "$OUT"
+  export_once            # the last epoch lands seconds before fit() returns; sweep once more
+  CK=$(ls -dt logs/*/*/checkpoints/pldm_pusht 2>/dev/null | head -1)
+  [ -n "$CK" ] && cp -r "$CK" "$OUT/pldm_pusht" 2>/dev/null || true
+  ls "$OUT"; ls "$OUT"/wm_epoch* -d | wc -l
   exit $RC
