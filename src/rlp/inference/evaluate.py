@@ -5,67 +5,34 @@ if sys.platform == "linux":
     os.environ.setdefault("MUJOCO_GL", "egl")
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import hydra
 import numpy as np
-import stable_pretraining as spt
 import stable_worldmodel as swm
 import torch
 from omegaconf import DictConfig, OmegaConf
 from sklearn import preprocessing
 from stable_worldmodel.policy import BasePolicy
 from torch import nn
-from torchvision.transforms import v2 as transforms
 
-from rlp.core.policy import NoMovePolicy, PlanConfig, WorldModelPolicy
-from rlp.core.value import as_planning_cost
-from rlp.core.world_model import load_pretrained
-from rlp.core.world_model.runtime import pick_device
-from rlp.data.protocols import Array, Dataset
+from rlp.core.agent.policy import NoMovePolicy, PlanConfig, WorldModelPolicy
+from rlp.core.agent.value import MetricCost, as_planning_cost
+from rlp.core.world_model.featurize import image_transform
+from rlp.data.base import Array, Dataset, episode_index
 from rlp.environment import World
+from rlp.training.harness.checkpointing import load_metric, load_pretrained
 from rlp.utils.config import dispatch, run_hydra
+from rlp.utils.device import pick_device
 from rlp.utils.logging import logger
 
 
-def img_transform(cfg: DictConfig, dtype: torch.dtype) -> Callable[[object], torch.Tensor]:
-    stats = cast(dict[str, Sequence[float]], spt.data.dataset_stats.ImageNet)
-    steps = [
-        transforms.ToImage(),
-        transforms.ToDtype(dtype, scale=True),
-        transforms.Normalize(mean=stats["mean"], std=stats["std"]),
-    ]
-    # eval.train_res: bottleneck images through the checkpoint's native
-    # training resolution (e.g. 64 for OGBench play retrains, whose 64px
-    # frames were upscaled to 224 during training) so the model sees the
-    # image domain it was trained on. null/img_size = no-op.
-    train_res = cfg.benchmark.train_resolution
-    if train_res and int(train_res) != int(cfg.benchmark.image_size):
-        steps.append(transforms.Resize(size=int(train_res)))
-    steps.append(transforms.Resize(size=cfg.benchmark.image_size))
-    return cast(Callable[[object], torch.Tensor], transforms.Compose(steps))
-
-
-def episode_col(dataset: Dataset) -> str:
-    """Episode-index column name. Lance keeps 'episode_idx'/'step_idx' as
-    writer-managed index columns outside column_names but serves them via
-    get_col_data; h5 eval sets list 'ep_idx' (or 'episode_idx') explicitly."""
-    return "ep_idx" if "ep_idx" in dataset.column_names else "episode_idx"
-
-
 def get_episodes_length(dataset: Dataset, episodes: Array) -> Array:
-    col_name = episode_col(dataset)
-
-    # lance serves index columns as (N,1); h5 as (N,). Flatten so the boolean
-    # mask below is 1-D regardless of source format.
-    episode_idx = np.asarray(dataset.get_col_data(col_name)).reshape(-1)
+    episode_idx = episode_index(dataset)
     step_idx = np.asarray(dataset.get_col_data("step_idx")).reshape(-1)
-    lengths: list[int] = []
-    for ep_id in episodes:
-        lengths.append(np.max(step_idx[episode_idx == ep_id]) + 1)
-    return np.array(lengths)
+    return np.array([np.max(step_idx[episode_idx == ep_id]) + 1 for ep_id in episodes])
 
 
 def get_dataset(cfg: DictConfig, dataset_name: str) -> Dataset:
@@ -89,10 +56,8 @@ def _run(cfg: DictConfig) -> None:
     world = World(**environment, image_shape=(cfg.benchmark.image_size, cfg.benchmark.image_size))
 
     img_dtype = torch.bfloat16 if cfg.runtime.bfloat16 else torch.float32
-    transform: dict[str, Callable[[object], torch.Tensor]] = {
-        "pixels": img_transform(cfg, img_dtype),
-        "goal": img_transform(cfg, img_dtype),
-    }
+    image = image_transform(cfg.benchmark.image_size, cfg.benchmark.train_resolution, img_dtype)
+    transform: dict[str, Callable[[object], torch.Tensor]] = {"pixels": image, "goal": image}
 
     dataset = get_dataset(cfg, cfg.data.path)
     # dataset.stats: source of the action/proprio z-scoring stats. Defaults
@@ -105,16 +70,11 @@ def _run(cfg: DictConfig) -> None:
     else:
         stats_dataset = get_dataset(cfg, stats_name)
         logger.info(f"Using normalization stats from {stats_name}; evaluation tasks and goals from {cfg.data.path}")
-    col_name = episode_col(dataset)
-    ep_indices, _ = np.unique(dataset.get_col_data(col_name), return_index=True)
+    row_episodes = episode_index(dataset)
+    ep_indices = np.unique(row_episodes)
     episode_range = cfg.benchmark.episode_range
     if episode_range:
-        parts = str(episode_range).split(":")
-        if len(parts) != 2:
-            raise ValueError("benchmark.episode_range must use LO:HI syntax")
-        low, high = map(int, parts)
-        if low < 0 or high <= low:
-            raise ValueError("benchmark.episode_range must satisfy 0 <= LO < HI")
+        low, high = map(int, str(episode_range).split(":"))
         ep_indices = ep_indices[(ep_indices >= low) & (ep_indices < high)]
         if len(ep_indices) < cfg.benchmark.num_episodes:
             raise ValueError(
@@ -174,13 +134,9 @@ def _run(cfg: DictConfig) -> None:
         cost_model: nn.Module = planning_cost
         metric_paths = list(cfg.core.value.checkpoints)
         if cfg.core.value.kind == "metric":
-            from rlp.core.value import load_metric
-
             loaded_metrics = [load_metric(path, device=device) for path in metric_paths]
             if not loaded_metrics:
                 raise ValueError("metric planning requires at least one checkpoint")
-            from rlp.core.value import MetricCost
-
             cost_model = MetricCost(
                 cost_model,
                 loaded_metrics[0],
@@ -209,7 +165,7 @@ def _run(cfg: DictConfig) -> None:
     max_start_idx_dict = {ep_id: max_start_idx[i] for i, ep_id in enumerate(ep_indices)}
     # Map each dataset row's episode_idx to its max_start_idx (flatten index
     # columns: lance serves them as (N,1), h5 as (N,)).
-    _row_epi = np.asarray(dataset.get_col_data(col_name)).reshape(-1)
+    _row_epi = row_episodes
     _row_step = np.asarray(dataset.get_col_data("step_idx")).reshape(-1)
     max_start_per_row = np.full(_row_epi.shape, -1, dtype=np.int64)
     for ep_id, maximum in max_start_idx_dict.items():
@@ -244,7 +200,7 @@ def _run(cfg: DictConfig) -> None:
     # index columns may be writer-managed (lance): use column access, not rows.
     # Flatten (lance serves (N,1)) and cast to int (lance stores these as
     # float32; the reader indexes offsets with them and requires int).
-    eval_episodes = np.asarray(dataset.get_col_data(col_name)).reshape(-1)[random_episode_indices].astype(np.int64)
+    eval_episodes = row_episodes[random_episode_indices].astype(np.int64)
     eval_start_idx = np.asarray(dataset.get_col_data("step_idx")).reshape(-1)[random_episode_indices].astype(np.int64)
 
     # Diagnostic hook: solvers that need to know WHICH dataset task each env is

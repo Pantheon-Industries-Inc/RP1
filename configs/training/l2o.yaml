@@ -7,7 +7,7 @@ defaults:
   - /core/value: temporal_distance
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.l2o._run}
+entrypoint: {_target_: rlp.training.phases.agent.l2o._run}
 runtime:
   device: auto
   seed: 0

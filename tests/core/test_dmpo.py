@@ -6,13 +6,12 @@ property is what makes the learned rule safe to drop into an MPC loop, and it
 is the invariant these tests guard.
 """
 
-from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
 
-from rlp.core.planner.dmpo import DMPONet, gaussian_halton
+from rlp.core.agent.planner.dmpo import DMPONet, gaussian_halton
 
 H, A_DIM, N, B = 3, 4, 16, 5
 
@@ -116,13 +115,13 @@ def test_warm_start_shifts_forward_and_learns_a_residual() -> None:
     assert torch.count_nonzero(empty) == 0
 
 
-def test_solver_rejects_a_foreign_checkpoint(tmp_path: Path) -> None:
-    from rlp.core.solver.dmpo import DMPOSolver
+def test_solver_rejects_a_foreign_checkpoint() -> None:
+    from rlp.core.agent.solver.base import PlannerCheckpoint
+    from rlp.core.agent.solver.dmpo import DMPOSolver
 
-    path = tmp_path / "planner.pt"
-    torch.save({"kind": "lip4", "sd": {}}, path)
+    checkpoint = PlannerCheckpoint(payload={"kind": "lip4", "sd": {}}, value=torch.nn.Identity())
     with pytest.raises(ValueError, match="unsupported checkpoint kind"):
-        DMPOSolver(model=torch.nn.Linear(2, 2), actor_path=str(path))
+        DMPOSolver(model=torch.nn.Linear(2, 2), checkpoint=checkpoint)
 
 
 def test_search_heads_give_a_usable_policy() -> None:
@@ -160,7 +159,7 @@ def test_ppo_ratio_is_differentiable_in_the_actor() -> None:
 
 
 def test_critic_reads_the_auxiliary_state() -> None:
-    from rlp.core.planner.dmpo import DMPOCritic
+    from rlp.core.agent.planner.dmpo import DMPOCritic
 
     critic = DMPOCritic(8, horizon=H, a_dim=A_DIM, hidden=16)
     mean = torch.randn(B, H, A_DIM)

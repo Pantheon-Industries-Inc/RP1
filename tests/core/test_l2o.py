@@ -11,8 +11,8 @@ from typing import Any
 
 import torch
 
-from rlp.core.planner.l2o import L2ONet, mppi_update
-from rlp.training.l2o import dagger_beta
+from rlp.core.agent.planner.l2o import L2ONet, mppi_update
+from rlp.training.phases.agent.l2o import dagger_beta
 
 H, A_DIM, N, B = 3, 4, 16, 5
 

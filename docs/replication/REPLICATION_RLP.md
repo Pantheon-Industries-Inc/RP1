@@ -65,7 +65,7 @@ appendix, not the protocol.
 
 ```bash
 # RLP (9 rollouts/decision)
-pixi run inference benchmark=lewm core/solver=lip core.solver.actor_path=<planner.pt>
+pixi run inference benchmark=lewm core/solver=lip core.solver.checkpoint.path=<planner.pt>
 
 # CEM / MPPI (9,000 rollouts) and Adam (3,000 fwd + 3,000 bwd), latent objective
 pixi run inference benchmark=lewm core/solver=cem
@@ -86,7 +86,7 @@ explicitly:
 
 ```bash
 pixi run inference benchmark=tworoom_lewm core.world_model.checkpoint=<tworoom_ckpt> \
-    core/solver=lip core.solver.actor_path=<planner.pt>
+    core/solver=lip core.solver.checkpoint.path=<planner.pt>
 pixi run inference benchmark=reacher_lewm core.world_model.checkpoint=<reacher_ckpt> \
     core/solver=cem
 ```

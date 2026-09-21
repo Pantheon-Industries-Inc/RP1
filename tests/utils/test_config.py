@@ -24,7 +24,7 @@ def _public_configs(group: str) -> list[str]:
 
 @pytest.mark.parametrize(
     "config_name",
-    _public_configs("training") + _public_configs("inference/benchmark") + _public_configs("training/data/preparation"),
+    _public_configs("training") + _public_configs("inference/benchmark") + _public_configs("training/data/job"),
 )
 def test_every_public_job_config_composes(config_name: str) -> None:
     with initialize_config_dir(config_dir=str(CONFIG_ROOT), version_base=None):
@@ -86,10 +86,10 @@ def test_run_hydra_composes_the_selected_preparation_job(
     )
     config = run_hydra(
         lambda cfg: cfg,
-        config_name="training/data/preparation/collect_tworoom_mixed",
-        selector=("job", "training/data/preparation"),
+        config_name="training/data/job/collect_tworoom_mixed",
+        selector=("job", "training/data/job"),
     )
-    assert config.entrypoint._target_ == "rlp.training.data.preparation.cache_latents._run"
+    assert config.entrypoint._target_ == "rlp.training.data.job.cache_latents._run"
     assert config.preparation.wm == "model.pt"
     assert config.preparation.dataset == "data.lance"
 
@@ -138,7 +138,7 @@ def test_repository_trees_share_the_subsystem_skeleton() -> None:
         "inference",
         "training",
         "training/data",
-        "training/data/preparation",
+        "training/data/job",
         "utils",
     )
     for relative in paths:

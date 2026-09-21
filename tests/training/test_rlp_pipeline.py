@@ -8,7 +8,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlp.data import LatentCache
-from rlp.training import rlp as rlp_pipeline
+from rlp.training.phases.agent import pipeline as rlp_pipeline
 from rlp.utils.config import run_hydra
 
 
@@ -43,7 +43,7 @@ def test_pipeline_stage_executes_inside_parent_run(monkeypatch: pytest.MonkeyPat
             cfg,
             1,
             "subsample",
-            "training/data/preparation/subsample_cache",
+            "training/data/job/subsample_cache",
             **{"preparation.inp": str(inp), "preparation.out": str(out), "preparation.frameskip": 2},
         )
         rlp_pipeline._stage(

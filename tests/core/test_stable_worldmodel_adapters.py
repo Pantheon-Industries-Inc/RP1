@@ -14,11 +14,11 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 from torch import nn
 
-from rlp.core.policy import NoMovePolicy
-from rlp.core.value import LatentGoalCost
-from rlp.core.value.protocols import TensorInfo
-from rlp.core.world_model import checkpoint as checkpoint_module
+from rlp.core.agent.policy import NoMovePolicy
+from rlp.core.agent.value import LatentGoalCost
+from rlp.core.agent.value.base import TensorInfo
 from rlp.environment.world import _resize_images_like_env
+from rlp.training.harness import checkpointing as checkpoint_module
 
 
 def test_stable_worldmodel_comes_from_pinned_distribution() -> None:
@@ -144,7 +144,7 @@ def test_hydra_configs_compose() -> None:
     with initialize_config_dir(config_dir=str(config_root), version_base=None):
         cfg = compose(config_name="inference/benchmark/lewm", overrides=["core/solver=adam"])
     assert cfg.environment.env_name == "swm/OGBCube-v0"
-    assert cfg.core.solver._target_ == "rlp.core.solver.GradientSolver"
+    assert cfg.core.solver._target_ == "rlp.core.agent.solver.GradientSolver"
 
     with initialize_config_dir(config_dir=str(config_root), version_base=None):
         cfg = compose(config_name="training/lewm", overrides=["training/data=tworoom_lewm"])

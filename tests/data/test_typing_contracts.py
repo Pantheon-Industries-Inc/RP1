@@ -8,12 +8,12 @@ import torch
 from omegaconf import DictConfig
 from torch import nn
 
-from rlp.core.rollout import rollout_terminal
-from rlp.core.solver.lip import EncoderWorldModel
-from rlp.core.value import MetricCost
-from rlp.core.value.protocols import TensorInfo
-from rlp.core.value.samplers import PairBatch, TransitionBatch
-from rlp.core.world_model import load_pretrained
+from rlp.core.agent.solver.lip import EncoderWorldModel
+from rlp.core.agent.value import MetricCost
+from rlp.core.agent.value.base import TensorInfo
+from rlp.core.world_model.rollout import rollout_terminal
+from rlp.training.harness.checkpointing import load_pretrained
+from rlp.training.phases.agent.samplers import PairBatch, TransitionBatch
 from rlp.utils.config import dispatch
 
 

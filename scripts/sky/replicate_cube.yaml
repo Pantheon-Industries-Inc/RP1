@@ -110,7 +110,7 @@ run: |
     for COND in $EVAL_CONDS; do
       case $COND in
         rlp) run_eval rlp $ES core/solver=lip \
-               core.solver.actor_path="$D/train_checkpoints/planner.pt";;
+               core.solver.checkpoint.path="$D/train_checkpoints/planner.pt";;
         cem_latent) run_eval cem_latent $ES core/solver=cem;;
         noop) run_eval noop $ES core/policy=no_move;;
       esac

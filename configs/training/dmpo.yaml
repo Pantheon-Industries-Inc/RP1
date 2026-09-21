@@ -6,7 +6,7 @@ defaults:
   - /core/value: temporal_distance
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.dmpo._run}
+entrypoint: {_target_: rlp.training.phases.agent.dmpo._run}
 runtime:
   device: auto
   seed: 0

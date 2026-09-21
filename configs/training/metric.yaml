@@ -3,7 +3,7 @@ defaults:
   - /core/value: temporal_distance
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.metric._run}
+entrypoint: {_target_: rlp.training.phases.agent.metric._run}
 runtime:
   device: auto
   seed: 0

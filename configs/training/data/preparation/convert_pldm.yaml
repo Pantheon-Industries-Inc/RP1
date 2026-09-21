@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - /utils/logging: default
-  - _self_
-entrypoint: {_target_: rlp.training.data.preparation.convert_pldm._run}
-preparation:
-  src: ???   # authors' PLDM checkpoint (.pt, HF ViTModel encoder key names)
-  dst: ???   # output path; pair with a LeWM-target config.json

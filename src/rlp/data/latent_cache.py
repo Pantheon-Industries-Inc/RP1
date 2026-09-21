@@ -20,9 +20,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from rlp.data.base import Dataset, RowBatch, episode_index
 from rlp.utils.logging import logger
-
-from .protocols import Dataset, RowBatch
 
 
 @dataclass
@@ -115,17 +114,6 @@ class LatentCache:
         )
 
 
-def _episode_col(dataset: Dataset) -> np.ndarray:
-    """Fetch the per-row episode index, robust to lance hiding it from
-    ``column_names`` (try ``episode_idx`` then ``ep_idx``)."""
-    for name in ("episode_idx", "ep_idx"):
-        try:
-            return np.asarray(dataset.get_col_data(name))
-        except (KeyError, ValueError, NotImplementedError):
-            continue
-    raise KeyError("dataset exposes neither 'episode_idx' nor 'ep_idx'")
-
-
 def encode_dataset(
     dataset: Dataset,
     featurizer: Callable[[RowBatch], torch.Tensor],
@@ -147,7 +135,7 @@ def encode_dataset(
     """
     # NB: lance hides episode_idx/step_idx from ``column_names`` even though
     # ``get_col_data`` serves them, so probe directly rather than membership-test.
-    episode_idx = _episode_col(dataset).reshape(-1).astype(np.int64)
+    episode_idx = episode_index(dataset).astype(np.int64)
     step_idx = np.asarray(dataset.get_col_data("step_idx")).reshape(-1).astype(np.int64)
     n = len(episode_idx)
 

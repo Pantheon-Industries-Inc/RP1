@@ -4,7 +4,7 @@ defaults:
   - /core/value: temporal_distance
   - /utils/logging: default
   - _self_
-entrypoint: {_target_: rlp.training.lip_ac._run}
+entrypoint: {_target_: rlp.training.phases.agent.lip_ac._run}
 runtime:
   device: auto
   seed: 0
@@ -53,7 +53,7 @@ training:
   expand_weight: 0.0
   expand_traj: false
   replay_prob: 0.0
-  action_stats_pin: null
+  action_stats: null
 output:
   planner_checkpoint: planner.pt
   value_checkpoint: value

@@ -11,8 +11,8 @@ from typing import Any, cast
 import pytest
 import torch
 
-from rlp.core.rollout import rollout_traj
-from rlp.core.temporal import trajectory_value
+from rlp.core.agent.value.temporal import trajectory_value
+from rlp.core.world_model.rollout import rollout_traj
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs need a GPU")
 
@@ -32,7 +32,7 @@ class TinyWM(torch.nn.Module):
 
 
 def test_rejects_cpu() -> None:
-    from rlp.core.solver.graphed import GraphedRefinement
+    from rlp.core.agent.solver.graphed import GraphedRefinement
 
     if torch.cuda.is_available():
         pytest.skip("CPU-rejection check only meaningful without CUDA")
@@ -42,7 +42,7 @@ def test_rejects_cpu() -> None:
 
 @cuda
 def test_graphed_step_matches_eager() -> None:
-    from rlp.core.solver.graphed import GraphedRefinement
+    from rlp.core.agent.solver.graphed import GraphedRefinement
 
     torch.manual_seed(0)
     dev = "cuda"

@@ -5,7 +5,7 @@ defaults:
   - /utils/logging: default
   - _self_
 entrypoint:
-  _target_: rlp.training.lewm._run
+  _target_: rlp.training.phases.world_model.trainer._run
 runtime:
   seed: 3072
   device: auto

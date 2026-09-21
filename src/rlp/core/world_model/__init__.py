@@ -1,5 +1,9 @@
-"""RLP-owned world models and their checkpoint helpers."""
+"""The world-model contract the agent plans through.
 
-from .checkpoint import load_pretrained, save_pretrained
+Dynamics come from Stable-WM's LeWM and PLDM classes, selected by config.
+"""
 
-__all__ = ["load_pretrained", "save_pretrained"]
+from rlp.core.world_model.base import LatentWorldModel
+from rlp.core.world_model.rollout import rollout_terminal, rollout_traj
+
+__all__ = ["LatentWorldModel", "rollout_terminal", "rollout_traj"]
