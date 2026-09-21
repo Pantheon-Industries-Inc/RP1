@@ -10,9 +10,6 @@ Three samplers, one per learner:
 * :class:`BalancedHorizonPairSampler` -- regression. Pairs ``(z_i, z_j)`` with
   label ``|t_i - t_j|``; separations balanced across buckets up to the full
   episode horizon (or a ``max_delta`` cap, for the paper's ablation).
-* :class:`TransitionSampler` -- offline TD. Logged transitions ``(z_t, z_{t+1})``
-  with a hindsight goal ``z_g`` (a later state in the same episode) and a
-  ``done`` flag (goal reached at ``t+1``).
 * :class:`GeometricFutureSampler` -- contrastive. Anchor ``z_s`` and positive
   future ``z_{s+k}`` with ``k ~ Geom(1 - gamma)``; negatives are in-batch.
 """
@@ -31,13 +28,6 @@ class PairBatch(TypedDict):
     z_i: torch.Tensor
     z_j: torch.Tensor
     label: torch.Tensor
-
-
-class TransitionBatch(TypedDict):
-    z_t: torch.Tensor
-    z_tp1: torch.Tensor
-    z_g: torch.Tensor
-    done: torch.Tensor
 
 
 class NStepBatch(TypedDict):
@@ -132,46 +122,6 @@ class BalancedHorizonPairSampler(_BaseSampler):
             "z_i": self.z[i_idx],
             "z_j": self.z[j_idx],
             "label": torch.from_numpy(labels),
-        }
-
-
-class TransitionSampler(_BaseSampler):
-    """Logged transitions with hindsight goals for offline TD.
-
-    Returns ``z_t, z_tp1, z_g`` and a ``done`` flag (goal reached at ``t+1``).
-    Goals are later states in the same episode; a fraction are random states
-    from any episode (treated as not-done) for negative coverage.
-    """
-
-    def __init__(self, cache: LatentCache, p_random_goal: float, seed: int):
-        super().__init__(cache, seed=seed, min_len=2)
-        self.p_random_goal = p_random_goal
-        self.n = len(cache.z)
-
-    def sample(self, batch_size: int) -> TransitionBatch:
-        t_idx = np.empty(batch_size, dtype=np.int64)
-        tp1_idx = np.empty(batch_size, dtype=np.int64)
-        g_idx = np.empty(batch_size, dtype=np.int64)
-        done = np.zeros(batch_size, dtype=np.float32)
-        for b in range(batch_size):
-            e = self.ep_ids[self.rng.integers(0, len(self.ep_ids))]
-            rows = self.episodes[e]
-            L = len(rows)
-            t = int(self.rng.integers(0, L - 1))
-            t_idx[b], tp1_idx[b] = rows[t], rows[t + 1]
-            if self.rng.random() < self.p_random_goal:
-                g_idx[b] = int(self.rng.integers(0, self.n))
-                done[b] = 0.0
-            else:
-                # hindsight goal: a state at or after t+1 in the same episode
-                g_off = int(self.rng.integers(t + 1, L))
-                g_idx[b] = rows[g_off]
-                done[b] = 1.0 if g_off == t + 1 else 0.0
-        return {
-            "z_t": self.z[t_idx],
-            "z_tp1": self.z[tp1_idx],
-            "z_g": self.z[g_idx],
-            "done": torch.from_numpy(done),
         }
 
 
@@ -294,11 +244,9 @@ class GeometricFutureSampler(_BaseSampler):
 
 __all__ = [
     "BalancedHorizonPairSampler",
-    "TransitionSampler",
     "NStepGoalSampler",
     "GeometricFutureSampler",
     "FutureBatch",
     "NStepBatch",
     "PairBatch",
-    "TransitionBatch",
 ]

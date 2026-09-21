@@ -17,7 +17,8 @@ RowBatch = dict[str, Array]
 class Dataset(Protocol):
     """The Stable-WM dataset surface consumed here."""
 
-    column_names: Sequence[str]
+    @property
+    def column_names(self) -> Sequence[str]: ...
 
     def get_col_data(self, name: str) -> Array: ...
 

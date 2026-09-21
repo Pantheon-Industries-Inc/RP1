@@ -141,9 +141,4 @@ def configured_logging(log_path: str | Path, level: str) -> Iterator[Any]:
             logger.remove()
 
 
-def log_multiline(message: str, level: str) -> None:
-    for line in message.splitlines():
-        logger.log(level, line)
-
-
-__all__ = ["configured_logging", "log_multiline", "logger"]
+__all__ = ["configured_logging", "logger"]

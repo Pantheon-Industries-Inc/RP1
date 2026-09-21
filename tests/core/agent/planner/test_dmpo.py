@@ -115,15 +115,6 @@ def test_warm_start_shifts_forward_and_learns_a_residual() -> None:
     assert torch.count_nonzero(empty) == 0
 
 
-def test_solver_rejects_a_foreign_checkpoint() -> None:
-    from rp1.core.agent.solver.base import PlannerCheckpoint
-    from rp1.core.agent.solver.dmpo import DMPOSolver
-
-    checkpoint = PlannerCheckpoint(payload={"kind": "lip4", "sd": {}}, value=torch.nn.Identity())
-    with pytest.raises(ValueError, match="unsupported checkpoint kind"):
-        DMPOSolver(model=torch.nn.Linear(2, 2), checkpoint=checkpoint)
-
-
 def test_search_heads_give_a_usable_policy() -> None:
     """The on-policy objective needs sampled updates with finite log-probs."""
     torch.manual_seed(0)

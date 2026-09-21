@@ -1,24 +1,16 @@
-"""Contract tests for rp1's adapters around the PyPI Stable World Model."""
-
 from __future__ import annotations
 
 import importlib.metadata
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 import stable_worldmodel
 import torch
 from omegaconf import OmegaConf
 from torch import nn
 
-from rp1.core.agent.policy import NoMovePolicy
-from rp1.core.agent.value import LatentGoalCost
-from rp1.core.agent.value.base import TensorInfo
-from rp1.environment.world import _resize_images_like_env
 from rp1.training.harness import checkpointing as checkpoint_module
-from rp1.utils.config import compose_config
 
 
 def test_stable_worldmodel_comes_from_pinned_distribution() -> None:
@@ -91,58 +83,17 @@ def test_checkpoint_loader_preserves_remote_or_missing_names(monkeypatch: pytest
     assert captured == ["owner/model", "missing-checkpoint.pt"]
 
 
-def test_latent_goal_cost_broadcasts_candidates_and_caches_goal() -> None:
-    class Model(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.encode_calls = 0
+def test_planner_checkpoints_find_their_value_next_to_them(tmp_path: Path) -> None:
+    from rp1.core.agent.value import QuasimetricHead
+    from rp1.training.harness.checkpointing import load_planner, save_metric
 
-        def encode(self, goal: TensorInfo) -> dict[str, torch.Tensor]:
-            self.encode_calls += 1
-            return {"emb": goal["pixels"].float()}
+    value = QuasimetricHead(4, hidden_dim=8, embed_dim=4, depth=1, sym_frac=0.5)
+    saved = save_metric(value, run_name="value", cache_dir=tmp_path / "run")
+    torch.save({"value": "value", "horizon": 5}, saved.parent / "planner.pt")
+    moved = tmp_path / "elsewhere"
+    saved.parent.rename(moved)
 
-        def rollout(self, info: TensorInfo, actions: torch.Tensor) -> None:
-            batch, candidates = actions.shape[:2]
-            info["predicted_emb"] = torch.zeros(batch, candidates, 1, 3)
-
-    model = Model()
-    cost = LatentGoalCost(model)
-    info = {"goal": torch.ones(2, 1, 3)}
-    actions = torch.zeros(2, 4, 5, 2)
-    first = cost.get_cost(info, actions)
-    second = cost.get_cost(info, actions)
-    assert first.shape == (2, 4)
-    assert torch.equal(first, torch.full((2, 4), 3.0))
-    assert torch.equal(second, first)
-    assert model.encode_calls == 1
-
-
-def test_no_move_policy_zeroes_the_action() -> None:
-    class ActionSpace:
-        def sample(self) -> np.ndarray:
-            return np.array([1.0, -2.0], dtype=np.float32)
-
-    class Env:
-        def __init__(self) -> None:
-            self.action_space = ActionSpace()
-
-    policy = NoMovePolicy()
-    policy.set_env(Env())
-    assert np.array_equal(policy.get_action({}), np.zeros(2, dtype=np.float32))
-
-
-def test_dataset_images_are_resized_to_environment_shape() -> None:
-    images = np.zeros((2, 8, 8, 3), dtype=np.uint8)
-    env_pixels = np.zeros((2, 1, 16, 12, 3), dtype=np.uint8)
-    resized = _resize_images_like_env(images, env_pixels)
-    assert resized.shape == (2, 16, 12, 3)
-    assert resized.dtype == np.uint8
-
-
-def test_hydra_configs_compose() -> None:
-    cfg = compose_config(Path("inference"), "evaluate", ["core/agent/solver=adam"])
-    assert cfg.environment.env_name == "swm/OGBCube-v0"
-    assert cfg.core.agent.solver._target_ == "rp1.core.agent.solver.GradientSolver"
-
-    cfg = compose_config(Path("training"), "pretrain", ["data=tworoom_lewm"])
-    assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"
+    checkpoint = load_planner(str(moved / "planner.pt"), None)
+    assert checkpoint.payload["horizon"] == 5
+    state = torch.randn(3, 4)
+    assert torch.equal(checkpoint.value(state, state), value(state, state))

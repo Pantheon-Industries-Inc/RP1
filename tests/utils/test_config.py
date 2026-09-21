@@ -20,6 +20,9 @@ def _entrypoints() -> list[tuple[str, str, list[str]]]:
     commands += [("training", f"phases/agent/{name}", []) for name in _options("training/phases/agent")]
     commands += [("inference", "evaluate", [f"benchmark={name}"]) for name in _options("inference/benchmark")]
     commands += [("training/data", "prepare", [f"job={name}"]) for name in _options("training/data/job")]
+    for group in ("solver", "policy", "value"):
+        options = _options(f"core/agent/{group}")
+        commands += [("inference", "evaluate", [f"core/agent/{group}={name}"]) for name in options]
     return commands
 
 
@@ -106,3 +109,12 @@ def test_wandb_mode_is_validated() -> None:
     validate_config(offline)
     with pytest.raises(ValueError, match="logging.wandb.mode"):
         validate_config(invalid)
+
+
+def test_hydra_configs_compose() -> None:
+    cfg = compose_config(Path("inference"), "evaluate", ["core/agent/solver=adam"])
+    assert cfg.environment.env_name == "swm/OGBCube-v0"
+    assert cfg.core.agent.solver._target_ == "rp1.core.agent.solver.GradientSolver"
+
+    cfg = compose_config(Path("training"), "pretrain", ["data=tworoom_lewm"])
+    assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"

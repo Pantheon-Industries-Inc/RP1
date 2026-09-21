@@ -53,7 +53,7 @@ docstring-code-format = true
 testpaths = ["tests"]
 timeout = 120
 # `pixi run test -n0` puts a single failing test back in one process, where its output is readable.
-addopts = ["-ra", "--strict-markers", "-m", "not slow", "-n", "auto"]
+addopts = ["-ra", "--strict-markers", "--import-mode=importlib", "-m", "not slow", "-n", "auto"]
 markers = [
     "slow: long-running tests skipped by default",
 ]

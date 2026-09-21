@@ -4,7 +4,6 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import stable_pretraining as spt
-import torch
 from torchvision.transforms import v2
 
 
@@ -17,11 +16,6 @@ def nested_resize(size: int, source: str, target: str) -> Any:
     return nested_transform(v2.Resize(size), source, target)
 
 
-def nested_clip(bound: float, source: str, target: str) -> Any:
-    limit = float(bound)
-    return nested_transform(lambda value: torch.as_tensor(value).clamp(-limit, limit), source, target)
-
-
 def image_preprocessor(source: str, target: str, image_size: int) -> Any:
     stats = spt.data.dataset_stats.ImageNet
     compose = cast(Callable[..., Any], spt.data.transforms.Compose)
@@ -32,4 +26,4 @@ def image_preprocessor(source: str, target: str, image_size: int) -> Any:
     )
 
 
-__all__ = ["image_preprocessor", "nested_clip", "nested_resize", "nested_transform"]
+__all__ = ["image_preprocessor", "nested_resize", "nested_transform"]

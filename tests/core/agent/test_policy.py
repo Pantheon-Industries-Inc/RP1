@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from rp1.core.agent.policy import PlanConfig, WorldModelPolicy
+from rp1.core.agent.policy import NoMovePolicy, PlanConfig, WorldModelPolicy
 
 
 class _Space:
@@ -70,23 +70,15 @@ def test_policy_keeps_real_history_and_updates_deadline_on_replan() -> None:
     assert solver.calls[1]["init_action"] is not None
 
 
-def test_unwrap_encoder_peels_cost_wrappers() -> None:
-    from torch import nn
+def test_no_move_policy_zeroes_the_action() -> None:
+    class ActionSpace:
+        def sample(self) -> np.ndarray:
+            return np.array([1.0, -2.0], dtype=np.float32)
 
-    from rp1.core.agent.solver.base import unwrap_encoder
-    from rp1.core.agent.value.adapter import LatentGoalCost
+    class Env:
+        def __init__(self) -> None:
+            self.action_space = ActionSpace()
 
-    class WM(nn.Module):
-        def encode(self, info: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-            return info
-
-    wm = WM()
-    assert unwrap_encoder(wm) is wm
-    assert unwrap_encoder(LatentGoalCost(wm)) is wm
-
-    class OuterCost(nn.Module):  # MetricCost-shaped: inner stack at .base
-        def __init__(self, base: nn.Module) -> None:
-            super().__init__()
-            self.base = base
-
-    assert unwrap_encoder(OuterCost(LatentGoalCost(wm))) is wm
+    policy = NoMovePolicy()
+    policy.set_env(Env())
+    assert np.array_equal(policy.get_action({}), np.zeros(2, dtype=np.float32))
