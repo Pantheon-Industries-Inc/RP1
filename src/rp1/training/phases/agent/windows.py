@@ -1,17 +1,13 @@
-"""Latent-window sampler for planner training on a frozen world model.
+"""Planning problems drawn from a latent cache and its action h5, for the baseline trainers.
 
-Mirrors the sampling contract of :mod:`rp1.training.phases.agent.rp1_ac` — three-frame latent
-history from a frameskip-matched (fs5) cache, the two preceding real action
-blocks from the action h5, and a goal drawn either from the same episode
-within ``max_delta`` blocks or (with probability ``p_cross``) from a different
-episode. ``rp1_ac`` keeps its own inline copy so the paper pipeline's RNG
-stream stays frozen; this module serves the baseline trainers
-(:mod:`rp1.training.phases.agent.dmpo`).
+A problem is a three-frame latent history from a cache at one row per action
+block, the two preceding real action blocks, and a goal from the same episode
+within ``max_delta`` blocks or, with probability ``p_cross``, from another
+episode. This is the sampling of :mod:`rp1.training.phases.agent.rp1_ac`, which
+keeps its own copy so that its random stream is unaffected by this module.
 
-The h5 read is nan-aware: several public datasets (cube, reacher) pad every
-episode's terminal step with NaN actions, and plain ``mean``/``std`` would
-poison every normalized action (see the reacher caveat in the replication
-sheet).
+Action statistics ignore NaNs: several public datasets pad every episode's
+terminal step with NaN actions.
 """
 
 from contextlib import suppress
@@ -48,12 +44,12 @@ class WindowSampler:
         cache: str,
         h5: str,
         horizon: int,
-        max_delta: int = 10,
-        p_cross: float = 0.3,
-        frameskip: int = 5,
-        device: str | torch.device = "cpu",
-        mmap: bool = True,
-        seed: int = 0,
+        max_delta: int,
+        p_cross: float,
+        frameskip: int,
+        device: str | torch.device,
+        mmap: bool,
+        seed: int,
     ) -> None:
         self.horizon = int(horizon)
         self.max_delta = int(max_delta)
@@ -96,16 +92,14 @@ class WindowSampler:
     def latent_dim(self) -> int:
         return int(self.z.shape[-1])
 
-    def action_bounds(self, action_range: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    def action_bounds(self, action_range: float) -> tuple[np.ndarray, np.ndarray]:
         """The environment's action limits in the trainer's z-scored units.
 
         Actions are z-scored by the dataset statistics, so the env's raw box
         ``[-action_range, action_range]`` maps to a per-dimension asymmetric
-        range. Planners that clip to a symmetric constant instead are searching
-        a different set than the environment allows — and, for the sampling
-        baselines, a different set than CEM/MPPI search. Blocks are laid out
-        frameskip-major (``blocks()`` flattens frameskip consecutive rows), so
-        the per-dimension bounds tile.
+        range; a symmetric clip would search a different set than the environment
+        allows. Blocks flatten ``frameskip`` consecutive steps, so the per-dimension
+        bounds tile.
         """
         low = (-action_range - self.action_mean) / self.action_std
         high = (action_range - self.action_mean) / self.action_std
@@ -130,9 +124,8 @@ class WindowSampler:
             t = int(self.rng.integers(2, length - 2))
             z_hist.append(torch.stack([self.z[rows[t - 2]], self.z[rows[t - 1]], self.z[rows[t]]]))
             a_hist.append(np.stack([self._block(episode, t - 2), self._block(episode, t - 1)]))
-            # clamp at length - 2, the last FULL in-episode block: block
-            # length - 1 starts at the episode's final primitive step, so its
-            # frameskip-long read spills into the next episode.
+            # clamp at length - 2, the last full block in the episode: block length - 1
+            # starts at the final primitive step, so its read spills into the next episode
             a_ref.append(np.stack([self._block(episode, min(t + k, length - 2)) for k in range(self.horizon)]))
             if self.rng.random() < self.p_cross:
                 other = int(self.ep_ids[self.rng.integers(len(self.ep_ids))])

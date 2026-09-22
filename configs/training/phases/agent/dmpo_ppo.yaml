@@ -1,6 +1,6 @@
 # @package _global_
-# Offline DMPO: the paper's PPO objective closed inside the frozen world model
-# (no environment interaction). See docs/dmpo/README_dmpo.md.
+# Offline DMPO: the paper's PPO objective closed inside the frozen world model,
+# with no environment interaction.
 defaults:
   - /core/agent/planner: dmpo
   - /core/agent/value: temporal_distance
@@ -11,10 +11,10 @@ runtime:
   device: auto
   seed: 0
 training:
-  wm: ???            # frozen pretrained world model (LeWM/PLDM layout)
-  cache: ???         # frameskip-matched (fs5) latent cache
-  h5: ???            # action-only h5 produced by build_action_h5
-  init_value: ???    # frozen quasimetric critic (value_td): reward and plan cost
+  wm: ???
+  cache: ???         # latent cache at one row per action block
+  h5: ???            # the build_action_h5 job's output
+  init_value: ???    # the frozen offline value (value_td): reward and plan cost
   cache_mmap: true
   ppo_iterations: 400    # policy-improvement rounds (reference: ~1000 on-system)
   batch: 16              # imagined problems per round
@@ -23,15 +23,16 @@ training:
   frameskip: 5
   max_delta: 10
   p_cross: 0.3
-  gamma: 0.99            # reference PPO discount
-  gae_lambda: 0.95       # reference GAE parameter
-  clip_epsilon: 0.2      # reference clipped ratio
-  entropy_penalty: 0.0   # reference
+  # gamma through critic_hidden follow the reference implementation unless noted
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_epsilon: 0.2
+  entropy_penalty: 0.0
   ppo_epochs: 4
   minibatch: 32
   actor_lr: 1e-5         # reference used 1e-6 with far more on-system data
-  critic_lr: 1e-4        # reference
-  critic_hidden: 1024    # reference critic width
+  critic_lr: 1e-4
+  critic_hidden: 1024
   max_grad_norm: 1.0
   cost_chunk: 0
 output:

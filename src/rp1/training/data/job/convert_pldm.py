@@ -1,20 +1,17 @@
 """Rename a PLDM checkpoint's keys to the LeWM module layout.
 
-The authors' PLDM export predates a stable_pretraining ``vit_hf`` refactor:
-its encoder is stored under HF ViTModel names
-(``encoder.encoder.layer.N.attention.attention.query`` ...) while the current
-LeWM class expects ``encoder.layers.N.attention.q_proj``. Both are the SAME
-architecture (vit_hf tiny / patch14 / 224) — verified 2026-08-06: 303 keys map
-1:1 with identical shapes. All non-encoder components already share names.
+The authors' PLDM export stores its encoder under Hugging Face ViTModel names
+(``encoder.encoder.layer.N.attention.attention.query`` ...), while LeWM expects
+``encoder.layers.N.attention.q_proj``. The architectures are the same (ViT-tiny,
+patch 14, 224px), every key maps one to one, and the other components already
+share names.
 
-The output pairs with a LeWM-target ``config.json`` (the tracked
-``assets/core/world_model/cube_pldm/config.json`` is one) and then loads
-through every LeWM code path unchanged.
+Pair the output with a LeWM ``config.json``, such as the one in
+``assets/core/world_model/cube_pldm``.
 
 Example::
 
-    pixi run prepare job=convert_pldm preparation.src=PLDM_OgBench/weights.pt \
-        dst=pldm_cube/weights.pt
+    pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<weights.pt>
 """
 
 import re

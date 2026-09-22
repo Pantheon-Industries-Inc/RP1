@@ -1,26 +1,20 @@
-"""Composed, in-process rp1 replication pipeline.
+"""The agent pipeline: every stage of training rp1 on a frozen world model, in one run.
 
-One command reproduces the paper's full rp1 training stack on top of a frozen
-pretrained world model:
+1. ``cache``     -- encode the dataset into a latent cache, one row per primitive step
+2. ``subsample`` -- keep one row per action block of ``frameskip`` steps
+3. ``actions``   -- extract the action h5 the planner trainer indexes
+4. ``value``     -- the offline goal-conditioned quasimetric value (``metric`` phase)
+5. ``planner``   -- the planner, trained actor-critic through the frozen world model (``rp1_ac`` phase)
 
-1. ``cache``     — encode the offline dataset into a per-frame (fs1) latent cache
-2. ``subsample`` — horizon-match the cache to the planner's frameskip (fs5)
-3. ``actions``   — extract the action-only h5 the planner trainer indexes
-4. ``value``     — offline goal-conditioned quasimetric critic (TD + HER + expectile)
-5. ``planner``   — the rp1 plan refiner, trained actor-critic through the frozen WM
+Caches and the action h5 go to ``cache_directory`` and are reused across runs, so
+``training.stages=[value,planner]`` iterates on the recipe without re-encoding.
+``training.value.*`` and ``training.planner.*`` override the two phase configs.
 
-Example (OGBench Cube on the tracked LeWM checkpoint)::
+Example::
 
-    pixi run training model=rp1 training.wm=assets/core/world_model/cube_lewm \
+    pixi run posttrain training.wm=assets/core/world_model/cube_lewm \
         training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
         training.name=cube_lewm training.planner.action_limit=1.6
-
-Stages write reusable artifacts (caches, h5) into ``cache_directory`` and
-checkpoints into the run's ``checkpoints/`` directory. Re-runs can select
-stages, e.g. ``training.stages=[value,planner]`` to iterate on the value
-or planner recipe against existing caches. Per-stage hyperparameters are
-overridable through the ``value.*`` and ``planner.*`` subtrees; their defaults
-are the paper's OGBench Cube recipe.
 """
 
 from pathlib import Path
@@ -37,8 +31,6 @@ STAGES = ("cache", "subsample", "actions", "value", "planner")
 
 def _stage(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
     """Compose a stage and execute it inside the pipeline's parent run."""
-    # run_hydra closes its Hydra context after composing the root config, so
-    # each stage composes under its own context.
     with initialize_config_dir(config_dir=str(get_config_root()), version_base=None):
         stage = compose(config_name=config_name)
     with open_dict(stage):
@@ -123,17 +115,15 @@ def run(cfg: DictConfig) -> None:
     window_lag = args.value.get("window_lag")
     windowed = window_frames is not None and int(window_frames) > 1
     if windowed and (window_lag is None or int(window_lag) != int(args.frameskip)):
-        # imagined latents are one action block apart at plan time, so a
-        # window teacher trained at any other spacing would never be queried
-        # with the windows it was trained on
+        # imagined latents are one action block apart at plan time, so a window
+        # value trained at any other spacing never sees the windows it was trained on
         raise ValueError(
             f"value.window_frames={window_frames} requires value.window_lag == "
             f"frameskip ({args.frameskip}), got {window_lag}"
         )
     if "value" in stages:
         value_overrides = _overrides(args.value)
-        # `depth` is a value-architecture knob (MRN head), not a trainer flag;
-        # route it onto the composed value group where training/metric reads it.
+        # `depth` belongs to the value architecture, not the trainer
         value_depth = value_overrides.pop("depth", None)
         if value_depth is not None:
             value_overrides["core.agent.value.depth"] = value_depth
@@ -153,9 +143,7 @@ def run(cfg: DictConfig) -> None:
         )
     if "planner" in stages:
         planner_overrides = _overrides(args.planner)
-        # `action_limit` and `iterations` are planner-architecture knobs, not
-        # trainer flags; route them onto the composed planner group where
-        # rp1_ac reads them.
+        # `action_limit` and `iterations` belong to the planner architecture, not the trainer
         action_limit = planner_overrides.pop("action_limit")
         planner_overrides["core.agent.planner.action_limit"] = action_limit
         iterations = planner_overrides.pop("iterations", None)
@@ -170,8 +158,7 @@ def run(cfg: DictConfig) -> None:
                 "training.h5": actions_h5,
                 "training.wm": str(args.wm),
                 "training.init_value": value_checkpoint,
-                # a windowed value stage hands the planner a windowed init_value;
-                # forward the lag so rp1_ac can validate it against the action block
+                # rp1_ac checks a window value's lag against the action block
                 "training.window_lag": window_lag,
                 "runtime.seed": args.seed,
             },
@@ -181,7 +168,8 @@ def run(cfg: DictConfig) -> None:
                 for key, value in planner_overrides.items()
             },
         )
+    planner = Path(cfg.run.checkpoints) / "planner.pt"
     logger.success(
-        "rp1 pipeline finished. Evaluate with: "
-        f"pixi run inference core/solver=rp1 core.solver.checkpoint.path={Path(cfg.run.checkpoints) / 'planner.pt'}"
+        f"rp1 pipeline finished. Evaluate with: pixi run evaluate core/agent/solver=rp1 "
+        f"core.agent.solver.checkpoint.path={planner}"
     )

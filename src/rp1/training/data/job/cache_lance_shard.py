@@ -1,17 +1,14 @@
-"""Row-range sharding wrapper around the repo's encode_dataset — one shard per
-GPU, merge with merge_caches.py. Reuses the exact featurizer (build_featurizer)
-so shards are numerically identical to a single-GPU cache_latents.py run.
+"""Encode rows ``[row_start, row_end)`` of a dataset into a latent cache shard.
 
-Rows are (episode, step) flattened; shard on episode boundaries:
-row_start = ep_start * steps_per_ep (mixture: 201).
+One shard per GPU; shards use the same featurizer as ``cache_latents``, so they
+match a single-process cache. Rows are flattened (episode, step) pairs, so shard
+on episode boundaries.
 
-Usage (4-way over the 10k-ep mixture):
-  for i in 0 1 2 3; do
-    CUDA_VISIBLE_DEVICES=$i pixi run prepare job=cache_lance_shard preparation.wm=<dir> \
-      preparation.dataset=mix.lance row_start=<start> row_end=<end> \
-      preparation.state_key=privileged/block_0_pos preparation.out=<shard.pt>
-  done; wait
-  python3 merge_caches.py fs1.pt fs5.pt shard0.pt shard1.pt shard2.pt shard3.pt
+Example::
+
+    pixi run prepare job=cache_lance_shard preparation.wm=<world model> \
+        preparation.dataset=<dataset> preparation.row_start=<start> preparation.row_end=<end> \
+        preparation.out=<shard.pt>
 """
 
 from pathlib import Path

@@ -4,9 +4,9 @@ DMPO (Sacks et al., ICRA 2024, arXiv:2310.04590) learns the update rule of an
 MPC optimizer: at every decision it samples ``N`` plans, rolls them out, and an
 MLP turns the ``N`` costs plus the current sampling distribution into the next
 distribution (:class:`rp1.core.agent.planner.dmpo.DMPONet`). This trainer fits that
-rule in the same setting the repository's own learned planner is trained in —
-frozen pretrained world model, frozen quasimetric critic supplied through
-``init_value``, latent windows drawn from the offline cache:
+rule in the setting rp1's planner is trained in: frozen pretrained world model,
+frozen quasimetric value supplied through ``init_value``, latent windows drawn
+from the offline cache:
 
     loss = V( z_T( mu_K ), z_g )
 
@@ -15,27 +15,26 @@ inner steps. The ``N`` sampled rollouts are computed without gradients (their
 costs are *features* of the update rule); the gradient reaches the actor and
 shift networks through ``mu_K`` and the differentiable world-model unroll.
 
-**Deliberate deviation from the paper.** DMPO is published with PPO, because
-its costs come from a real quadrotor and no analytic gradient exists. Here the
-world model is differentiable, so the same networks are trained by pathwise
-gradients — the convention this repository uses for rp1/rp1, and the reason a
-DMPO row is comparable to an rp1 row: identical data, identical frozen critic,
-identical objective, differing only in the learned planning procedure. The
-actor's stochastic search distributions (PPO's exploration noise) are therefore
-absent; everything on the forward path is the reference computation.
+**Deviation from the paper.** DMPO is published with PPO, because its costs
+come from a real quadrotor and no analytic gradient exists. The world model here
+is differentiable, so the same networks are trained by pathwise gradients, as
+rp1's planner is: identical data, frozen value and objective, differing only in
+the learned planning procedure. The actor's stochastic search distributions
+(PPO's exploration noise) are therefore absent; everything on the forward path
+is the reference computation. :mod:`rp1.training.phases.agent.dmpo_ppo` trains
+with the paper's objective.
 
 The critic is never updated here: DMPO is a baseline whose job is to isolate
 the planner, so it plans against the same offline critic (``value_td``) the
 other baselines are evaluated with.
 
-Example (TwoRoom on the tracked LeJEPA base, after ``model=rp1 skip=[planner]``
-has produced the caches and ``value_td``)::
+Example, once the agent pipeline's value stage has produced the caches and ``value_td``::
 
-    pixi run train model=dmpo \
-        wm=assets/core/world_model/tworoom_lewm \
-        cache=$RP1_DATA_HOME/caches/tworoom_fs5.pt \
-        h5=$RP1_DATA_HOME/caches/tworoom_actions.h5 \
-        init_value=logs/<date>/<time>/checkpoints/value_td
+    pixi run posttrain --config-name phases/agent/dmpo \
+        training.wm=assets/core/world_model/tworoom_lewm \
+        training.cache=$RP1_DATA_HOME/caches/tworoom_fs5.pt \
+        training.h5=$RP1_DATA_HOME/caches/tworoom_actions.h5 \
+        training.init_value=<run>/checkpoints/value_td
 """
 
 from collections.abc import Callable
@@ -53,28 +52,19 @@ from rp1.training.harness.checkpointing import load_metric, load_pretrained, sav
 from rp1.training.harness.schedule import cosine_interpolate
 from rp1.training.phases.agent.windows import WindowSampler
 from rp1.utils.config import phase_config
+from rp1.utils.device import pick_device
 from rp1.utils.logging import logger
-
-
-def _device(requested: str) -> str:
-    if requested and requested != "auto":
-        return requested
-    if torch.cuda.is_available():
-        return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
 
 
 def run(cfg: DictConfig) -> None:
     a = phase_config(cfg, "training", cfg.core.agent.planner)
     if not isinstance(a, DictConfig):
         raise TypeError("merged planner configuration must be a mapping")
-    for short, long in {"iters": "iterations", "amax": "action_limit"}.items():
-        a[short] = a[long]
     if not a.init_value:
-        raise ValueError("model=dmpo trains against a frozen critic: pass init_value=<value_td>")
+        raise ValueError("the dmpo phase trains against a frozen value: pass training.init_value=<value_td>")
     if a.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
         raise ValueError(f"unsupported temporal objective: {a.temporal_objective}")
-    dev = _device(str(a.device))
+    dev = pick_device(str(a.device))
     torch.manual_seed(a.seed)
 
     wm_module = load_pretrained(a.wm).to(dev).eval()
@@ -110,11 +100,10 @@ def run(cfg: DictConfig) -> None:
     critic.requires_grad_(False)
     value = cast(ValueFunction, critic)
 
-    # Faithful bounds: the env's own action limits, not a tuned scalar clip.
-    # action_range=null falls back to the symmetric `action_limit`.
+    # the environment's own action limits; action_range=null falls back to a symmetric action_limit
     if a.action_range is None:
         action_lows = action_highs = None
-        logger.info(f"DMPO clipping plans to the symmetric fallback +-{float(a.amax)}")
+        logger.info(f"DMPO clipping plans to the symmetric fallback +-{float(a.action_limit)}")
     else:
         low, high = sampler.action_bounds(float(a.action_range))
         action_lows = torch.from_numpy(low).float()
@@ -128,7 +117,7 @@ def run(cfg: DictConfig) -> None:
         a_dim=sampler.a_dim,
         num_samples=a.num_samples,
         hidden=a.hidden,
-        amax=a.amax,
+        amax=a.action_limit,
         init_std=a.init_std,
         temperature=a.temperature,
         step_size=a.step_size,
@@ -206,10 +195,10 @@ def run(cfg: DictConfig) -> None:
             # a preceding decision, executed in imagination, so the shift model
             # is trained on the parameters it sees at deployment
             with torch.no_grad():
-                previous, previous_std, _ = net.plan(cost_fn(z_hist, a_hist, z_goal), mean, std, a.iters)
+                previous, previous_std, _ = net.plan(cost_fn(z_hist, a_hist, z_goal), mean, std, a.iterations)
                 z_hist, a_hist = advance(z_hist, a_hist, previous, int(a.train_receding))
             mean, std = net.warm_start(previous, previous_std, int(a.train_receding))
-        mean, std, history = net.plan(cost_fn(z_hist, a_hist, z_goal), mean, std, a.iters)
+        mean, std, history = net.plan(cost_fn(z_hist, a_hist, z_goal), mean, std, a.iterations)
         final = score(z_hist, a_hist, z_goal, mean).mean()
         loss = final
         if a.mean_weight > 0 and len(history) > 1:
@@ -243,10 +232,10 @@ def run(cfg: DictConfig) -> None:
             "z_dim": sampler.latent_dim,
             "horizon": int(a.horizon),
             "a_dim": sampler.a_dim,
-            "iters": int(a.iters),
+            "iters": int(a.iterations),
             "num_samples": int(a.num_samples),
             "hidden": int(a.hidden),
-            "amax": float(a.amax),
+            "amax": float(a.action_limit),
             "action_range": None if a.action_range is None else float(a.action_range),
             "init_std": float(a.init_std),
             "temperature": float(a.temperature),

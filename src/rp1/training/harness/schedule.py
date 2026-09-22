@@ -1,4 +1,4 @@
-"""Small shared utilities used by multiple training entrypoints."""
+"""Learning-rate and coefficient schedules."""
 
 from __future__ import annotations
 

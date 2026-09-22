@@ -1,16 +1,14 @@
-"""Build the two Reacher HDF5 files from a Stable World Model dataset:
+"""Build the two Reacher h5 files from a Stable-WM dataset.
 
-1. train h5 (``train_out``): ALL episodes, scalar columns only (action, qpos,
-   qvel, ...), no pixels. Feeds rp1_ac, which indexes ep_offset BY
-   EPISODE ID (ids come from the latent cache built over the same lance), so
-   ep_len/ep_offset are id-indexed arrays. ~50 MB.
-2. eval h5 (``eval_out``): first ``eval_episodes`` episode blocks in FILE order,
-   all columns including decoded pixels. Feeds eval_wm.py (task replay + goal
-   images + z-stats); its HDF5Dataset consumes ep_len/ep_offset positionally.
-   Sized to fit the volume (full 10k x 224px would be ~300 GB).
+1. ``train_out``: every episode's scalar columns (action, qpos, qvel, ...), no
+   pixels. ``rp1_ac`` indexes ``ep_offset`` by episode id (the latent cache's ids),
+   so ``ep_len`` and ``ep_offset`` are id-indexed.
+2. ``eval_out``: the first ``eval_episodes`` episodes in file order with every
+   column, pixels decoded, for evaluation (task replay, goal images, action
+   statistics); its reader consumes ``ep_len`` and ``ep_offset`` positionally.
 
-Both get explicit episode_idx/step_idx datasets (eval_wm.episode_col needs
-them; the generic hdf5 writer only stores ep_len/ep_offset).
+Both carry explicit ``episode_idx`` and ``step_idx`` datasets, which the generic
+h5 writer does not store.
 """
 
 from io import BytesIO

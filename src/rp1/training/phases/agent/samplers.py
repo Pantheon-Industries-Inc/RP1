@@ -1,17 +1,12 @@
-"""Trajectory pair/transition samplers over a :class:`LatentCache`.
+"""Samplers of training pairs over a :class:`LatentCache`, one per value learner.
 
-The paper emphasises that "sampling is part of the method, not an implementation
-detail": horizon-matched supervision draws *balanced, full-horizon* temporal
-separations so the metric sees the same long-range reachability scale that the
-terminal selector faces at planning time.
+Sampling is part of the method: horizon-matched supervision draws balanced,
+full-horizon temporal separations, so the value sees the same long-range
+reachability scale the planner queries.
 
-Three samplers, one per learner:
-
-* :class:`BalancedHorizonPairSampler` -- regression. Pairs ``(z_i, z_j)`` with
-  label ``|t_i - t_j|``; separations balanced across buckets up to the full
-  episode horizon (or a ``max_delta`` cap, for the paper's ablation).
-* :class:`GeometricFutureSampler` -- contrastive. Anchor ``z_s`` and positive
-  future ``z_{s+k}`` with ``k ~ Geom(1 - gamma)``; negatives are in-batch.
+* :class:`BalancedHorizonPairSampler` -- regression: pairs ``(z_i, z_j)`` labelled ``|t_i - t_j|``.
+* :class:`NStepGoalSampler` -- TD: n-step transitions with hindsight goals.
+* :class:`GeometricFutureSampler` -- contrastive: an anchor and a geometric-future positive.
 """
 
 from __future__ import annotations
@@ -37,8 +32,7 @@ class NStepBatch(TypedDict):
     n_eff: torch.Tensor
     reached: torch.Tensor
     dist: torch.Tensor
-    # cache row indices of z_t / z_tn / z_g — window critics rebuild their
-    # m-frame inputs from the dense cache at these rows (see rp1_ac).
+    # cache rows of z_t / z_tn / z_g, from which window values rebuild their inputs
     t_idx: torch.Tensor
     tn_idx: torch.Tensor
     g_idx: torch.Tensor
@@ -135,6 +129,9 @@ class NStepGoalSampler(_BaseSampler):
         same episode at a **balanced full-horizon** offset ``δ`` (paper's lesson applied to HER),
       * ``reached`` / ``dist``: if the in-episode goal is within ``n_eff`` steps, the exact
         distance ``δ`` is known (Monte-Carlo target); otherwise bootstrap from ``z_tn``.
+
+    ``near_frac`` of the in-episode goals are drawn 1..``near_max`` steps ahead, so the last
+    steps before a goal are fitted too; balanced buckets rarely land there.
     """
 
     def __init__(
@@ -149,11 +146,6 @@ class NStepGoalSampler(_BaseSampler):
         near_frac: float,
         near_max: int,
     ) -> None:
-        """
-        ``near_frac`` draws that fraction of in-episode hindsight goals
-        1..``near_max`` steps ahead so the last steps are actually fitted
-        (balanced full-horizon buckets put a few percent of pairs there).
-        """
         super().__init__(cache, seed=seed, min_len=2)
         self.n = n_step
         self.max_delta = max_delta

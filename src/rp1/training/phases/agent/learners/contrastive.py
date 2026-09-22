@@ -1,7 +1,7 @@
 """Contrastive value learning (contrastive RL / InfoNCE).
 
-We learn a critic ``f(z_s, z_g) = phi(z_s) . psi(z_g)`` whose value is monotone
-in discounted reachability, following contrastive RL (Eysenbach et al.). For a
+A critic ``f(z_s, z_g) = phi(z_s) . psi(z_g)``, monotone in discounted
+reachability, following contrastive RL (Eysenbach et al.). For a
 batch of anchors ``S`` and geometric-future goals ``G`` (positives on the
 diagonal), the symmetric InfoNCE objective is::
 
@@ -75,4 +75,4 @@ def fit(cache: LatentCache, cfg: ContrastiveConfig, device: str) -> ContrastiveC
     return critic
 
 
-__all__ = ["ContrastiveCritic", "ContrastiveConfig", "fit"]
+__all__ = ["ContrastiveConfig", "fit"]

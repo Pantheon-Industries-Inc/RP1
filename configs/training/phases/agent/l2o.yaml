@@ -1,7 +1,6 @@
 # @package _global_
-# L2O-MPC baseline (arXiv:2212.02603): DAgger-imitate a many-sample MPPI
-# expert through the frozen world model and frozen critic.
-# See docs/l2o/README_l2o.md.
+# L2O-MPC baseline (arXiv:2212.02603): DAgger imitation of a many-sample MPPI
+# expert through the frozen world model and frozen value.
 defaults:
   - /core/agent/planner: l2o
   - /core/agent/value: temporal_distance
@@ -12,10 +11,10 @@ runtime:
   device: auto
   seed: 0
 training:
-  wm: ???            # frozen pretrained world model (LeWM/PLDM layout)
-  cache: ???         # frameskip-matched (fs5) latent cache
-  h5: ???            # action-only h5 produced by build_action_h5
-  init_value: ???    # frozen quasimetric critic (value_td) -- L2O never updates it
+  wm: ???
+  cache: ???         # latent cache at one row per action block
+  h5: ???            # the build_action_h5 job's output
+  init_value: ???    # the offline value (value_td); L2O never updates it
   cache_mmap: true
   steps: 2000
   batch: 16

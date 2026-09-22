@@ -1,10 +1,8 @@
-"""Collect a mixed TwoRoom dataset: expert + random exploration.
+"""Collect a mixed TwoRoom dataset of expert and random episodes.
 
-The random episodes make the agent collide with the central wall, so a learned
-world model can model the wall. This is what surfaces the paper's phenomenon:
-with an accurate WM, blocked plans yield terminals that stay on the wrong side
-of the wall, where raw latent (Euclidean) distance mis-ranks candidates but a
-reachability-trained TRM metric does not.
+The random episodes run into the central wall, so a world model trained on them
+learns the wall: blocked plans then end on the wrong side of it, where latent
+Euclidean distance mis-ranks them and a learned reachability value does not.
 
 Example::
 

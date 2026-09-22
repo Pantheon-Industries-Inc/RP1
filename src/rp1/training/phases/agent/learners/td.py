@@ -1,8 +1,8 @@
 """Offline TD learning of a goal-conditioned reachability (quasi)metric.
 
-We learn a goal-conditioned temporal-distance value ``d(z, z_g)`` by **n-step**
-distance TD with **HER** hindsight goals (balanced full-horizon + cross-episode),
-optionally on a **quasimetric** head so long cross-room distances *stitch*:
+A goal-conditioned temporal-distance value ``d(z, z_g)``, learned by n-step
+distance TD with hindsight goals (balanced full-horizon and cross-episode),
+optionally on a quasimetric head so long cross-room distances stitch:
 
     n-step target (distance):
         reached within n_eff steps  ->  target = δ            (Monte-Carlo, exact)

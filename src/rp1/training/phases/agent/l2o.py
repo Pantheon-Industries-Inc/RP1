@@ -2,9 +2,9 @@
 
 L2O-MPC (Sacks & Boots, ICRA 2022, arXiv:2212.02603) learns the update rule
 of a sampling-based MPC optimizer as a gated replacement of the hand-written
-MPPI step (:class:`rp1.core.agent.planner.l2o.L2ONet`). Its training method — unlike
-DMPO's PPO or this repository's own pathwise recipe — transfers to the offline
-setting *without modification*: the learner imitates an MPPI **expert that is
+MPPI step (:class:`rp1.core.agent.planner.l2o.L2ONet`). Unlike DMPO's PPO or
+rp1's pathwise training, its training method transfers to the offline setting
+without modification: the learner imitates an MPPI **expert that is
 the same optimizer with a larger sample budget**, and that expert is exactly
 computable here (the hand-written update through the frozen world model and
 the frozen critic). No policy gradient, no gradient through the rollouts:
@@ -21,23 +21,22 @@ Per training step, one planning problem batch runs ``iterations`` inner steps:
 so early training visits the expert's iterate states (the paper's bootstrap)
 and later training visits the learner's own.
 
-The paper's sequential state is the receding-horizon loop with warm-start
-shift; this repository's evaluation protocol is open loop (cold start every
-decision), so the iterate sequence here is the deployed inner loop itself —
-the same ``K`` chained updates the solver runs. See docs/l2o/README_l2o.md.
+The paper's sequential state is the receding-horizon loop with a warm-start
+shift; the evaluation protocol here is open loop (cold start every decision), so
+the iterate sequence is the deployed inner loop itself, the same ``K`` chained
+updates the solver runs.
 
 The critic is never updated here: L2O-MPC is a baseline whose job is to
 isolate the planner, so it plans against the same offline critic
 (``value_td``) the other baselines are evaluated with.
 
-Example (TwoRoom on the tracked LeJEPA base, after ``model=rp1 skip=[planner]``
-has produced the caches and ``value_td``)::
+Example, once the agent pipeline's value stage has produced the caches and ``value_td``::
 
-    pixi run train model=l2o \
-        wm=assets/core/world_model/tworoom_lewm \
-        cache=$RP1_DATA_HOME/caches/tworoom_fs5.pt \
-        h5=$RP1_DATA_HOME/caches/tworoom_actions.h5 \
-        init_value=logs/<date>/<time>/checkpoints/value_td
+    pixi run posttrain --config-name phases/agent/l2o \
+        training.wm=assets/core/world_model/tworoom_lewm \
+        training.cache=$RP1_DATA_HOME/caches/tworoom_fs5.pt \
+        training.h5=$RP1_DATA_HOME/caches/tworoom_actions.h5 \
+        training.init_value=<run>/checkpoints/value_td
 """
 
 import copy
@@ -57,6 +56,7 @@ from rp1.training.harness.checkpointing import load_metric, load_pretrained, sav
 from rp1.training.harness.schedule import cosine_interpolate
 from rp1.training.phases.agent.windows import WindowSampler
 from rp1.utils.config import phase_config
+from rp1.utils.device import pick_device
 from rp1.utils.logging import logger
 
 __all__ = ["dagger_beta"]
@@ -70,27 +70,17 @@ def dagger_beta(step: int, steps: int, rounds: int, decay: float) -> float:
     return float(decay**k)
 
 
-def _device(requested: str) -> str:
-    if requested and requested != "auto":
-        return requested
-    if torch.cuda.is_available():
-        return "cuda"
-    return "mps" if torch.backends.mps.is_available() else "cpu"
-
-
 def run(cfg: DictConfig) -> None:
     a = phase_config(cfg, "training", cfg.core.agent.planner)
     if not isinstance(a, DictConfig):
         raise TypeError("merged planner configuration must be a mapping")
-    for short, long in {"iters": "iterations", "amax": "action_limit"}.items():
-        a[short] = a[long]
     if not a.init_value:
-        raise ValueError("model=l2o trains against a frozen critic: pass init_value=<value_td>")
+        raise ValueError("the l2o phase trains against a frozen value: pass training.init_value=<value_td>")
     if a.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
         raise ValueError(f"unsupported temporal objective: {a.temporal_objective}")
     if int(a.expert_samples) < int(a.num_samples):
         raise ValueError("the DAgger expert must not be weaker than the learner: expert_samples >= num_samples")
-    dev = _device(str(a.device))
+    dev = pick_device(str(a.device))
     torch.manual_seed(a.seed)
 
     wm_module = load_pretrained(a.wm).to(dev).eval()
@@ -129,7 +119,7 @@ def run(cfg: DictConfig) -> None:
         a_dim=sampler.a_dim,
         num_samples=a.num_samples,
         hidden=a.hidden,
-        amax=a.amax,
+        amax=a.action_limit,
         init_std=a.init_std,
         dropout=a.dropout,
         learn_std=a.learn_std,
@@ -198,7 +188,7 @@ def run(cfg: DictConfig) -> None:
         # (probability beta_k) or the learner's own — DAgger's state mixing
         follow_expert = bool(torch.rand((), generator=generator).item() < beta)
         loss = torch.zeros((), device=dev)
-        for _ in range(int(a.iters)):
+        for _ in range(int(a.iterations)):
             with torch.no_grad():
                 learner_costs = cost(net.plans(mean, std))
                 expert_plans = (mean.unsqueeze(1) + std.unsqueeze(1) * expert_base).clamp(-net.amax, net.amax)
@@ -237,10 +227,10 @@ def run(cfg: DictConfig) -> None:
             "z_dim": sampler.latent_dim,
             "horizon": int(a.horizon),
             "a_dim": sampler.a_dim,
-            "iters": int(a.iters),
+            "iters": int(a.iterations),
             "num_samples": int(a.num_samples),
             "hidden": int(a.hidden),
-            "amax": float(a.amax),
+            "amax": float(a.action_limit),
             "init_std": float(a.init_std),
             "learn_std": bool(a.learn_std),
             "gate_bias": float(a.gate_bias),

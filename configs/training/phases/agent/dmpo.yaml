@@ -1,6 +1,6 @@
 # @package _global_
-# DMPO baseline (arXiv:2310.04590): train the learned MPC inner loop against a
-# frozen critic through the frozen world model. See docs/dmpo/README_dmpo.md.
+# DMPO baseline (arXiv:2310.04590): the learned MPC inner loop, trained against a
+# frozen value through the frozen world model.
 defaults:
   - /core/agent/planner: dmpo
   - /core/agent/value: temporal_distance
@@ -11,10 +11,10 @@ runtime:
   device: auto
   seed: 0
 training:
-  wm: ???            # frozen pretrained world model (LeWM/PLDM layout)
-  cache: ???         # frameskip-matched (fs5) latent cache
-  h5: ???            # action-only h5 produced by build_action_h5
-  init_value: ???    # frozen quasimetric critic (value_td) — DMPO never updates it
+  wm: ???
+  cache: ???         # latent cache at one row per action block
+  h5: ???            # the build_action_h5 job's output
+  init_value: ???    # the offline value (value_td); DMPO never updates it
   cache_mmap: true
   steps: 2000
   batch: 32
@@ -24,7 +24,7 @@ training:
   actor_lr: 1e-4
   actor_lr_final: 1e-5
   weight_decay: 1e-5
-  max_grad_norm: 1.0     # reference trainer_config
+  max_grad_norm: 1.0     # the reference implementation's
   mean_weight: 0.0       # average over inner iterations (rp1 recipe knob; off for DMPO)
   temporal_objective: terminal
   cost_chunk: 0          # rollout chunk for the sampled plans; 0 = one batch

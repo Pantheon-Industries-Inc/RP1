@@ -1,15 +1,13 @@
-"""Horizon-match a latent cache to the planner's frameskip.
+"""Keep one latent-cache row per action block of ``frameskip`` primitive steps.
 
-The planner runs at ``action_block = frameskip`` (LeWM: 5), so each planned step
-spans `frameskip` env steps. To train the terminal metric on the *same* horizon,
-subsample the per-frame (fs1) cache to every `frameskip`-th frame within each
-episode and re-index step_idx in planner-step units. Latents are unchanged; only
-the temporal indexing (hence the metric's Δ distribution) is matched.
+The planner acts in blocks of ``frameskip`` steps, so its value is trained on
+the same horizon: every ``frameskip``-th frame of each episode, with ``step_idx``
+counted in blocks. The latents themselves are unchanged.
 
 Example::
 
     pixi run prepare job=subsample_cache \
-        preparation.inp=caches/lewm_tworoom.pt preparation.out=caches/lewm_fs5.pt preparation.frameskip=5
+        preparation.inp=<fs1 cache> preparation.out=<fs5 cache> preparation.frameskip=5
 """
 
 import numpy as np
@@ -28,18 +26,14 @@ def run(cfg: DictConfig) -> None:
     fs = args.frameskip
     zs, eps, sts, states = [], [], [], []
     for e, rows in c.episodes().items():  # rows sorted by step_idx
-        for k in range(phases):
-            sub = rows[k::fs]  # every fs-th frame from phase k
-            if len(sub) < 2:
-                continue
-            zs.append(c.z[sub])
-            eps.append(np.full(len(sub), e * phases + k, np.int64))
-            sts.append(np.arange(len(sub), dtype=np.int64))  # re-index in planner-steps
-            if c.state is not None:
-                states.append(c.state[sub])
-    meta = {**(c.meta or {}), "frameskip": fs, "horizon_matched": True}
-    if phases > 1:
-        meta["phase_multiplex"] = phases
+        sub = rows[::fs]
+        if len(sub) < 2:
+            continue
+        zs.append(c.z[sub])
+        eps.append(np.full(len(sub), e, np.int64))
+        sts.append(np.arange(len(sub), dtype=np.int64))  # re-index in planner-steps
+        if c.state is not None:
+            states.append(c.state[sub])
     out = LatentCache(
         z=torch.cat(zs),
         episode_idx=torch.from_numpy(np.concatenate(eps)),

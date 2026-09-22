@@ -1,14 +1,17 @@
-"""Build a tiny action-only h5 (action + ep_offset + ep_len) from a lance
-dataset, for rp1_ac (which reads ONLY h['action'], h['ep_offset']
-and h['ep_len'] — no pixels). Episode order matches the lance = matches the
-latent cache. (Reconstruction of pod A's build_action_h5.py, 2026-07-23.)
+"""Extract a dataset's actions into an h5 of ``action``, ``ep_offset`` and ``ep_len``.
+
+``rp1_ac`` and the baseline trainers read only these; episodes keep the dataset's
+order, which is the latent cache's.
 """
+
+from typing import cast
 
 import h5py
 import numpy as np
 import stable_worldmodel as swm
 from omegaconf import DictConfig
 
+from rp1.data.base import Dataset, episode_index
 from rp1.utils.config import phase_config
 from rp1.utils.logging import logger
 
@@ -17,8 +20,7 @@ def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "preparation")
 
     ds = swm.data.load_dataset(args.dataset)
-    ecol = "ep_idx" if "ep_idx" in ds.column_names else "episode_idx"
-    epi = np.asarray(ds.get_col_data(ecol)).reshape(-1).astype(np.int64)
+    epi = episode_index(cast(Dataset, ds)).astype(np.int64)
     act = np.asarray(ds.get_col_data("action")).reshape(len(epi), -1).astype(np.float32)
 
     bounds = np.flatnonzero(np.diff(epi)) + 1

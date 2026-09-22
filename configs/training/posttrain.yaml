@@ -19,8 +19,7 @@ training:
   cache_directory: ${oc.env:RP1_DATA_HOME,${oc.env:HOME}/.cache/rp1}/caches
   stages: [cache, subsample, actions, value, planner]
 
-# Stage 4 -- offline quasimetric critic (training/metric, learner=td).
-# Keys are forwarded verbatim onto configs/training/metric.yaml.
+# overrides of the metric phase, which trains the offline value
   value:
     steps: 12000
     batch_size: 1024
@@ -28,16 +27,13 @@ training:
     expectile: 0.03
     n_step: 1
     p_cross: 0.3
-    depth: null           # MRN value-head depth (null = core default 2)
-    window_frames: null   # m-frame window teacher (null = single frame); the
-                          # planner stage inherits the window automatically
-    window_lag: null      # window frame spacing in primitive steps; required
-                          # (= frameskip) whenever window_frames >= 2
-    near_frac: null       # near-goal hindsight oversampling fraction
+    depth: null           # value-head depth; null keeps the value config's
+    window_frames: null   # a window value stacks this many frames; the planner inherits it
+    window_lag: null      # must equal frameskip whenever window_frames >= 2
+    near_frac: null
     near_max: null
 
-# Stage 5 -- rp1 plan refiner (training/rp1_ac, actor-critic tandem).
-# Keys are forwarded verbatim onto configs/training/rp1_ac.yaml.
+# overrides of the rp1_ac phase, which trains the planner and co-trains the value
   planner:
     steps: 6000
     batch: 256

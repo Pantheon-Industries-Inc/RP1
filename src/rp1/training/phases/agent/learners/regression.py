@@ -1,13 +1,12 @@
-"""Horizon-matched temporal regression -- the paper's TRM objective.
+"""Horizon-matched temporal regression.
 
-Train the pairwise head to predict the temporal separation between two states
-on the same logged trajectory::
+The pairwise head learns the temporal separation of two states on the same
+logged trajectory::
 
     min_phi  E_{(i,j)}  Huber( m_phi(z_i, z_j),  |t_i - t_j| / s )
 
-with balanced full-horizon pair sampling (see
-:class:`~rp1.training.phases.agent.samplers.BalancedHorizonPairSampler`), AdamW
-(lr 1e-3, wd 1e-4), batch 1024, and scale ``s = 224``.
+with balanced full-horizon pairs from
+:class:`~rp1.training.phases.agent.samplers.BalancedHorizonPairSampler`.
 """
 
 from __future__ import annotations
@@ -68,7 +67,7 @@ def fit(cache: LatentCache, cfg: RegressionConfig, device: str) -> PairwiseMetri
         z_i = batch["z_i"].to(device)
         z_j = batch["z_j"].to(device)
         y = (batch["label"] / cfg.scale).to(device)
-        if cfg.shuffle_labels:  # negative control: break temporal structure
+        if cfg.shuffle_labels:  # the negative control
             perm = torch.randperm(y.shape[0], generator=rng)
             y = y[perm]
         pred = head(z_i, z_j)

@@ -1,13 +1,12 @@
-"""Encode a logged dataset into a frozen-latent cache for metric training.
+"""Encode a logged dataset into a latent cache.
 
-The expensive encoder runs once here; the three metric learners then train on
-the cheap cached latents.
+The encoder runs once here; the value and planner trainers then work on the
+cached latents.
 
-Example (pixel LeWM)::
+Example::
 
-    pixi run prepare job=cache_latents preparation.wm=quentinll/lewm-cube \
-        preparation.dataset=ogbench/cube_single_multiview_expert.lance \
-        preparation.out=caches/cube_lewm.pt preparation.state_key=proprio
+    pixi run prepare job=cache_latents preparation.wm=assets/core/world_model/cube_lewm \
+        preparation.dataset=<dataset> preparation.out=<cache.pt>
 """
 
 from pathlib import Path

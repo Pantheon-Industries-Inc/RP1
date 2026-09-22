@@ -1,3 +1,5 @@
+"""Pretrain a LeWM world model: the JEPA prediction loss with SIGReg on the encoder's latents."""
+
 from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import Path
@@ -34,11 +36,10 @@ def lejepa_forward(self: Any, batch: dict[str, torch.Tensor], stage: str, cfg: D
     emb = output["emb"]  # (B, T, D)
     act_emb = output["act_emb"]
 
-    # rollout_len K>0 adds a multi-step term that mirrors the solver's
-    # rollout_traj: roll the WM's OWN predictions forward K steps under the real
-    # actions and match the encoder targets (stop-grad). This trains the WM on
-    # its free-running rollout distribution — the exact regime the planner uses —
-    # so it can't fabricate a plausible near-goal terminal over a multi-step plan.
+    # rollout_length K > 0 adds a multi-step term: the model's own predictions are
+    # rolled forward K steps under the real actions and matched to the encoder's
+    # (stop-gradient) targets, as the planner rolls it out, so it cannot fabricate a
+    # plausible terminal over a multi-step plan.
     K = cfg.core.world_model.rollout_length
     if K > 0:
         pred_emb = self.model.predict(emb[:, :ctx_len], act_emb[:, :ctx_len])

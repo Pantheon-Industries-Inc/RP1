@@ -1,4 +1,4 @@
-"""Checkpoint helpers for rp1 models built on the published Stable-WM wheel."""
+"""Checkpoint I/O for world models, values and planners, in Stable-WM's artifact layout."""
 
 from __future__ import annotations
 
@@ -37,10 +37,8 @@ def load_pretrained(
 def save_pretrained(model: nn.Module, run_name: str, config: Any | None = None, **kwargs: Any) -> None:
     """Accept both plain mappings and OmegaConf configs.
 
-    Stable-WM 0.1.1 unconditionally calls ``OmegaConf.to_container`` and
-    therefore rejects the resolved dictionaries produced by several rp1
-    trainers. Converting mappings back to an OmegaConf object preserves its
-    normal checkpoint layout without patching site-packages.
+    Stable-WM 0.1.1 unconditionally calls ``OmegaConf.to_container`` and so
+    rejects plain dictionaries; they are converted to an OmegaConf object first.
     """
     if config is not None and not OmegaConf.is_config(config):
         config = OmegaConf.create(config)

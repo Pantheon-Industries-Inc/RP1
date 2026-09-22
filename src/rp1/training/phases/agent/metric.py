@@ -1,18 +1,17 @@
-"""Train a TRM metric head on a frozen-latent cache.
+"""Train a goal-conditioned value on a latent cache.
 
-Three learners share the same cache and produce the same ``cost(z_pred, z_goal)``
-interface:
+Every learner produces a module with ``cost(z_pred, z_goal)``:
 
-* ``regression``  -- horizon-matched temporal regression (the paper's method).
-* ``td``          -- offline goal-conditioned temporal-distance TD.
-* ``contrastive`` -- contrastive value learning (InfoNCE).
-
-``labels=shuffled`` (regression only) trains the paper's negative control.
+* ``regression``  -- horizon-matched temporal regression
+* ``shuffled``    -- the same regression on shuffled labels, the negative control
+* ``td``          -- offline goal-conditioned temporal-distance TD
+* ``contrastive`` -- contrastive value learning (InfoNCE)
+* ``l2``          -- latent L2 distance, untrained
 
 Example::
 
-    pixi run training model=metric training.cache=caches/tworoom_state.pt \
-        training.learner=regression output.checkpoint=tworoom_regression training.scale=100
+    pixi run posttrain --config-name phases/agent/metric training.cache=<cache> \
+        training.learner=regression training.scale=100
 """
 
 from omegaconf import DictConfig
@@ -32,8 +31,6 @@ from rp1.utils.logging import logger
 
 def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "training", cfg.core.agent.value)
-    args.embed_dim = args.embedding_dim
-    args.rep_dim = args.representation_dim
 
     device = pick_device(args.device)
     base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap))
@@ -49,7 +46,7 @@ def run(cfg: DictConfig) -> None:
         module = build_metric("l2", cache.latent_dim, {})
     elif args.learner in ("regression", "shuffled"):
         scale = args.scale
-        if scale is None:  # default scale ~ horizon so targets aren't dwarfed
+        if scale is None:  # about the episode horizon, so the targets are not dwarfed
             import numpy as np
 
             lens = [len(r) for r in cache.episodes().values()]
@@ -76,7 +73,7 @@ def run(cfg: DictConfig) -> None:
             head=args.head,
             hidden_dim=args.hidden_dim,
             depth=args.depth,
-            embed_dim=args.embed_dim,
+            embed_dim=args.embedding_dim,
             n_step=args.n_step,
             gamma=args.gamma,
             expectile=args.expectile,
@@ -113,7 +110,7 @@ def run(cfg: DictConfig) -> None:
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,
-            rep_dim=args.rep_dim,
+            rep_dim=args.representation_dim,
             depth=args.depth,
             gamma=args.contrastive_gamma,
             temperature=args.temperature,

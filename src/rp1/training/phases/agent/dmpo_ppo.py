@@ -29,7 +29,7 @@ quasimetric critic under the same frozen world model that the inner loop
 plans with, not against a real system. Model error is therefore invisible to
 training, so this reproduces DMPO's *algorithm* but not its robustness claim
 (which is about compensating for model-reality mismatch). Closing that last gap
-requires environment rollouts; see docs/dmpo/README_dmpo.md.
+requires environment rollouts.
 """
 
 import copy
@@ -46,9 +46,9 @@ from rp1.core.agent.value.temporal import ValueFunction, windowed_terminal_value
 from rp1.core.world_model.base import LatentWorldModel
 from rp1.core.world_model.rollout import rollout_traj
 from rp1.training.harness.checkpointing import load_metric, load_pretrained, save_metric
-from rp1.training.phases.agent.dmpo import _device
 from rp1.training.phases.agent.windows import WindowSampler
 from rp1.utils.config import phase_config
+from rp1.utils.device import pick_device
 from rp1.utils.logging import logger
 
 
@@ -73,15 +73,13 @@ def run(cfg: DictConfig) -> None:
     a = phase_config(cfg, "training", cfg.core.agent.planner)
     if not isinstance(a, DictConfig):
         raise TypeError("merged planner configuration must be a mapping")
-    for short, long in {"iters": "iterations", "amax": "action_limit"}.items():
-        a[short] = a[long]
     if not a.init_value:
-        raise ValueError("model=dmpo_ppo plans against a frozen critic: pass init_value=<value_td>")
-    if int(a.iters) != 1:
+        raise ValueError("the dmpo_ppo phase plans against a frozen value: pass training.init_value=<value_td>")
+    if int(a.iterations) != 1:
         # each iteration would be its own MDP step; supported, but the reward
         # bookkeeping below assumes one action per decision
         raise ValueError("the on-policy trainer currently supports iterations=1")
-    dev = _device(str(a.device))
+    dev = pick_device(str(a.device))
     torch.manual_seed(a.seed)
 
     wm_module = load_pretrained(a.wm).to(dev).eval()
@@ -111,11 +109,10 @@ def run(cfg: DictConfig) -> None:
     if context > a.horizon:
         raise ValueError(f"critic context {context} exceeds the plan horizon {a.horizon}")
 
-    # Faithful bounds: the env's own action limits, not a tuned scalar clip.
-    # action_range=null falls back to the symmetric `action_limit`.
+    # the environment's own action limits; action_range=null falls back to a symmetric action_limit
     if a.action_range is None:
         action_lows = action_highs = None
-        logger.info(f"DMPO clipping plans to the symmetric fallback +-{float(a.amax)}")
+        logger.info(f"DMPO clipping plans to the symmetric fallback +-{float(a.action_limit)}")
     else:
         low, high = sampler.action_bounds(float(a.action_range))
         action_lows = torch.from_numpy(low).float()
@@ -129,7 +126,7 @@ def run(cfg: DictConfig) -> None:
         a_dim=sampler.a_dim,
         num_samples=a.num_samples,
         hidden=a.hidden,
-        amax=a.amax,
+        amax=a.action_limit,
         init_std=a.init_std,
         temperature=a.temperature,
         step_size=a.step_size,
@@ -321,10 +318,10 @@ def run(cfg: DictConfig) -> None:
             "z_dim": sampler.latent_dim,
             "horizon": int(a.horizon),
             "a_dim": sampler.a_dim,
-            "iters": int(a.iters),
+            "iters": int(a.iterations),
             "num_samples": int(a.num_samples),
             "hidden": int(a.hidden),
-            "amax": float(a.amax),
+            "amax": float(a.action_limit),
             "action_range": None if a.action_range is None else float(a.action_range),
             "init_std": float(a.init_std),
             "temperature": float(a.temperature),
