@@ -7,9 +7,7 @@ defaults:
   - /core/agent/value: latent
   - _self_
 planning:
-  # Open loop, like every other environment: the full 5-chunk plan (25
-  # primitive steps) executes before replanning. The paper appendix's
-  # "replanning every chunk" for Reacher is WRONG — do not set this to 1.
+  # open loop like every environment, not replanning after each chunk
   receding_horizon: 5
 benchmark:
   # held out: the agent trains on episodes 0-7999

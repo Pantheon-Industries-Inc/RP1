@@ -1,5 +1,4 @@
 # @package _global_
-# TwoRoom (authors' fetched h5 pool) on the tracked LeWM (LeJEPA) base.
 defaults:
   - tworoom_h5
   - /core/world_model: lewm

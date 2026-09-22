@@ -16,6 +16,7 @@ from rp1.utils.run import RunMetadata, RunPaths, save_config
 
 
 def get_config_root() -> Path:
+    """The config tree: ``RP1_CONFIG_DIR``, the checkout's ``configs/``, or the installed copy."""
     candidates: list[Path] = []
     if override := os.environ.get("RP1_CONFIG_DIR"):
         candidates.append(Path(override))
@@ -94,7 +95,10 @@ def validate_config(cfg: DictConfig) -> None:
 
 
 def phase_config(cfg: DictConfig, phase: str, *components: DictConfig) -> DictConfig:
-    """Flatten the public config sections for legacy algorithm internals."""
+    """One flat mapping of the ``phase`` section, runtime, planning and ``components``.
+
+    ``data``, ``environment``, ``output`` and ``run`` stay nested under their own keys.
+    """
     sections: list[object] = [OmegaConf.to_container(cfg[phase], resolve=False)]
     for name in ("runtime", "planning"):
         if name in cfg:

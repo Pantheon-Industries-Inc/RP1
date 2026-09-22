@@ -1,5 +1,4 @@
 # @package _global_
-# Reacher evaluation on the tracked PLDM base (converted to the LeWM layout).
 defaults:
   - reacher
   - /core/world_model: pldm

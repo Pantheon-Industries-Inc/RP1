@@ -1,5 +1,4 @@
 # @package _global_
-# TwoRoom evaluation on the tracked PLDM base (converted to the LeWM layout).
 defaults:
   - tworoom
   - /core/world_model: pldm

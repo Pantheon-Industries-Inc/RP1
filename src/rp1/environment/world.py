@@ -1,13 +1,11 @@
-"""rp1's dataset-evaluation world behavior.
+"""The evaluation world: dataset-backed resets, first-hit scoring and recording.
 
-This extension still imports Stable-WM's private dataset helpers because 0.1.1
-does not expose recording or resize hooks. Keep the imports isolated here so a
-future public upstream evaluation hook can replace this subclass directly.
+Stable-WM 0.1.1 exposes no recording or resize hooks, so this module imports its
+private dataset helpers; they stay confined here.
 """
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from copy import deepcopy
@@ -36,10 +34,15 @@ def _resize_images_like_env(images: np.ndarray, env_pixels: np.ndarray) -> np.nd
 
 
 class World(_World):
-    """Stable-WM World with reproducible rp1 dataset reset and recording."""
+    """Stable-WM World with reproducible dataset resets and episode recording.
+
+    With ``record_path`` set, every evaluated episode of at least
+    ``record_min_length`` actions is written to a lance dataset there.
+    """
 
     def __init__(self, env_name: str, *args: Any, **kwargs: Any) -> None:
         self.record_path = kwargs.pop("record_path", None)
+        self.record_min_length = int(kwargs.pop("record_min_length", 25))
         # First-hit scoring at an explicit tolerance, replacing the
         # environment's own termination test. Reacher's qpos-match task
         # hardcodes a 0.05 rad threshold, so the tau=0.1 column of the paper's
@@ -171,7 +174,7 @@ class World(_World):
             def episodes() -> Iterator[dict[str, list[np.ndarray]]]:
                 for buffer in record_buffers:
                     episode = {key: list(values) for key, values in buffer.items()}
-                    if len(episode.get("action", ())) < int(os.environ.get("RP1_RECORD_MIN_LEN", "25")):
+                    if len(episode.get("action", ())) < self.record_min_length:
                         stats["dropped"] += 1
                         continue
                     episode["action"].append(episode["action"].pop(0))

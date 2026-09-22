@@ -1,14 +1,7 @@
-"""Latent cache: encode logged trajectories once with a frozen world model.
+"""Latent caches: a logged dataset encoded once by a frozen world model.
 
-All three metric learners (regression / TD / contrastive) train on *latents*
-``z_t = f(o_t)`` produced by a frozen encoder. Encoding is the only expensive
-step, so we run it once over a logged dataset and persist a compact cache of
-``(z, episode_idx, step_idx[, state])``. The learners then iterate the cache
-cheaply on CPU/MPS.
-
-The builder is intentionally decoupled from any specific world model via a
-``featurizer`` callable, so the same code serves both the lightweight state-WM
-and the pixel LeWM checkpoint.
+The value learners and the planner trainers read latents ``z_t = f(o_t)`` with
+their episode and step indices instead of re-encoding observations every step.
 """
 
 from __future__ import annotations
@@ -32,7 +25,7 @@ class LatentCache:
         z: ``(N, D)`` float32 latents in trajectory order.
         episode_idx: ``(N,)`` int64 episode id per row.
         step_idx: ``(N,)`` int64 within-episode timestep per row.
-        state: optional ``(N, S)`` ground-truth task state (for the oracle).
+        state: optional ``(N, S)`` ground-truth task state.
         meta: free-form metadata (env id, wm name, latent dim, ...).
     """
 
@@ -130,11 +123,9 @@ def encode_dataset(
         featurizer: maps a batch of raw rows (dict of numpy arrays) to a
             ``(B, D)`` latent tensor. Encapsulates the frozen WM + transforms.
         batch_size: rows per encode call.
-        state_key: optional column to store as ground-truth state for the oracle.
+        state_key: optional column to store as ground-truth state.
         meta: metadata to attach to the cache.
     """
-    # NB: lance hides episode_idx/step_idx from ``column_names`` even though
-    # ``get_col_data`` serves them, so probe directly rather than membership-test.
     episode_idx = episode_index(dataset).astype(np.int64)
     step_idx = np.asarray(dataset.get_col_data("step_idx")).reshape(-1).astype(np.int64)
     n = len(episode_idx)

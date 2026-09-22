@@ -1,5 +1,4 @@
 # @package _global_
-# Reacher evaluation on the tracked LeWM (LeJEPA) base.
 defaults:
   - reacher
   - /core/world_model: lewm

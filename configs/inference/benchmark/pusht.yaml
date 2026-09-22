@@ -1,8 +1,6 @@
 # @package _global_
-# PushT evaluation root (replay protocol): start at a dataset row, goal = the
-# state `goal_offset_steps` primitive steps later, budget 2x the offset.
-# Success is the env's built-in DINO-WM criterion (agent+block position error
-# < 20 px AND block angle error < 20 deg), checked by `swm/PushT-v1` itself.
+# Success is the environment's DINO-WM criterion: agent and block within 20 px
+# and the block within 20 degrees of the goal.
 defaults:
   - /environment: pusht
   - /data: pusht

@@ -1,5 +1,4 @@
 # @package _global_
-# TwoRoom evaluation on the tracked LeWM (LeJEPA) base.
 defaults:
   - tworoom
   - /core/world_model: lewm

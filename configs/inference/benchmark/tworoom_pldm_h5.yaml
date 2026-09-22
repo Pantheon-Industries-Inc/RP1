@@ -1,5 +1,4 @@
 # @package _global_
-# TwoRoom (authors' fetched h5 pool) on the converted PLDM base.
 defaults:
   - tworoom_h5
   - /core/world_model: pldm
