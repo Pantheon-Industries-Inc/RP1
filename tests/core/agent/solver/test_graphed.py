@@ -1,10 +1,4 @@
-"""GraphedRefinement: equivalence against the eager refinement computation.
-
-The heavy equivalence/timing evidence lives in the 2026-08-12 benchmark jobs
-(4840: 272.6 -> 29.3 ms/decision at B=1, final-plan deviation 5.96e-8). This
-test guards the shipped module: the graphed step must reproduce the eager
-score, trajectory features, and value gradient on a small stand-in stack.
-"""
+"""The graphed refinement step reproduces the eager score, trajectory and value gradient."""
 
 from typing import Any, cast
 

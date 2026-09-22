@@ -1,4 +1,4 @@
-"""rp1-specific policy behavior layered over the published Stable-WM wheel."""
+"""Policies that act in the evaluation environments."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from stable_worldmodel.protocols import Transformable
 
 @dataclass(frozen=True)
 class PlanConfig:
-    """Planning-loop configuration including rp1 history and deadline fields."""
+    """Planning-loop configuration, including history length and deadline."""
 
     horizon: int
     receding_horizon: int
@@ -30,7 +30,7 @@ class PlanConfig:
 
 
 class NoMovePolicy(BasePolicy):
-    """Emit a zero action as the honest no-planning success floor."""
+    """Emit a zero action: the success floor without planning."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -44,9 +44,9 @@ class WorldModelPolicy(BasePolicy):
     """World-model policy with real history and deadline-aware replanning.
 
     Stable-WM 0.1.1 pads a single current observation when a three-frame model
-    is evaluated. rp1 retains frames and executed action blocks at their
+    is evaluated. This policy keeps frames and executed action blocks at their
     training cadence, and publishes the number of reachable plan chunks to
-    solvers that support deadline-aligned scoring.
+    solvers that score against a deadline.
     """
 
     def __init__(

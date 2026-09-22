@@ -1,16 +1,14 @@
 # @package core.agent.planner
-# DMPO learned-optimizer architecture (arXiv:2310.04590 Sec. IV; reference
-# hyperparameters from config/experiments/quadrotor_dmpo_zigzagyaw.yml).
-horizon: 5             # plan blocks, must match the world model's frameskip cadence
-iterations: 1          # inner-loop iterations per decision (reference: 1)
-num_samples: 256       # particles per iteration; fixes the actor's input width
-hidden: 256            # single hidden layer, ReLU (reference actor_params)
+# the reference's quadrotor hyperparameters (arXiv:2310.04590 Sec. IV)
+horizon: 5
+iterations: 1
+num_samples: 256       # fixes the actor's input width
+hidden: 256            # single ReLU hidden layer
 action_range: 1.0      # the env's raw action box is [-action_range, action_range];
                        # DMPO clips to it per-dimension after z-scoring, as the
                        # reference does with action_lows/action_highs. null =
                        # fall back to the symmetric action_limit below.
-action_limit: 2.5      # symmetric fallback clip; unlike rp1's amax this is a
-                       # BOUND, not a tuned residual trust region
+action_limit: 2.5      # symmetric fallback clip; a bound, not a tuned trust region
 init_std: 1.0          # initial sampling covariance (diagonal)
 temperature: 0.05      # MPPI temperature of the update the actor residuals on
 step_size: 0.8         # MPPI dynamic-mirror-descent step size
@@ -24,4 +22,4 @@ init_scale: 0.001      # last-layer init N(0, init_scale) -> near-zero residual
 mean_search_std: 0.1   # on-policy search width over the mean (PPO objective only)
 std_search_std: 0.01   # on-policy search width over the covariance
 halton: true           # fixed quasi-random sample set
-seed_val: 0            # sample-set seed (recorded in the checkpoint)
+seed_val: 0            # sample-set seed

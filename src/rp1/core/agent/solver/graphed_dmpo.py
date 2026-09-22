@@ -1,28 +1,13 @@
-"""CUDA-graph-captured DMPO cost evaluation — an opt-in inference mode.
+"""CUDA-graph capture of the DMPO solver's sampled-plan cost.
 
-DMPO's decision is the mirror image of rp1's: rp1 is launch-bound (~80
-dependent kernel groups on a batch of one, which is why
-:mod:`rp1.core.agent.solver.graphed` buys it ~9x), while DMPO rolls ``N`` sampled
-plans through the world model as **one wide forward batch** — 5 dependent
-world-model steps at batch ``B*N``, no backward. Graph capture removes launch
-overhead, so the expected gain here is small; this module exists to measure
-that rather than to assume it.
+The captured function is ``plans (B, N, H, a) -> costs (B, N)``: the
+world-model unroll and the value, forward only; the learned update stays eager.
+DMPO scores ``N`` plans as one wide batch, so it is less launch-bound than the
+rp1 refinement and gains less from capture.
 
-What is captured: the sampled-plan cost function
-``plans (B, N, H, a) -> costs (B, N)`` — the world-model unroll plus the value
-head, forward only. The learned update itself is two small MLP calls and is
-left eager.
-
-Constraints inherited from CUDA graphs:
-  * Static shapes: one capture per ``(batch, num_samples)``. The sample count
-    is fixed by the trained checkpoint, so in practice only the env batch
-    varies; a changed batch triggers a fresh capture (seconds).
-  * Captured tensor addresses are fixed: the decision's context is staged by
-    copying into static buffers, and the world model / value weights must not
-    be reallocated after capture.
-
-Imported lazily by :class:`rp1.core.agent.solver.DMPOSolver` only when ``graphed``
-is enabled; the default eager path is untouched.
+Each ``(batch, num_samples)`` is captured once; the sample count is fixed by the
+checkpoint. Inputs are copied into static buffers, and the world model's and
+value's weights must not be reallocated after capture.
 """
 
 from collections.abc import Callable

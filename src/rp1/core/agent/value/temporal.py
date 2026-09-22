@@ -1,4 +1,4 @@
-"""Temporal objectives shared by rp1 training and deployment."""
+"""Temporal objectives that score an imagined trajectory, shared by training and deployment."""
 
 from typing import Protocol
 
@@ -109,9 +109,8 @@ def windowed_terminal_value(
 ) -> torch.Tensor:
     """Terminal value of a ``context``-frame window, as ``MetricCost`` forms it.
 
-    Window critics (the Reacher three-frame quasimetric) take ``context * D``
-    inputs. This reproduces the deploy-side convention of
-    :meth:`rp1.core.agent.value.cost.MetricCost._metric_inputs` on a differentiable
+    Window values take ``context * D`` inputs. This reproduces
+    :class:`~rp1.core.agent.value.cost.MetricCost`'s window on a differentiable
     imagined trajectory: the last ``context`` frames concatenated (frames before
     the trajectory start clamped to its first frame), the goal tiled to match,
     and the two-frame case expressed as ``[current, current - previous]``.

@@ -1,31 +1,19 @@
-"""DMPOSolver — plan with a trained DMPO learned-optimizer checkpoint.
+"""DMPOSolver: plan with a trained DMPO checkpoint.
 
 *Deep Model Predictive Optimization* (Sacks et al., ICRA 2024) keeps MPC's
 sample-rollout-reduce loop and learns the reduction; :class:`DMPONet` holds the
 learned pieces and this solver supplies the rollouts and the cost.
 
-Per decision the solver spends ``num_samples * iters`` forward world-model
-unrolls and no backward pass — 256 at the reference budget. The comparison
-points: CEM/MPPI ``300 x 30 = 9,000`` forward, and rp1/rp1 **9 forward**
-(8 refinement iterations, each reusing its single unroll for both the value
-gradient and the actor's features, plus one selection unroll) with 8 backward
-passes over the same graphs. The checkpoint's sample count
-is authoritative: the actor consumes the ``N`` costs positionally, so ``N`` and
-the horizon cannot be changed after training. The iteration count can be
-(the paper varies it at test time) via ``iters``.
+A decision costs ``num_samples * iters`` forward world-model unrolls and no
+backward pass. The network reads the ``N`` costs positionally, so the sample
+count and the horizon are fixed by the checkpoint; the iteration count is not
+(``iters``). Costs come from the checkpoint's value through the frozen world
+model, the value the rp1 solver plans against too.
 
-Costs come from the checkpoint's own goal-conditioned value through the frozen
-world model — the same cost the optimizer was trained on, and the same critic
-the rp1 solver plans against, so a DMPO-vs-rp1 table isolates the *planner*.
-
-Warm start: the learned shift model consumes the previous decision's plan tail
-that :class:`rp1.core.agent.policy.WorldModelPolicy` hands over as ``init_action``.
-Under this repository's open-loop protocol (``receding_horizon == horizon``)
-nothing survives the shift-forward and the warm start is inert by
-construction; evaluate with ``planning.receding_horizon=1`` for the
-closed-loop regime DMPO was published in.
-
-Trainer: :mod:`rp1.training.phases.agent.dmpo`.
+The learned warm start consumes the unexecuted plan tail that
+:class:`~rp1.core.agent.policy.WorldModelPolicy` passes as ``init_action``.
+With ``receding_horizon == horizon`` nothing is left of it; the closed-loop
+regime DMPO was published in is ``planning.receding_horizon=1``.
 """
 
 import time
@@ -85,22 +73,19 @@ class DMPOSolver(CEMSolver):
         self,
         *args: Any,
         checkpoint: PlannerCheckpoint,
-        iters: int | None = None,
-        mppi_mode: bool = False,
-        cost_chunk: int = 0,
-        report_cost: bool = False,
-        graphed: bool = False,
+        iters: int | None,
+        mppi_mode: bool,
+        cost_chunk: int,
+        report_cost: bool,
+        graphed: bool,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
-        # mppi_mode runs the same loop with the learned heads bypassed — the
-        # hand-written MPPI update DMPO learns a residual on (reference flag
-        # ``is_mppi``). It is the ablation the paper reports against and the
-        # equivalence test in tests/core/test_dmpo.py.
+        # mppi_mode bypasses the learned heads: the hand-written MPPI update DMPO
+        # learns a residual on (the reference's ``is_mppi``)
         self.mppi_mode = bool(mppi_mode)
         self.cost_chunk = int(cost_chunk)
         self.report_cost = bool(report_cost)
-        # CUDA-graph capture of the sampled-cost evaluation, built on the first solve
         self.graphed = graphed
         self._graphed_cost: Any = None
 
@@ -130,9 +115,8 @@ class DMPOSolver(CEMSolver):
             mean_search_std=ck.get("mean_search_std", 0.1),
             std_search_std=ck.get("std_search_std", 0.01),
         ).to(self.device)
-        # Checkpoints written before the per-dimension action bounds carry no
-        # a_low/a_high buffers; derive them from the symmetric fallback rather
-        # than loading non-strictly, which would hide a genuine key mismatch.
+        # a checkpoint without per-dimension bounds clips symmetrically at amax;
+        # filling the buffers keeps the load strict
         state = dict(ck["sd"])
         for key, fill in (("a_low", -float(ck.get("amax", 2.5))), ("a_high", float(ck.get("amax", 2.5)))):
             if key not in state:
@@ -144,8 +128,6 @@ class DMPOSolver(CEMSolver):
         self.net.requires_grad_(False)
         self._actor_horizon = int(ck["horizon"])
         self.iters = int(ck["iters"] if iters is None else iters)
-        # The actor reads the N costs positionally, so the trained sample count
-        # is authoritative; the config value is informational only.
         requested_samples: int = self.num_samples
         if requested_samples != self.net.num_samples:
             logger.info(
@@ -157,8 +139,7 @@ class DMPOSolver(CEMSolver):
         value_module = checkpoint.value.to(self.device)
         value_module.eval()
         self.value = cast(ValueFunction, value_module)
-        # window critics score a stack of the last `context` imagined frames,
-        # matching MetricCost's deploy-side convention for the baselines
+        # window values score the last `context` imagined frames, as MetricCost does
         latent_dim = int(getattr(value_module, "latent_dim", ck["z_dim"]))
         self.value_context = int(ck.get("value_context", max(latent_dim // int(ck["z_dim"]), 1)))
         if self.value_context > 1 and self.temporal_objective != "terminal":
@@ -286,9 +267,7 @@ class DMPOSolver(CEMSolver):
                     mean = self.net.clip(self.net.mppi_mean(mean, plans, cost_fn(plans)))
             else:
                 mean, std, _ = self.net.plan(cost_fn, mean, std, self.iters)
-            # `costs` is diagnostic only — the policy consumes `actions`. Scoring
-            # the final mean would add a rollout per decision (257 instead of
-            # 256 at the default budget), so it is opt-in.
+            # the policy only consumes `actions`; scoring the final mean costs an extra rollout
             final = (
                 cost_fn(mean.unsqueeze(1)).squeeze(1)
                 if self.report_cost

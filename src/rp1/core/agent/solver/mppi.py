@@ -1,4 +1,4 @@
-"""rp1 adapter for Stable-WM's MPPI solver."""
+"""Stable-WM's MPPI solver with deadline forwarding and solve timing."""
 
 import time
 from collections.abc import Sequence
@@ -10,7 +10,7 @@ from rp1.utils.logging import logger
 
 
 class MPPISolver(StableMPPISolver):
-    """MPPI with deadline metadata forwarding to an rp1 planning cost."""
+    """MPPI that forwards deadline metadata to the planning cost."""
 
     def solve(self, *args: Any, **kwargs: Any) -> Any:
         """Time the upstream solve so every planner reports one latency line."""

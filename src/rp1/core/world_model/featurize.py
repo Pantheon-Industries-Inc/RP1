@@ -47,14 +47,11 @@ def build_featurizer(
     img_size: int,
     train_res: int | None,
 ) -> Callable[[RowBatch], torch.Tensor]:
-    """Return ``featurizer(rows) -> (B, D)`` latents for caching.
+    """``featurizer(rows) -> (B, D)``: the world model's latents of dataset rows.
 
-    Pixel WMs (LeWM/PLDM layout) decode + ImageNet-normalise images first.
-
-    ``train_res``: bottleneck images through the checkpoint's native training
-    resolution before the final resize (e.g. 64 for OGBench play retrains,
-    trained on 64px frames upscaled to 224). None = no-op. Must match the
-    ``eval.train_res`` used at plan time so cache and deploy share a domain.
+    Images are decoded and prepared by :func:`image_transform`; ``train_res``
+    must match the resolution used at plan time so cache and deployment share
+    an image domain.
     """
     wm = wm.to(device).eval()
     if not callable(getattr(wm, "encode", None)):
@@ -92,8 +89,8 @@ def build_featurizer(
             and px.shape[2] == img_size
             and px.shape[3] == 3
         ):
-            # raw already-sized frames: vectorized on-device normalize (the
-            # per-image Compose below is identical math but ~100x slower)
+            # raw already-sized frames: the same math as the per-image transform,
+            # vectorized on the device
             x = torch.from_numpy(px).to(device).permute(0, 3, 1, 2).float().div_(255)
             if train_res and int(train_res) != int(img_size):
                 x = torch.nn.functional.interpolate(x, size=int(train_res), mode="bilinear", antialias=True)

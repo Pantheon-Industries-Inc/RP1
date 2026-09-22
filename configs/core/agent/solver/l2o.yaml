@@ -1,9 +1,5 @@
 # @package core.agent.solver
-# L2O-MPC (Sacks & Boots, ICRA 2022): fully learned MPC inner loop. Sample
-# count and horizon are fixed by the trained checkpoint; `n_steps`/`topk`/
-# `var_scale` are inherited from the CEM base class and unused. Rollout budget
-# per decision is num_samples x iters forward unrolls (64 x 4 = 256 by
-# default, matching DMPO), no backward pass.
+# n_steps, topk and var_scale belong to the CEM base class and are unused.
 _target_: rp1.core.agent.solver.L2OSolver
 batch_size: 1
 num_samples: 64  # informational; the checkpoint's sample count wins

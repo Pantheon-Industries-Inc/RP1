@@ -13,7 +13,7 @@ __all__ = ["rollout_terminal", "rollout_traj"]
 def rollout_terminal(
     wm: LatentWorldModel, z_hist: torch.Tensor, a_hist: torch.Tensor, plan: torch.Tensor
 ) -> torch.Tensor:
-    """Pooled-latent WM: autoregressive H-block unroll; returns terminal latent.
+    """Autoregressive unroll of ``plan``; the terminal latent.
 
     z_hist: (B, 3, D) latent history, a_hist: (B, 2, a) action-block history,
     plan: (B, H, a). Differentiable w.r.t. ``plan``.

@@ -1,10 +1,7 @@
 """L2O-MPC: gated full-replacement update, expert step, and DAgger wiring.
 
-L2O-MPC's published claims are that a fully learned update (no hand-written
-MPPI reduction inside) can be regressed onto a many-sample MPPI expert and
-then match it with far fewer samples. These tests guard the structural
-invariants that carry those claims into this port: the gating algebra, the
-expert update's correctness, the box clip, and the mixing schedule.
+These tests guard the gating algebra, the expert update, the box clip and the
+warm start.
 """
 
 from typing import Any

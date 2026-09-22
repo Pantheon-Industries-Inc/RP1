@@ -1,8 +1,7 @@
-"""L2O-MPC — the learned sampling-MPC update of *Learning to Optimize in MPC*.
+"""L2O-MPC: the learned sampling-MPC update of *Learning to Optimize in MPC*.
 
-Reference: Sacks, Boots, "Learning to Optimize in Model Predictive Control",
-ICRA 2022 (arXiv:2212.02603) — the direct predecessor of the DMPO baseline
-already in this repository (:mod:`rp1.core.agent.planner.dmpo`), same first author.
+Sacks, Boots, ICRA 2022 (arXiv:2212.02603), the predecessor of DMPO
+(:mod:`rp1.core.agent.planner.dmpo`).
 
 The paper unifies sampling-based MPC under dynamic mirror descent and then
 *learns the whole update rule*: instead of the hand-designed step toward the
@@ -21,20 +20,18 @@ a working optimizer. The paper's experiments fix a diagonal covariance
 formulation is available behind ``learn_std=True``.
 
 Training is DAgger imitation of an MPPI expert with a larger sample budget
-(:mod:`rp1.training.phases.agent.l2o`) — the paper's headline is matching a many-sample
-optimizer with far fewer samples. :func:`mppi_update` here is that expert's
-one-step update, shared by the trainer and the tests.
+(:mod:`rp1.training.phases.agent.l2o`). :func:`mppi_update` is that expert's
+one-step update.
 
-Deltas from the reference, all deliberate and documented in
-``docs/l2o/README_l2o.md``:
+Deltas from the reference:
 
 - Costs are standardized before entering the network (the sibling DMPO
   reference code does the same to its cost features); the paper does not
   specify its cost conditioning.
 - Action bounds are the symmetric plan clip ``[-amax, amax]`` shared with the
   rest of this repository.
-- ``gate_bias`` initializes the gate head's bias (default 0.0, the paper's
-  plain init: an untrained gate passes half the proposal).
+- ``gate_bias`` initializes the gate head's bias; at 0.0, the paper's plain
+  init, an untrained gate passes half the proposal.
 """
 
 from collections.abc import Callable

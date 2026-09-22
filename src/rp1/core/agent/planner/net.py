@@ -1,3 +1,5 @@
+"""The rp1 planner network."""
+
 import torch
 from torch import nn
 
@@ -5,6 +7,8 @@ __all__ = ["PlannerNet"]
 
 
 class PlannerNet(nn.Module):
+    """The learned update rule: plan, value gradient and value in, a clipped refined plan out."""
+
     def __init__(
         self,
         horizon: int,

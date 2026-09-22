@@ -1,3 +1,5 @@
+"""The rp1 solver: a trained planner network refines a plan along the value gradient."""
+
 import time
 from typing import Any, cast
 
@@ -16,14 +18,12 @@ __all__ = ["RP1Solver"]
 
 
 class RP1Solver(CEMSolver):
-    """Plan with a trained rp1 checkpoint; optionally refine with MPPI.
+    """Plan with a trained planner checkpoint, optionally followed by MPPI.
 
-    With ``n_steps=0`` (the benchmarked configuration) the solver is fully
-    deterministic: one pass of K learned refinement iterations from a single
-    initialization, then execute the plan. ``n_steps > 0`` additionally runs MPPI
-    (softmax-weighted, temperature ``lam``) seeded from the rp1 plan.
-
-    The plan length (horizon) always comes from the actor checkpoint.
+    With ``n_steps=0`` the solver is deterministic: K learned refinement
+    iterations from one initial plan. ``n_steps > 0`` then runs MPPI
+    (temperature ``lam``) around the refined plan. The horizon comes from the
+    checkpoint.
     """
 
     def __init__(
@@ -44,22 +44,10 @@ class RP1Solver(CEMSolver):
         super().__init__(*args, **kwargs)
         self.lam = lam
         self.rp1_select = rp1_select
-        # value-guided initialization: A(0) = argmin-E over a candidate set of
-        # RAW plans (zero + iid-Gaussian + time-tiled Gaussian), scored once
-        # before refinement. Selection happens on UNREFINED samples, exactly
-        # CEM's iteration-0, so the refinement trajectory itself stays single
-        # and deterministic.
         self.init_mode = init_mode
         self.init_samples = int(init_samples)
         self.init_scale = float(init_scale)
-        # init_mode="cem": A(0) = the mean of a CEM run on the solver's planning
-        # cost (num_samples x cem_init_steps, topk elites), then the K learned
-        # refinements as usual. An oracle-initialisation diagnostic: separates
-        # "the refiner cannot find the basin" from "the refiner cannot hold a
-        # good plan".
         self.cem_init_steps = int(cem_init_steps)
-        # iters_override: deploy-time K (None = the checkpoint's trained K).
-        # 0 = emit the initial plan untouched; >K = continuation diagnostic.
         self.iters_override = None if iters_override is None else int(iters_override)
         # CUDA-graphed refinement (GraphedRefinement), captured on the first solve
         self.graphed = graphed
@@ -83,7 +71,7 @@ class RP1Solver(CEMSolver):
         self._actor_horizon = horizon
         self.rp1_iterations = int(payload["iterations"])
         if self.iters_override is not None:
-            logger.info(f"rp1 iterations overridden at deploy: {self.rp1_iterations} -> {self.iters_override}")
+            logger.info(f"Refinement iterations overridden: {self.rp1_iterations} -> {self.iters_override}")
             self.rp1_iterations = self.iters_override
         self.temporal_objective = str(payload["temporal_objective"])
         if self.temporal_objective not in {"terminal", "tel-exact", "tel-stopprev"}:
@@ -95,9 +83,9 @@ class RP1Solver(CEMSolver):
         # against the goal frame repeated as often
         self.vframes = int(payload["window_frames"])
         if self.vframes > 1:
-            logger.info(f"rp1 window value: {self.vframes} frames")
+            logger.info(f"Window value over {self.vframes} frames")
             if self.graphed:
-                raise ValueError("graphed rp1 inference does not support windowed values")
+                raise ValueError("graphed refinement does not support windowed values")
 
     def _band_projection(self) -> torch.Tensor:
         """P = B B^T onto the first M temporal DCT-II modes, cached."""
@@ -125,18 +113,8 @@ class RP1Solver(CEMSolver):
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
 
-    def _score(
-        self,
-        trajectory: torch.Tensor,
-        goal: torch.Tensor,
-        history: torch.Tensor,
-        plan: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Trajectory score; stacks the last ``vframes`` imagined frames and
-        duplicates the observed goal frame when the value is windowed. With a
-        grounding term loaded, ``plan`` (the actions that produced ``trajectory``)
-        adds the physics penalty -- the energy the actor was trained on.
-        """
+    def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
+        """Value of an imagined trajectory, over windows of ``vframes`` frames when the value is windowed."""
         if self.vframes > 1:
             return windowed_trajectory_value(
                 self.rp1_value, trajectory, goal, history, self.vframes, self.temporal_objective
@@ -150,11 +128,11 @@ class RP1Solver(CEMSolver):
         a_hist: torch.Tensor,
         zg: torch.Tensor,
     ) -> torch.Tensor:
-        """A(0) = argmin-E over {zero, iid-Gaussian, time-tiled Gaussian} raw plans.
+        """The lowest-value plan among zero, iid-Gaussian and time-tiled Gaussian candidates.
 
-        The tiled half (one action block repeated across the horizon) covers
-        sustained-motion plans — the long-transport family the zero-init
-        refinement cannot reach when the value gradient is flat at A=0.
+        The tiled candidates repeat one action block across the horizon: sustained
+        motions that refinement from zero cannot reach where the value gradient is
+        flat at the zero plan.
         """
         B, H, adim = z_hist.shape[0], self.horizon, self.action_dim
         action_limit = self.actor.action_limit
@@ -194,9 +172,7 @@ class RP1Solver(CEMSolver):
         return cand[torch.arange(B, device=self.device), E.argmin(dim=1)]
 
     def _cem_init(self, info_dict: dict[str, Any], n_envs: int) -> torch.Tensor:
-        """A(0) = CEM mean on the solver's planning cost (N(mean, var) samples,
-        top-k elites, mean/std update), batched exactly like :meth:`solve`'s
-        MPPI loop. Returns (B, H, adim)."""
+        """The mean of a CEM run on the planning cost, ``(B, H, action_dim)``."""
         H, adim = self.horizon, self.action_dim
         mean = torch.zeros(n_envs, H, adim, device=self.device, dtype=self.dtype)
         var = self.var_scale * torch.ones_like(mean)
@@ -229,13 +205,8 @@ class RP1Solver(CEMSolver):
                 mean[start_idx:end_idx] = batch_mean
         return mean.float()
 
-    # ------------------------------------------------------------------ rp1
     def _graphed_for(self, wm: Any, z_hist: torch.Tensor, a_hist: torch.Tensor, z_goal: torch.Tensor) -> Any:
-        """Lazily build the CUDA-graphed refinement and stage this decision.
-
-        Kept out of ``__init__`` so solver construction never touches CUDA
-        graphs; the first solve pays a one-time capture per batch size.
-        """
+        """The CUDA-graphed refinement, built on the first solve, bound to this decision."""
         if self._graphed_refinement is None:
             from rp1.core.agent.solver.graphed import GraphedRefinement
 
@@ -283,17 +254,13 @@ class RP1Solver(CEMSolver):
             if getattr(wm, "wants_proprio", False):
                 gpro = info_dict.get("goal_state")
                 if gpro is None:
-                    raise KeyError(
-                        "proprio-variant WM: info_dict lacks 'goal_state' (goal agent position for the goal latent)"
-                    )
+                    raise KeyError("proprio-variant WM: info_dict lacks 'goal_state'")
                 gpro = torch.as_tensor(np.asarray(gpro), dtype=torch.float32, device=self.device)
                 gpro = gpro.reshape(gx.shape[0], -1)[:, -2:]  # last frame's (x, y)
                 genc_in["proprio"] = gpro.unsqueeze(1).expand(-1, gx.shape[1], -1)
             zg = wm.encode(genc_in)["emb"][:, -1].float()
 
-        # everything above is observation/goal encoding; everything below is
-        # planning. Only the refinement is graph-captured, so the two are timed
-        # separately.
+        # encoding and planning are timed separately; only planning is graph-captured
         self._last_encode_seconds = time.time() - encode_start
         B = n_envs
         zh_r, zg_r = z_hist, zg
@@ -345,7 +312,7 @@ class RP1Solver(CEMSolver):
                 A = self.actor(A, gA, E)
                 buf.append(A.clone())
         with torch.no_grad():
-            if not buf:  # iters_override=0: emit the initial plan untouched
+            if not buf:  # zero iterations: the initial plan
                 buf = [A.detach().clone()]
             cands = torch.stack(buf if self.rp1_select == "buffer" else buf[-1:], dim=1)
             C = cands.shape[1]
@@ -354,7 +321,6 @@ class RP1Solver(CEMSolver):
             ah_c = a_hist.repeat_interleave(C, dim=0)
             zg_c = zg_r.repeat_interleave(C, dim=0)
             if graphed_ref is not None and C == 1:
-                # selection unroll through the same captured graph (shape matches)
                 Ef = graphed_ref.score(cf).view(B, C)
             else:
                 final_trajectory = rollout_traj(wm, zh_c, ah_c, cf)
@@ -372,7 +338,6 @@ class RP1Solver(CEMSolver):
         mean = self._proposal_rp1(info_dict, total_envs)
         var = self.var_scale * torch.ones_like(mean)
 
-        # optional MPPI refinement around the rp1 plan (n_steps=0 -> pure rp1)
         for start_idx in range(0, total_envs, self.batch_size):
             end_idx = min(start_idx + self.batch_size, total_envs)
             bs = end_idx - start_idx
@@ -419,7 +384,7 @@ class RP1Solver(CEMSolver):
         total_seconds = time.time() - start_time
         encode_seconds = getattr(self, "_last_encode_seconds", 0.0)
         logger.info(
-            f"rp1 solve completed in {total_seconds:.4f} seconds "
+            f"RP1 solve completed in {total_seconds:.4f} seconds "
             f"(encode {encode_seconds:.4f}, plan {total_seconds - encode_seconds:.4f})"
         )
         return outputs

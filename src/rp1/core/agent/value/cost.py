@@ -1,12 +1,10 @@
-"""MetricCost: drop-in terminal cost wrapping a frozen world model + a metric.
+"""MetricCost: a planning cost that scores a frozen world model's rollouts with a learned value.
 
-This implements the **Costable** protocol so it plugs directly into any solver
-(``CEMSolver`` etc.) in place of the world model. It reuses the frozen WM's
-``encode`` / ``rollout`` to obtain the predicted terminal latent and the goal
-latent (exactly what ``LeWM.get_cost`` already computes), then applies a learned
-TRM metric as the terminal cost.
+It implements Stable-WM's cost protocol, so any sampling solver plans with it in
+place of the world model. The world model's own cost computes the predicted
+terminal latent and the goal latent; the value then scores them.
 
-Modes (paper terminology):
+Modes:
 
 * ``latent``      -- passthrough baseline ``c_lat = ||z_hat_T - z_g||^2`` (the
                      mismatched Euclidean cost the paper repairs).
@@ -30,13 +28,12 @@ from rp1.core.agent.value.base import TensorInfo, ValueMetric
 
 
 class MetricCost(nn.Module):
-    """Wrap a frozen base WM and a metric module behind the cost interface.
+    """Wrap a frozen world model and a value behind the cost interface.
 
     Args:
-        base_wm: a frozen world model exposing ``get_cost`` that, as a side
-            effect, populates ``info_dict['predicted_emb']`` (rollout) and
-            ``info_dict['goal_emb']`` (encoded goal) -- true for ``LeWM`` and the
-            lightweight state-WM in this repo.
+        base_wm: a frozen world model whose ``get_cost`` also fills
+            ``info_dict['predicted_emb']`` (rollout) and ``info_dict['goal_emb']``
+            (encoded goal).
         metric: a module with ``cost(z_pred, z_goal) -> Tensor`` (regression head,
             TD value, or contrastive critic). ``None`` only for ``latent`` mode.
         mode: one of ``latent | replacement | hybrid | shuffled``.
@@ -91,9 +88,7 @@ class MetricCost(nn.Module):
         predicted = info_dict["predicted_emb"]
         goal_raw = info_dict["goal_emb"]
         base_dim = predicted.shape[-1]
-        # Generic one-frame metrics predate explicit checkpoint metadata.
-        # rp1's persisted metrics expose ``latent_dim`` so wider history
-        # inputs can be reconstructed without inspecting implementation layers.
+        # a metric without ``latent_dim`` takes one frame; a wider one takes a window
         metric_dim = int(getattr(self.metric, "latent_dim", base_dim))
         if metric_dim % base_dim:
             raise ValueError(f"metric latent_dim={metric_dim} is not a multiple of world-model latent dim={base_dim}")
@@ -155,7 +150,7 @@ class MetricCost(nn.Module):
         return torch.stack(costs).amax(dim=0)
 
     def get_cost(self, info_dict: TensorInfo, action_candidates: torch.Tensor) -> torch.Tensor:
-        # base.get_cost computes c_lat AND populates predicted_emb / goal_emb.
+        # also fills predicted_emb and goal_emb
         c_lat = self.base.get_cost(info_dict, action_candidates)
         if self.mode == "latent":
             return c_lat

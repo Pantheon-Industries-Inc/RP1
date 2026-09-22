@@ -1,4 +1,4 @@
-"""rp1 planning costs for the LeWM/PLDM implementations in SWM 0.1.1."""
+"""The planning cost of Stable-WM 0.1.1's LeWM and PLDM, with its goal broadcasting fixed."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class LatentGoalCost(nn.Module):
 
 
 def as_planning_cost(model: nn.Module) -> PlanningCost:
-    """Wrap only affected Stable-WM baseline models; leave rp1 models alone."""
+    """Wrap Stable-WM's LeWM and PLDM; return any other planning cost unchanged."""
     module = type(model).__module__
     name = type(model).__name__
     if module.startswith("stable_worldmodel.wm.") and name in {"LeWM", "PLDM"}:

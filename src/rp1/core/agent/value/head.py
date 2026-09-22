@@ -1,20 +1,7 @@
-"""Pairwise metric heads for Trajectory Reachability Metrics (TRM).
+"""Goal-conditioned value heads over pairs of latent states.
 
-The core object is a small scalar-output network operating on a pair of latent
-states ``(z_i, z_j)`` through the feature map
-
-    phi(z_i, z_j) = [ z_i , z_j , z_i - z_j , |z_i - z_j| ]
-
-as described in "Beyond Euclidean Proximity" (arXiv 2605.22164). The head is a
-two-hidden-layer MLP (256 units, SiLU) with a Softplus scalar output, so the
-metric is non-negative.
-
-Every metric module in this package exposes a common inference contract::
-
-    module.cost(z_pred, z_goal) -> Tensor   # lower == more reachable / closer
-
-so that :class:`rp1.core.agent.value.cost.MetricCost` can use any learner
-(regression / TD / contrastive) behind the same terminal-cost interface.
+Every head exposes ``cost(z_pred, z_goal)``, lower meaning more reachable, so
+:class:`rp1.core.agent.value.cost.MetricCost` can plan with any of them.
 """
 
 from __future__ import annotations
@@ -45,14 +32,11 @@ class PairwiseMetricHead(nn.Module):
 
     Args:
         latent_dim: Dimension ``D`` of the latent states.
-        hidden_dim: Width of each hidden layer (paper uses 256).
-        depth: Number of hidden layers (paper uses 2).
-        softplus: If ``True`` (default) apply Softplus to the output so the
-            metric is non-negative. TD / contrastive learners that want a raw
-            scalar can disable it.
-        symmetric: If ``True``, evaluate both orderings and average, yielding a
-            symmetric metric ``m(z_i, z_j) = m(z_j, z_i)``. The paper instead
-            relies on random-order pair sampling, so this defaults to ``False``.
+        hidden_dim: Width of each hidden layer.
+        depth: Number of hidden layers.
+        softplus: Apply Softplus to the output so the metric is non-negative.
+        symmetric: Average both orderings, making ``m(z_i, z_j) = m(z_j, z_i)``;
+            the paper instead samples pairs in random order.
     """
 
     def __init__(
@@ -174,8 +158,8 @@ class QuasimetricHead(nn.Module):
 class L2WindowCost(nn.Module):
     """Parameter-free L2 cost on concatenated latent frames.
 
-    ``latent_dim`` is the complete per-side width. A three-frame control for a
-    192-dimensional world model therefore declares ``latent_dim=576``.
+    ``latent_dim`` is the complete per-side width: a window of ``m`` frames of a
+    ``D``-dimensional world model declares ``m * D``.
     """
 
     def __init__(self, latent_dim: int) -> None:

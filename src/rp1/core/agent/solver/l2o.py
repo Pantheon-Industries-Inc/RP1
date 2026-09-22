@@ -1,28 +1,18 @@
-"""L2OSolver — plan with a trained L2O-MPC learned-optimizer checkpoint.
+"""L2OSolver: plan with a trained L2O-MPC checkpoint.
 
 *Learning to Optimize in Model Predictive Control* (Sacks & Boots, ICRA 2022)
 keeps MPC's sample-rollout-reduce loop and learns the whole reduction;
 :class:`L2ONet` holds the learned update and this solver supplies the rollouts
 and the cost.
 
-Per decision the solver spends ``num_samples * iters`` forward world-model
-unrolls and no backward pass — the shipped configuration (64 x 4 = 256)
-matches DMPO's deployed budget exactly, so the two learned-optimizer rows
-differ only in method, not compute. The checkpoint's sample count is
-authoritative: the network consumes the ``N`` costs positionally, so ``N``
-and the horizon cannot be changed after training. The iteration count can be
-(``iters``), as with DMPO.
+A decision costs ``num_samples * iters`` forward world-model unrolls and no
+backward pass. The network reads the ``N`` costs positionally, so the sample
+count and the horizon are fixed by the checkpoint; the iteration count is not
+(``iters``). Costs come from the checkpoint's value through the frozen world
+model.
 
-Costs come from the checkpoint's own goal-conditioned value through the frozen
-world model — the same critic every other planner row is scored against, so an
-L2O-vs-DMPO-vs-rp1 table isolates the *planner*.
-
-Warm start: L2O-MPC has no learned shift model; the previous decision's
-unexecuted tail is shift-forwarded the standard DMD-MPC way. Under this
-repository's open-loop protocol (``receding_horizon == horizon``) nothing
-survives the shift and the warm start is inert by construction.
-
-Trainer: :mod:`rp1.training.phases.agent.l2o`.
+L2O-MPC has no learned warm start: the unexecuted tail of the previous plan is
+shifted forward. With ``receding_horizon == horizon`` nothing is left of it.
 """
 
 import time
@@ -71,9 +61,9 @@ class L2OSolver(CEMSolver):
         self,
         *args: Any,
         checkpoint: PlannerCheckpoint,
-        iters: int | None = None,
-        cost_chunk: int = 0,
-        graphed: bool = False,
+        iters: int | None,
+        cost_chunk: int,
+        graphed: bool,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)

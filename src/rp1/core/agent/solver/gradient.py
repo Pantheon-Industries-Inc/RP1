@@ -1,4 +1,4 @@
-"""Small compatibility extension of Stable-WM's gradient solver."""
+"""Stable-WM's gradient solver with device-safe warm starts and solve timing."""
 
 from __future__ import annotations
 
@@ -22,9 +22,8 @@ class GradientSolver(_GradientSolver):
         return result
 
     def init_action(self, n_envs: int, actions: torch.Tensor | None = None) -> None:
-        # Stable-WM 0.1.1 only transfers ``actions`` when it must append a
-        # tail. A complete warm start therefore stays on the caller's device.
-        # Normalize that input, then let the dependency own all solver logic.
+        # Stable-WM 0.1.1 moves ``actions`` to the solver device only when it
+        # appends a tail, so a full-horizon warm start stays on the caller's device.
         if actions is not None:
             actions = actions.to(self.device)
         super().init_action(n_envs, actions)

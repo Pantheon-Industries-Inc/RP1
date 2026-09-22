@@ -1,35 +1,16 @@
-"""CUDA-graph-captured rp1 refinement — an opt-in inference mode.
+"""CUDA-graph captures of the planners' world-model scoring.
 
-The rp1 decision is launch-bound, not compute-bound: ~25k sequential kernel
-launches at 0.004% of GPU peak. This module records the per-iteration score
-computation (world-model unroll -> trajectory value, forward AND backward)
-into CUDA graphs once, then replays them per refinement iteration. Measured on
-an architecture-matched benchmark (job 4840, H200): 272.6 -> 29.3 ms/decision
-at batch 1, final-plan deviation vs the eager production path 5.96e-8 (one
-float32 ulp; identical to the trajectory-reuse deviation — capture itself adds
-zero), fp32 throughout.
+A planning decision on a small batch is bound by kernel launches rather than
+compute, so the scoring is recorded into CUDA graphs once and replayed:
 
-The gradient unroll also produces the actor's value input, so the duplicate
-scoring unroll the audit flagged as dead work is never executed.
+  * :class:`GraphedRefinement` -- the rp1 solver: score and its backward for
+    one plan per problem, replayed every refinement iteration.
+  * :class:`GraphedCost` -- the L2O-MPC solver: the forward-only cost of ``N``
+    sampled plans per problem, replayed every inner iteration.
 
-Constraints inherited from CUDA graphs:
-  * Static shapes: one capture per (batch, horizon, action_dim). New batch
-    sizes trigger a fresh capture (seconds); shrinking eval batches must be
-    padded by the caller (audit fix #12) or left on the eager path.
-  * The captured tensors' addresses are fixed: inputs are staged by copying
-    into static buffers; the world model and value weights may be updated
-    in place but must not be reallocated after capture.
-
-Two captures live here, one per planner family:
-  * :class:`GraphedRefinement` — rp1/rp1: score AND backward for one plan per
-    problem, replayed per refinement iteration.
-  * :class:`GraphedCost` — the learned-optimizer solvers (L2O-MPC, DMPO):
-    forward-only cost of ``N`` sampled plans per problem, replayed per inner
-    iteration. No backward exists on that path, so this is a plain
-    ``CUDAGraph`` capture rather than ``make_graphed_callables``.
-
-This file is intentionally self-contained and imported lazily by the solvers
-only when ``graphed`` is enabled — the default eager path is untouched.
+CUDA graphs fix shapes and addresses: each batch size is captured once (which
+takes seconds), inputs are copied into static buffers, and the world model's
+and value's weights must not be reallocated after capture.
 """
 
 from collections.abc import Callable
@@ -45,13 +26,12 @@ __all__ = ["GraphedCost", "GraphedRefinement"]
 
 
 class GraphedRefinement:
-    """Per-batch-size cache of CUDA-graphed rp1 score functions.
+    """CUDA-graphed rp1 score and value gradient, captured per batch size.
 
-    One instance lives on the solver. ``bind()`` stages a decision's context
-    (latent history, action history, goal) into the static buffers, capturing
-    graphs on first use of a batch size; ``step()`` then serves one refinement
-    iteration: score, detached trajectory features, and the exact value
-    gradient — one forward-graph replay plus one backward-graph replay.
+    ``bind()`` stages a decision's latent history, action history and goal,
+    capturing on the first use of a batch size; ``step()`` serves one
+    refinement iteration: the score, the detached trajectory and the value
+    gradient.
     """
 
     def __init__(
@@ -66,7 +46,7 @@ class GraphedRefinement:
         warmup_iters: int,
     ) -> None:
         if not torch.cuda.is_available() or torch.device(device).type != "cuda":
-            raise ValueError("graphed rp1 inference requires a CUDA device")
+            raise ValueError("graphed refinement requires a CUDA device")
         self._wm = wm
         self._value = value
         self._objective = temporal_objective

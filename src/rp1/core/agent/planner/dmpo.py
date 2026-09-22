@@ -1,8 +1,7 @@
-"""DMPO — the learned MPC inner loop of *Deep Model Predictive Optimization*.
+"""DMPO: the learned MPC inner loop of *Deep Model Predictive Optimization*.
 
-Reference: Sacks, Rana, Huang, Spitzer, Shi, Boots, "Deep Model Predictive
-Optimization", ICRA 2024 (arXiv:2310.04590); authors' code
-``jisacks/dmpo`` (``dmpo/controllers/dmpo_policy.py``).
+Sacks, Rana, Huang, Spitzer, Shi, Boots, ICRA 2024 (arXiv:2310.04590); the
+authors' code is ``jisacks/dmpo``.
 
 DMPO keeps MPC's structure — sample ``N`` action sequences, roll them out,
 reduce their costs into a new sampling distribution — and *learns* the
@@ -25,24 +24,22 @@ reduction. Two MLPs replace the hand-written update:
 The optimizer never sees the state: its only task-specific signal is the cost
 vector, which is what makes the same learned rule reusable across goals.
 
-Deltas from the reference implementation, all deliberate:
+Deltas from the reference implementation:
 
-- **No stochastic search distributions.** The paper trains ``m_phi`` with PPO
-  on a real quadrotor, so the actor must emit distributions over
-  ``(mu, sigma)`` to get a policy gradient. Here the world model is
-  differentiable, so :mod:`rp1.training.phases.agent.dmpo` trains the same networks by
-  pathwise gradients (the convention this repository uses for its own learned
-  planner), and the ``mean_search_std`` / ``std_search_std`` heads are
-  dropped. Everything on the forward path — cost normalization, gating, the
-  MPPI residual, the multiplicative covariance update, the shift residual — is
-  the reference computation.
+- **Pathwise training.** The paper trains ``m_phi`` with PPO, which needs the
+  actor to emit search distributions over ``(mu, sigma)``. The world model here
+  is differentiable, so :mod:`rp1.training.phases.agent.dmpo` trains the same
+  networks by pathwise gradients; the search heads (``learn_search_std``) exist
+  only for the PPO trainer, :mod:`rp1.training.phases.agent.dmpo_ppo`. The
+  forward path (cost normalization, gating, the MPPI residual, the
+  multiplicative covariance update, the shift residual) is the reference
+  computation.
 - **Gate activation follows the code, not the paper.** The paper describes a
-  sigmoid-bounded gate in ``[0, 1]``; ``dmpo_policy.py`` uses ``tanh``. This
-  module uses ``tanh`` (the artifact that produced the published numbers) and
-  exposes it as ``gate_activation`` for the paper-literal variant.
-- **Action bounds are the symmetric plan clip** ``[-amax, amax]`` shared with
-  the rest of this repository, in place of the quadrotor's asymmetric thrust
-  limits.
+  sigmoid gate in ``[0, 1]``; the reference code, which produced the published
+  numbers, uses ``tanh``. ``gate_activation`` selects either.
+- **Action bounds** are the environment's per-dimension limits in z-scored
+  units (``action_lows``/``action_highs``), as in the reference; without them,
+  plans are clipped symmetrically at ``amax``.
 """
 
 import math
@@ -85,7 +82,7 @@ def gaussian_halton(
     mapped through the inverse Gaussian CDF — DMPO's fixed sample set, drawn
     once and reparameterized by the current distribution at every decision, so
     the actor sees costs of a *consistent* sample pattern instead of fresh
-    noise (``dmpo/utils.py:generate_gaussian_halton_samples``).
+    noise.
     """
     bases = torch.tensor(_primes(dim), dtype=torch.float64)
     indices = torch.arange(seed + 1, seed + 1 + num_samples, dtype=torch.float64).unsqueeze(1)
@@ -244,12 +241,10 @@ class DMPONet(nn.Module):
         # sample 0 is the current mean itself (reference: prepended zeros row)
         self.register_buffer("base_samples", torch.cat([torch.zeros_like(base[:1]), base], dim=0))
 
-        # Action bounds. The reference clips samples, normalizes the mean, and
-        # scales the residual by the *environment's* per-dimension limits
-        # (`action_lows`/`action_highs`). Passing them is the faithful setting;
-        # the symmetric `amax` fallback exists for checkpoints that predate it
-        # and for unit tests. Note `amax` is NOT interchangeable with rp1's
-        # `amax`, which is a tuned residual trust region rather than a bound.
+        # The reference clips samples, normalizes the mean and scales the residual
+        # by the environment's per-dimension limits; `amax` is the symmetric
+        # fallback. Unlike the rp1 planner's action limit it is a bound, not a
+        # tuned trust region.
         if (action_lows is None) != (action_highs is None):
             raise ValueError("pass both action bounds or neither")
         if action_lows is None:
