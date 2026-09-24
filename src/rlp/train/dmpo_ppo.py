@@ -32,6 +32,7 @@ training, so this reproduces DMPO's *algorithm* but not its robustness claim
 requires environment rollouts; see docs/dmpo/README_dmpo.md.
 """
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -308,23 +309,18 @@ def _run(cfg: DictConfig) -> None:
                 policy_loss, value_loss = float(loss.item()), float(critic_loss.item())
         return policy_loss, value_loss
 
-    for iteration in range(int(a.ppo_iterations)):
-        rollout, stats = collect()
-        policy_loss, value_loss = optimize(rollout)
-        if iteration % 10 == 0:
-            logger.info(
-                f"ppo {iteration}: return {stats['return']:.3f} progress {stats['progress']:.3f} "
-                f"distance {stats['distance']:.3f} policy {policy_loss:.4f} value {value_loss:.4f}"
-            )
-
-    value_checkpoint = save_metric(reward_metric.cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory)
+    # Save the frozen reward metric up front (the snapshots below record its path). Deep-copy rather
+    # than moving: `reward_metric.cpu()` would leave the live reward on CPU for the rest of training.
+    value_checkpoint = save_metric(
+        copy.deepcopy(reward_metric).cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory
+    )
     logger.success(f"Copied the frozen critic to {value_checkpoint}")
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
-    net.eval()
-    torch.save(
-        {
+
+    def _payload() -> dict:
+        return {
             "kind": "dmpo",
-            "sd": net.cpu().state_dict(),
+            "sd": {k: v.detach().cpu().clone() for k, v in net.state_dict().items()},
             "z_dim": sampler.latent_dim,
             "horizon": int(a.horizon),
             "a_dim": sampler.a_dim,
@@ -351,9 +347,30 @@ def _run(cfg: DictConfig) -> None:
             "value_context": context,
             "temporal_objective": "terminal",
             "objective": "ppo",
-        },
-        planner_checkpoint,
-    )
+        }
+
+    # Periodic snapshots so the deployed optimizer can be CHOSEN on validation draws, the way the RLP
+    # rows choose their (teacher, actor) pair. The PPO return is a noisy walk with no trend over the
+    # paper's 1000 iterations (measured 2026-09-24 on all three envs), so the final iterate is an
+    # arbitrary point in that walk; the paper itself says "up to 1000 iterations". save_every=0 keeps
+    # the old behaviour.
+    save_every = int(a.get("save_every", 0) or 0)
+    for iteration in range(int(a.ppo_iterations)):
+        rollout, stats = collect()
+        policy_loss, value_loss = optimize(rollout)
+        if iteration % 10 == 0:
+            logger.info(
+                f"ppo {iteration}: return {stats['return']:.3f} progress {stats['progress']:.3f} "
+                f"distance {stats['distance']:.3f} policy {policy_loss:.4f} value {value_loss:.4f}"
+            )
+        step_no = iteration + 1
+        if save_every and step_no % save_every == 0 and step_no < int(a.ppo_iterations):
+            snap = planner_checkpoint.with_name(f"{planner_checkpoint.stem}_step{step_no}{planner_checkpoint.suffix}")
+            torch.save(_payload(), snap)
+            logger.info(f"[snapshot] iteration {step_no} -> {snap.name}")
+
+    net.eval()
+    torch.save(_payload(), planner_checkpoint)
     logger.success(f"Saved the DMPO optimizer to {planner_checkpoint}")
 
 

@@ -17,6 +17,7 @@ output:
   planner_checkpoint: l2o.pt
   value_checkpoint: value
 steps: 2000
+save_every: 0        # >0: also save planner snapshots every N steps, for validation-based selection
 batch: 16
 frameskip: 5
 max_delta: 10

@@ -41,6 +41,9 @@ envs:
   TRAIN_SEEDS: "0 1 2"      # reportable cells average three optimizer seeds
   EVAL_SEEDS: "42 43 44"
   EVAL_CONDS: "dmpo mppi_value"  # dmpo | mppi_value | cem_value | noop
+  SAVE_EVERY: "0"           # >0: snapshot the optimizer every N PPO iterations (enables SELECT)
+  SELECT: "0"                # 1 = choose the deployed snapshot on VAL_SEEDS, as the RLP rows do
+  VAL_SEEDS: "48 49 50 51"   # validation draws (never the report draws)
   EVAL_PAR: "8"             # eval cells in flight at once (bit-exact across GPUs).
                             # Cube and Reacher-LeJEPA cells died at 8 wide on a
                             # 920 GB node (killed, no traceback) — lower it for
@@ -52,6 +55,10 @@ envs:
   TWOROOM_ENVS: "100"       # parallel envs while recording that pool
   CACHE_TAG: ""             # reuse another experiment's caches (default: own tag)
   PANTHEON_USER: armin@pantheon.inc
+  VALUE_EXTRA_OVERRIDE: ""  # uniJ critic recipe, e.g. "value.gamma=0.99 value.expectile=0.03 value.n_step=1"
+  VALUE_STEPS_OVERRIDE: ""  # uniJ teacher budget (18000)
+  HORIZONS_OVERRIDE: ""     # one stack per job (25 | 100)
+  MAX_DELTA_OVERRIDE: ""    # uniJ band (20)
   EXPERIMENT_TAG: dmpo
 
 workdir: .
@@ -172,6 +179,13 @@ run: |
       ;;
     *) echo "unknown ENVNAME=$ENVNAME"; exit 1;;
   esac
+  # uniJ alignment (2026-09-24): override the per-env critic recipe / horizon list so the baseline trains
+  # against the SAME teacher recipe as the unified RLP rows (gamma per stack, n-step 1, expectile 0.03, 18k steps)
+  [ -n "${VALUE_EXTRA_OVERRIDE:-}" ] && VALUE_EXTRA="$VALUE_EXTRA_OVERRIDE"
+  [ -n "${VALUE_STEPS_OVERRIDE:-}" ] && VALUE_STEPS=$VALUE_STEPS_OVERRIDE
+  [ -n "${HORIZONS_OVERRIDE:-}" ] && HORIZONS="$HORIZONS_OVERRIDE"
+  [ -n "${MAX_DELTA_OVERRIDE:-}" ] && MAX_DELTA=$MAX_DELTA_OVERRIDE
+
   # the cache filename must encode the episode split: a held-out cache and a
   # full-pool cache of the same cell are different data under one name
   NAME="${ENVNAME}_${BASE}_w${VALUE_FRAMES}${NAME_SUFFIX:-}"
@@ -207,7 +221,7 @@ run: |
     (  # one seed per GPU: the seeds are independent, so they run concurrently
       if [ "$OBJECTIVE" = ppo ]; then
         # offline DMPO: the paper's PPO objective, closed inside the world model
-        TRAINER="model=dmpo_ppo ppo_iterations=$PPO_ITERATIONS batch=$PPO_BATCH decisions=$PPO_DECISIONS"
+        TRAINER="model=dmpo_ppo ppo_iterations=$PPO_ITERATIONS batch=$PPO_BATCH decisions=$PPO_DECISIONS save_every=${SAVE_EVERY:-0}"
       else
         TRAINER="model=dmpo steps=$DMPO_STEPS batch=$DMPO_BATCH"
       fi
@@ -222,6 +236,12 @@ run: |
       RUN=$(grep -a -m1 "Run directory:" "$D/log_train_s${S}.txt" | awk '{print $NF}')
       [ -d "$RUN" ] || { echo "seed $S: could not resolve its run directory"; exit 1; }
       cp "$RUN/checkpoints/dmpo.pt" "$D/dmpo_s${S}.pt"
+      # periodic snapshots (save_every>0) for validation-based selection; the critic is frozen and
+      # shared by every snapshot, so one value dir per seed is enough
+      for f in "$RUN"/checkpoints/dmpo_step*.pt; do
+        [ -e "$f" ] || continue; n=$(basename "$f" .pt); n=${n#dmpo_step}
+        cp "$f" "$D/dmpo_s${S}_step${n}.pt"
+      done
       rm -rf "$D/dmpo_value_s${S}"; cp -r "$RUN/checkpoints/value" "$D/dmpo_value_s${S}"
     ) > "$D/log_train_s${S}.txt" 2>&1 &
     SEED_INDEX=$((SEED_INDEX + 1))
@@ -278,6 +298,48 @@ run: |
     sleep 3
   }
 
+  # ------------------------------------------------- validation selection (SELECT=1)
+  # The RLP rows choose their deployed (teacher, actor) pair on validation draws 48-51; handing the
+  # baselines a fixed final iterate instead is not the same treatment, and the PPO return is a noisy
+  # walk with no trend over the paper's 1000 iterations, so that iterate is arbitrary. Mirror RLP:
+  # score every snapshot on the validation draws, take ONE shared step for the whole cell by the mean
+  # over training seeds (ties -> the earlier step), and deploy that step for every seed.
+  for S in $TRAIN_SEEDS; do ln -sf "$D/dmpo_s${S}.pt" "$D/deploy_s${S}.pt"; done
+  if [ "$SELECT" = 1 ]; then
+    SNAPS=$(ls "$D"/dmpo_s*_step*.pt 2>/dev/null | sed -E 's/.*_step([0-9]+)\.pt$/\1/' | sort -n -u)
+    if [ -z "$SNAPS" ]; then
+      echo "[select] no snapshots found (SAVE_EVERY=$SAVE_EVERY); deploying the final iterate"
+    else
+      VH=$(echo ${HORIZONS:-25} | awk '{print $1}')
+      case $VH in
+        25)  VHOR="evaluation.goal_offset_steps=25 evaluation.budget=50";;
+        100) VHOR="evaluation.goal_offset_steps=100 evaluation.budget=200";;
+      esac
+      # reacher reports two tolerances but selects on ONE (the first), as the RLP reacher rows do
+      VTAU=$(echo ${TAUS:--} | awk '{print $1}'); VTOL=""
+      [ "$VTAU" != "-" ] && VTOL="environment.success_threshold=$VTAU"
+      echo "[select] snapshots: $(echo $SNAPS | tr '\n' ' ') + final; val draws $VAL_SEEDS at h$VH ${VTAU}"
+      for N in $SNAPS final; do
+        for S in $TRAIN_SEEDS; do
+          AP="$D/dmpo_s${S}_step${N}.pt"; [ "$N" = final ] && AP="$D/dmpo_s${S}.pt"
+          [ -f "$AP" ] || continue
+          for VS in $VAL_SEEDS; do
+            spawn "val_a${S}_step${N}_h${VH}" $VS $VHOR $VTOL core/solver=dmpo \
+              core.solver.actor_path="$AP" core.solver.value_path="$D/dmpo_value_s${S}"
+          done
+        done
+      done
+      wait
+      BEST=$(python3 scripts/sky/tools/select_snapshot.py "$D" "$TRAIN_SEEDS" "$VAL_SEEDS" "$VH")
+      echo "[select] deployed step: $BEST"
+      for S in $TRAIN_SEEDS; do
+        AP="$D/dmpo_s${S}_step${BEST}.pt"; [ "$BEST" = final ] && AP="$D/dmpo_s${S}.pt"
+        [ -f "$AP" ] && ln -sf "$AP" "$D/deploy_s${S}.pt"
+      done
+      echo "SELECTED_STEP=$BEST" > "$D/selected_step.txt"
+    fi
+  fi
+
   for ES in $EVAL_SEEDS; do
     for H in ${HORIZONS:-25}; do
       case $H in
@@ -296,7 +358,7 @@ run: |
             dmpo)
               for S in $TRAIN_SEEDS; do
                 spawn "dmpo_a${S}_${TAG}" $ES $HOR $TOL core/solver=dmpo \
-                  core.solver.actor_path="$D/dmpo_s${S}.pt" \
+                  core.solver.actor_path="$D/deploy_s${S}.pt" \
                   core.solver.value_path="$D/dmpo_value_s${S}"
               done;;
             # the sampling baseline DMPO learns a residual on, under the same

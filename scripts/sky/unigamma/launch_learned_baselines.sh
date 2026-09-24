@@ -20,7 +20,16 @@ SEEDS=${TRAIN_SEEDS:-"0 1 2"}
 #    COUNT would cost days per seed without matching the compute the paper spends. We train to convergence instead:
 #    L2O_POLICY_STEPS (default 50000 = 25x the original port, 4x the 12k actor budget) and report the plateau.
 DMPO_PPO_ITERS=${DMPO_PPO_ITERS:-1000}
-L2O_POLICY_STEPS=${L2O_POLICY_STEPS:-50000}
+# Budget + SELECTION (2026-09-24). RLP deploys a snapshot CHOSEN on validation draws 48-51; a fixed
+# final iterate is not the same treatment, and both baselines' training objectives say that iterate is
+# arbitrary -- L2O's is flat from ~step 1,000 on Reacher/TwoRoom and rising (worse) on Cube, DMPO's PPO
+# return is a trendless walk in all three envs (the paper itself says "up to 1000 iterations").
+# So: snapshot periodically and select, exactly as the RLP rows do -- one shared step per cell by the
+# mean validation score over the training seeds, ties to the earlier step.
+# L2O's ladder is 3k..18k, the same six-point ladder the RLP teacher uses.
+L2O_POLICY_STEPS=${L2O_POLICY_STEPS:-18000}; L2O_SAVE_EVERY=${L2O_SAVE_EVERY:-3000}
+DMPO_SAVE_EVERY=${DMPO_SAVE_EVERY:-200}
+SELECT=${SELECT:-1}
 YAML=scripts/sky/${METHOD}_campaign.yaml
 CELLS=""
 case $WHICH in
@@ -33,6 +42,9 @@ case $WHICH in
 esac
 for c in $CELLS; do
   IFS=: read -r ENVN BASE HZ TSTEP <<< "$c"
+  # ONLY_BASE / ONLY_HZ: relaunch a single cell without re-touching its siblings
+  [ -n "${ONLY_BASE:-}" ] && [ "$BASE" != "$ONLY_BASE" ] && continue
+  [ -n "${ONLY_HZ:-}" ] && [ "$HZ" != "$ONLY_HZ" ] && continue
   P=""; [ "$BASE" = pldm ] && P="-p"
   if [ "$HZ" = 25 ]; then GAMMA=$UNI_GAMMA_H25; else GAMMA=$UNI_GAMMA_H100; fi
   VEX="value.gamma=$GAMMA value.expectile=$UNI_TD_EXPECTILE value.n_step=$UNI_NSTEP value.depth=$UNI_CRIT_DEPTH"
@@ -44,7 +56,9 @@ for c in $CELLS; do
   # blocks are clamped to the episode end. Relaxed 2026-09-24 in src/rlp/train/windows.py, exactly as the RLP actor
   # trainer had already relaxed it (scripts/sky/overlays/train_lip_ac.py), so the baselines see the band RLP saw.
   MD=${MD_OVERRIDE:-$UNI_MD}
-  EVAL_PAR_ARG=""; [ "$ENVN" = reacher ] && EVAL_PAR_ARG="--env EVAL_PAR=2"   # reacher MuJoCo evals abort when 8 run at once
+  # Reacher MuJoCo evals abort (core dump) when many run at once; 2-wide carried Reacher/PLDM but still
+  # core-dumped Reacher/LeJEPA after the first rollout, so that cell needs REACHER_EVAL_PAR=1.
+  EVAL_PAR_ARG=""; [ "$ENVN" = reacher ] && EVAL_PAR_ARG="--env EVAL_PAR=${REACHER_EVAL_PAR:-2}"
   NAME=rlp-${PFX}-${METHOD}-h${HZ}${P}; TAG=${NAME}-${DATE}
   # A relaunch under a NEW date needs a fresh EXPERIMENT_TAG (the yamls cache trained policies and eval results per
   # tag, so reusing the tag would silently return the old run's numbers) but should NOT re-encode the latent caches,
@@ -56,7 +70,9 @@ for c in $CELLS; do
     --env ENVNAME=$ENVN --env BASE=$BASE --env VALUE_FRAMES=$VF --env AMAX=$UNI_AMAX \
     --env VALUE_EXTRA_OVERRIDE="$VEX" --env VALUE_STEPS_OVERRIDE=$TSTEP --env HORIZONS_OVERRIDE=$HZ \
     --env MAX_DELTA_OVERRIDE=$MD --env TRAIN_SEEDS="$SEEDS" --env EVAL_SEEDS="$UNI_REPORT_DRAWS" \
-    $([ "$METHOD" = l2o ] && echo "--env L2O_STEPS=$L2O_POLICY_STEPS" || echo "--env OBJECTIVE=ppo --env PPO_ITERATIONS=$DMPO_PPO_ITERS") \
+    $([ "$METHOD" = l2o ] && echo "--env L2O_STEPS=$L2O_POLICY_STEPS --env SAVE_EVERY=$L2O_SAVE_EVERY" \
+        || echo "--env OBJECTIVE=ppo --env PPO_ITERATIONS=$DMPO_PPO_ITERS --env SAVE_EVERY=$DMPO_SAVE_EVERY") \
+    --env SELECT=$SELECT --env VAL_SEEDS="$UNI_VAL_DRAWS" \
     --env SMOKE=0 --env EXPERIMENT_TAG="$TAG" --env CACHE_TAG="$CTAG" $EVAL_PAR_ARG \
     --env WANDB_PROJECT=RLP --env WANDB_ENTITY=armin-sommer --env PANTHEON_USER=$USERV 2>&1 | { grep -E "Submitted|sky jobs logs [0-9]+|rror" || true; } | tail -1
 done

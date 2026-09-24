@@ -40,6 +40,7 @@ has produced the caches and ``value_td``)::
         init_value=logs/<date>/<time>/checkpoints/value_td
 """
 
+import copy
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -224,22 +225,18 @@ def _run(cfg: DictConfig) -> None:
             final = score(z_hist, a_hist, z_goal, mean).mean()
         return float(loss.item()), float(final.item()), beta
 
-    for i in range(a.steps):
-        lr = cosine_interpolate(a.actor_lr, a.actor_lr_final, i, a.steps)
-        for group in optimizer.param_groups:
-            group["lr"] = lr
-        imitation, final_cost, beta = step(dagger_beta(i, int(a.steps), int(a.dagger_rounds), float(a.beta_decay)))
-        if i % 100 == 0:
-            logger.info(f"step {i}: imitation {imitation:.4f} E_final {final_cost:.3f} beta {beta:.2f} lr {lr:.2e}")
-
-    value_checkpoint = save_metric(critic.cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory)
+    # Save the frozen critic up front (the snapshots below record its path). Deep-copy rather than
+    # moving: `critic.cpu()` would leave the live cost function on CPU for the rest of training.
+    value_checkpoint = save_metric(
+        copy.deepcopy(critic).cpu(), run_name=a.output.value_checkpoint, cache_dir=a.run.directory
+    )
     logger.success(f"Copied the frozen critic to {value_checkpoint}")
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
-    net.eval()
-    torch.save(
-        {
+
+    def _payload() -> dict:
+        return {
             "kind": "l2o",
-            "sd": net.cpu().state_dict(),
+            "sd": {k: v.detach().cpu().clone() for k, v in net.state_dict().items()},
             "z_dim": sampler.latent_dim,
             "horizon": int(a.horizon),
             "a_dim": sampler.a_dim,
@@ -255,9 +252,27 @@ def _run(cfg: DictConfig) -> None:
             "value": str(value_checkpoint),
             "value_context": context,
             "temporal_objective": str(a.temporal_objective),
-        },
-        planner_checkpoint,
-    )
+        }
+
+    # Periodic snapshots so the deployed optimizer can be CHOSEN on validation draws, the way the
+    # RLP rows choose their (teacher, actor) pair -- a fixed final iterate is not the same treatment
+    # (2026-09-24). save_every=0 keeps the old behaviour: final iterate only.
+    save_every = int(a.get("save_every", 0) or 0)
+    for i in range(a.steps):
+        lr = cosine_interpolate(a.actor_lr, a.actor_lr_final, i, a.steps)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        imitation, final_cost, beta = step(dagger_beta(i, int(a.steps), int(a.dagger_rounds), float(a.beta_decay)))
+        if i % 100 == 0:
+            logger.info(f"step {i}: imitation {imitation:.4f} E_final {final_cost:.3f} beta {beta:.2f} lr {lr:.2e}")
+        step_no = i + 1
+        if save_every and step_no % save_every == 0 and step_no < int(a.steps):
+            snap = planner_checkpoint.with_name(f"{planner_checkpoint.stem}_step{step_no}{planner_checkpoint.suffix}")
+            torch.save(_payload(), snap)
+            logger.info(f"[snapshot] step {step_no} -> {snap.name}")
+
+    net.eval()
+    torch.save(_payload(), planner_checkpoint)
     logger.success(f"Saved the L2O-MPC optimizer to {planner_checkpoint}")
 
 
