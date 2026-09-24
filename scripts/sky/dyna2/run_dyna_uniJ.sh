@@ -13,6 +13,12 @@
 # The iteration that "works best" is chosen on the VALIDATION mean; its test row is the reported one.
 set -uo pipefail
 N=${1:-3}; DATE=${2:-20260923}; BASEDATE=${BASEDATE:-20260921}
+# HZLIST: which horizon stacks to RETRAIN and report. User decision 2026-09-24: h25 only -- Dyna's gain is
+# h25-specific (the h25 and h100 hard cores are disjoint; two iterations moved 1 of 17 h100 core tasks), so the
+# h100 retrains cost four GPU-hours per iteration for a number inside seed noise. COLLECTION still runs at BOTH
+# offsets (OFFSETS="25 100" below): the both-offset collection is what made iteration 2 work at all, and cutting
+# it would break comparability with the config-B Dyna rows.
+HZLIST=${DYNA_HZ:-"25 100"}
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd); cd "$ROOT"; export PATH="$HOME/.sky/bin:$PATH"
 USERV=armin@pantheon.inc; SP=${SP:-$ROOT/scratchpad}; mkdir -p "$SP"; LOG=$SP/dynaJ_driver.log; RES=$SP/dynaJ_results.md
 log(){ echo "[$(date -u +%m%d-%H:%M)] $*" | tee -a "$LOG"; }
@@ -61,7 +67,7 @@ for IT in $(seq ${START_IT:-1} $N); do
   # (3) retrain the fixed configs on the fine-tuned WMs: 4 cells x one 4-GPU job (six seeds, lock-free 8 slots)
   declare -A TID
   for BASE in lewm pldm; do P=""; [ "$BASE" = pldm ] && P="-p"; WM=/checkpoints/$USERV/rlp-cu-dynaJ-${BASE}-it${IT}-${DATE}/wm
-    for HZ in 25 100; do
+    for HZ in $HZLIST; do
       CELL=rlp-cu-uniJ-h${HZ}${P}-${BASEDATE}; read -r ROW STEP <<< "$(pick_of "$CELL")"; [ -n "${ROW:-}" ] || { log "no base lock for $CELL"; exit 1; }
       OUT=$(ENVS=cube HZ=$HZ ONLY_BASES=$BASE GPUS=4 SLOTS=8 CUBE_LOCK=none DATE=$DATE SEEDS="0 1 2 3 4 5" \
             DYNA_WM=$WM DYNA_IT=$IT DYNA_ROW=$ROW DYNA_STEP=$STEP bash scripts/sky/unigamma/launch_uniB.sh 2>&1)
@@ -71,7 +77,7 @@ for IT in $(seq ${START_IT:-1} $N); do
   for k in "${!TID[@]}"; do st=$(wait_job ${TID[$k]}); log "retrain job ${TID[$k]} ($k): $st"; done
   # (4) read the rows
   for BASE in lewm pldm; do P=""; [ "$BASE" = pldm ] && P="-p"
-    for HZ in 25 100; do TAG=rlp-cu-uniJ-h${HZ}${P}-dyna${IT}-${DATE}
+    for HZ in $HZLIST; do TAG=rlp-cu-uniJ-h${HZ}${P}-dyna${IT}-${DATE}
       SP=$SP scripts/cube_dyna_report.sh "$TAG" "$HZ" | tee -a "$RES" | tee -a "$LOG"
     done
   done
