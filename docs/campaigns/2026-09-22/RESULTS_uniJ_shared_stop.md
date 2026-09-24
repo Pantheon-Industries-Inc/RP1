@@ -252,19 +252,21 @@ episode cache has no episode long enough for the unified band of 20 — a deviat
 
 | env | base | stack | DMPO | L2O-MPC | best planner control | RLP uniJ |
 |---|---|---|---|---|---|---|
-| TwoRoom | LeJEPA | h25 | running | running | 100.0 (CEM) | 100.0 |
+| TwoRoom | LeJEPA | h25 | 69.3 | running | 100.0 (CEM) | 100.0 |
 | TwoRoom | LeJEPA | h100 | 65.3 | running | 73.0 (CEM) | 99.3 |
 | TwoRoom | PLDM | h25 | 72.7 | running | 100.0 (CEM) | 98.0 |
 | TwoRoom | PLDM | h100 | 44.7 | running | 53.3 (MPPI) | 94.0 |
 | Cube | LeWM | h25 | 66.0 | 66.0 | 80.0 (CEM) | 92.7 |
-| Cube | LeWM | h100 | 54.7 | running | 77.7 (CEM) | 85.3 |
+| Cube | LeWM | h100 | 54.7 | 54.0 | 77.7 (CEM) | 85.3 |
 | Cube | PLDM | h25 | 61.3 | running | 75.3 (CEM) | 85.3 |
-| Cube | PLDM | h100 | 49.3 | running | 69.3 (CEM) | 83.7 |
-| Reacher | PLDM | h25 (tau .05) | 20.7 | running | 68.7 (Adam) | 87.3 |
-| Reacher | LeJEPA | h25 (tau .05) | re-running | running | 71.7 (Adam) | 95.3 |
+| Cube | PLDM | h100 | 49.3 | 45.3 | 69.3 (CEM) | 83.7 |
+| Reacher | LeJEPA | h25 (tau .05) | 20.0 | running | 71.7 (Adam) | 95.3 |
+| Reacher | PLDM | h25 (tau .05) | 20.7 | 46.0 | 68.7 (Adam) | 87.3 |
 
-Reacher DMPO at tau 0.1: 37.3 (PLDM). Both learned baselines sit below every hand-written planner control
-in every cell measured, and far below on Reacher, where the inner-loop optimizer has to hit a tight tolerance.
+**DMPO is complete (10 of 10 cells).** At tau 0.1 the Reacher rows are 43.3 (LeJEPA) and 37.3 (PLDM)
+for DMPO, 73.3 (PLDM) for L2O, against RLP's 100.0 / 99.3. Both learned baselines sit below every
+hand-written planner control in every cell measured, and collapse on Reacher, where the inner-loop
+optimizer has to hit a tight tolerance rather than merely get close.
 
 **Goal band (2026-09-24).** TwoRoom first ran at the campaigns' native max_delta 12, because
 `WindowSampler` refused any cache whose episodes were not longer than max_delta + 4 and TwoRoom's fs5
