@@ -287,10 +287,16 @@ re-selected). The iteration to report is chosen per cell on the validation mean.
 
 | cell | base test (n=6) | dyna it1 val mean | dyna it1 test (n=6 median) | delta |
 |---|---|---|---|---|
-| Cube / LeWM / h25 | 92.7 | 93.00 | **95.0** (mean 95.0) | +2.3 |
-| Cube / LeWM / h100 | 85.3 | — | running (job 28490) | — |
-| Cube / PLDM / h25 | 85.3 | — | running (job 28491) | — |
-| Cube / PLDM / h100 | 83.7 | — | running (job 28492) | — |
+| Cube / LeWM / h25 | 92.7 | 93.00 | **95.0** (mean 95.0) | **+2.3** |
+| Cube / PLDM / h25 | 85.3 | 83.25 | **89.7** (mean 85.7) | **+4.4** |
+| Cube / * / h100 | — | — | dropped (user decision 2026-09-24) | — |
+
+h100 retrains were cut: Dyna's gain is h25-specific and measured to be so (the h25 and h100 hard cores
+are disjoint; two config-B iterations moved 1 of 17 h100 core tasks). Collection still runs at both
+offsets, which is what made config-B iteration 2 recover h100 at all.
+
+Cube/PLDM seed 3 is an outlier (val 67.0, test 69.3) that drags the mean to 85.7 while the median sits
+at 89.7; the other five seeds are 82.7-92.0.
 
 Per seed (LeWM h25, row `unig_ctrl_a2.5_t3000`): 93.3 / 95.3 / 94.7 / 96.0 / 94.7 / 96.0 — every seed at or
 above the base cell's median. Base validation mean for this cell was 89.83, so the gain shows on validation
