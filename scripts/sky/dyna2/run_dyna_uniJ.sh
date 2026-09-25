@@ -75,10 +75,26 @@ for IT in $(seq ${START_IT:-1} $N); do
       CELL=rlp-cu-uniJ-h${HZ}${P}-${BASEDATE}; read -r ROW STEP <<< "$(pick_of "$CELL")"; [ -n "${ROW:-}" ] || { log "no base lock for $CELL"; exit 1; }
       OUT=$(ENVS=cube HZ=$HZ ONLY_BASES=$BASE GPUS=4 SLOTS=8 CUBE_LOCK=none DATE=$DATE SEEDS="0 1 2 3 4 5" WORKSPACE="$WS" \
             DYNA_WM=$WM DYNA_IT=$IT DYNA_ROW=$ROW DYNA_STEP=$STEP bash scripts/sky/unigamma/launch_uniB.sh 2>&1)
-      TID[$BASE$HZ]=$(echo "$OUT" | jid); log "retrain $BASE h$HZ it$IT: row $ROW step $STEP -> job ${TID[$BASE$HZ]:-?}"
+      # launch_uniB.sh submits with --async, whose output carries a request UUID and NO "sky jobs logs <id>"
+      # line, so jid() returned EMPTY and wait_job below became a silent no-op: the driver reported the
+      # cell before its seeds existed and then launched the next iteration against missing actors
+      # (2026-09-25, cost iteration 3). Resolve the id by job NAME from the queue instead, newest first.
+      JN=rlp-cu-uniJ-h${HZ}${P}-dyna${IT}
+      TID[$BASE$HZ]=""
+      for _try in 1 2 3 4 5 6; do
+        TID[$BASE$HZ]=$(sky jobs queue --limit 400 2>/dev/null | awk -v n="$JN" '"'"'$3==n {print $1; exit}'"'"')
+        [ -n "${TID[$BASE$HZ]}" ] && break
+        sleep 20
+      done
+      [ -n "${TID[$BASE$HZ]}" ] || { log "FATAL: could not resolve a job id for $JN"; echo "$OUT" | tail -5 | tee -a "$LOG"; exit 1; }
+      log "retrain $BASE h$HZ it$IT: row $ROW step $STEP -> job ${TID[$BASE$HZ]}"
     done
   done
-  for k in "${!TID[@]}"; do st=$(wait_job ${TID[$k]}); log "retrain job ${TID[$k]} ($k): $st"; done
+  for k in "${!TID[@]}"; do
+    [ -n "${TID[$k]}" ] || { log "FATAL: no job id recorded for retrain $k"; exit 1; }
+    st=$(wait_job ${TID[$k]}); log "retrain job ${TID[$k]} ($k): $st"
+    [ "$st" = SUCCEEDED ] || { log "ABORT: retrain $k ended $st"; exit 1; }
+  done
   # (4) read the rows
   for BASE in lewm pldm; do P=""; [ "$BASE" = pldm ] && P="-p"
     for HZ in $HZLIST; do TAG=rlp-cu-uniJ-h${HZ}${P}-dyna${IT}-${DATE}
