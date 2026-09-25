@@ -62,7 +62,11 @@ for c in $CELLS; do
   # One eval per GPU on cube is the same rule the RLP cube rows settled on (CUBE_LOCK=gpu).
   case $ENVN in
     reacher) EP=${REACHER_EVAL_PAR:-1} ;;
-    cube)    EP=${CUBE_EVAL_PAR:-3} ;;
+    # cube: SERIAL. The spawn helper assigns GPUs round-robin by a monotonically increasing cell index,
+    # so when one slot frees the replacement can land on a GPU that is still busy -- "EVAL_PAR=NGPU" is
+    # NOT one-eval-per-GPU, and cube still core-dumped inside MuJoCo at 3-wide (2 of 4 cells, 2026-09-24).
+    # A cube eval is only 82 s, so serial costs ~1 h per cell and removes the failure mode entirely.
+    cube)    EP=${CUBE_EVAL_PAR:-1} ;;
     *)       EP=${TW_EVAL_PAR:-6} ;;
   esac
   EVAL_PAR_ARG="--env EVAL_PAR=$EP"
