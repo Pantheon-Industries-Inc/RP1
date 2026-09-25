@@ -131,11 +131,17 @@ with tempfile.TemporaryDirectory() as td:
                                text=True, capture_output=True, check=True).stdout
         lst = f"{td}/workdir_files.txt"; open(lst, "w").write(files)
         tarball = f"{td}/workdir.tar.gz"
-        subprocess.run(["tar", "-czf", tarball, "-C", a.workdir, "-T", lst], check=True)
+        # COPYFILE_DISABLE: macOS bsdtar otherwise emits an AppleDouble "._<name>" companion per file
+        # to carry xattrs. On the pod those are real files, so "._weights.pt" reads as a SECOND .pt in
+        # a world-model directory and the loader refuses it as an ambiguous checkpoint (2026-09-24).
+        subprocess.run(["tar", "-czf", tarball, "-C", a.workdir, "-T", lst],
+                       check=True, env={**os.environ, "COPYFILE_DISABLE": "1"})
         home = a.home or "$HOME"
         ssh(f"mkdir -p {home}/sky_workdir")
         subprocess.run(SCP + [tarball, f"{a.host}:{jobdir}/workdir.tar.gz"], check=True)
-        ssh(f"cd {home}/sky_workdir && tar --no-same-owner -xzf {jobdir}/workdir.tar.gz && echo '[workdir] ' $(find . -type f | wc -l) files in {home}/sky_workdir")
+        # belt and braces: strip any AppleDouble that an older tarball still carries
+        ssh(f"cd {home}/sky_workdir && tar --no-same-owner -xzf {jobdir}/workdir.tar.gz && "
+            f"find . -name '._*' -delete && echo '[workdir] ' $(find . -type f | wc -l) files in {home}/sky_workdir")
     if a.no_start:
         print(f"[pod-runner] {a.name} shipped to {a.host}:{jobdir} (not started)"); sys.exit(0)
     # record THIS job's process group (pgrep -f 'launch.sh' would find another job's launcher on a shared pod)
