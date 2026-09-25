@@ -56,9 +56,16 @@ for c in $CELLS; do
   # blocks are clamped to the episode end. Relaxed 2026-09-24 in src/rlp/train/windows.py, exactly as the RLP actor
   # trainer had already relaxed it (scripts/sky/overlays/train_lip_ac.py), so the baselines see the band RLP saw.
   MD=${MD_OVERRIDE:-$UNI_MD}
-  # Reacher MuJoCo evals abort (core dump) when many run at once; 2-wide carried Reacher/PLDM but still
-  # core-dumped Reacher/LeJEPA after the first rollout, so that cell needs REACHER_EVAL_PAR=1.
-  EVAL_PAR_ARG=""; [ "$ENVN" = reacher ] && EVAL_PAR_ARG="--env EVAL_PAR=${REACHER_EVAL_PAR:-2}"
+  # Eval concurrency is per-env, and the selection pass makes it matter far more than it used to: a cell
+  # now runs ~60-72 validation evals instead of 9, so a rate that survived the short report pass does not
+  # survive this. Measured aborts (core dump inside MuJoCo): reacher at 8- and 2-wide, cube at 8-wide.
+  # One eval per GPU on cube is the same rule the RLP cube rows settled on (CUBE_LOCK=gpu).
+  case $ENVN in
+    reacher) EP=${REACHER_EVAL_PAR:-1} ;;
+    cube)    EP=${CUBE_EVAL_PAR:-3} ;;
+    *)       EP=${TW_EVAL_PAR:-6} ;;
+  esac
+  EVAL_PAR_ARG="--env EVAL_PAR=$EP"
   NAME=rlp-${PFX}-${METHOD}-h${HZ}${P}; TAG=${NAME}-${DATE}
   # A relaunch under a NEW date needs a fresh EXPERIMENT_TAG (the yamls cache trained policies and eval results per
   # tag, so reusing the tag would silently return the old run's numbers) but should NOT re-encode the latent caches,
