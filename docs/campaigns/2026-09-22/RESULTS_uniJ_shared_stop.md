@@ -311,22 +311,53 @@ restarts at iteration 2.
 n=6) is drop-in at `docs/paper/tables_configB.tex` (`tab:dyna`) — LeWM 95.7 / 86.7, PLDM 92.3 / 85.3, with
 hard-success gains of +13.0 and +12.2 at h25 and ~+0.5 at h100.
 
-## Validation-selected baselines (first rows, 2026-09-24)
+## Validation-selected baselines — 10 of 20 cells (2026-09-25)
 
-Protocol change: the baselines now deploy a snapshot CHOSEN on validation draws 48-51, one shared step
-per cell by the mean over training seeds (ties -> earlier step) — RLP's own rule. Previously they
-deployed a fixed final iterate while RLP got a validation-selected pair, which was not the same
-treatment. DMPO snapshots every 200 of the paper's 1000 PPO iterations; L2O every 3,000 of 18,000
-(the same six-point ladder the RLP teacher uses).
+The baselines now deploy a snapshot CHOSEN on validation draws 48-51: one shared step per cell by the
+mean over the three training seeds, ties to the earlier step — RLP's own rule. Previously they deployed
+a fixed final iterate while RLP got a validation-selected pair, which was not the same treatment.
+DMPO snapshots every 200 of the paper's 1000 PPO iterations; L2O every 3,000 of 18,000 (the same
+six-point ladder the RLP teacher uses).
 
-| cell | selected step | val mean (selected / final) | test, selected | test, final iterate | delta |
-|---|---|---|---|---|---|
-| TwoRoom LeJEPA h25 DMPO | **200** of 1000 | 77.50 / 73.83 | **73.3** | 69.3 | +4.0 |
-| TwoRoom PLDM h25 DMPO | **200** of 1000 | 80.17 / 76.33 | **76.7** | 72.7 | +4.0 |
-| TwoRoom PLDM h100 DMPO | 800 of 1000 | 45.67 / 44.83 | 44.0 | 44.7 | -0.7 |
+| env | base | stack | DMPO step | DMPO | (final iterate) | L2O step | L2O | RLP uniJ |
+|---|---|---|---|---|---|---|---|---|
+| TwoRoom | LeJEPA | h25 | 200 | **73.3** | 69.3 | final | **98.0** | 100.0 |
+| TwoRoom | LeJEPA | h100 | 400 | **69.3** | 65.3 | — | running | 99.3 |
+| TwoRoom | PLDM | h25 | 200 | **76.7** | 72.7 | — | running | 98.0 |
+| TwoRoom | PLDM | h100 | 800 | 44.0 | 44.7 | — | running | 94.0 |
+| Cube | LeWM | h25 | — | re-running | 66.0 | — | running | 92.7 |
+| Cube | LeWM | h100 | — | re-running | 54.7 | — | running | 85.3 |
+| Cube | PLDM | h25 | 800 | 61.3 | 61.3 | — | running | 85.3 |
+| Cube | PLDM | h100 | 200 | **50.0** | 49.3 | — | running | 83.7 |
+| Reacher | LeJEPA | h25 (tau .05) | 600 | 20.7 | 20.0 | — | running | 95.3 |
+| Reacher | PLDM | h25 (tau .05) | 600 | 19.3 | 20.7 | — | 46.0* | 87.3 |
 
-Two of three cells select the EARLIEST snapshot (200 of 1000) and rank the final iterate WORST on
-validation — the training-curve reading (a trendless PPO walk whose last point is arbitrary) confirmed
-on held-out draws. Those cells gain 4.0 points, i.e. the old protocol was reporting a needlessly weak
-DMPO. The h100 cell is the honest counter-example: validation preferred step 800 and test moved -0.7,
-inside noise. Selection is not a free win per cell; it is the same treatment RLP gets.
+\* Reacher PLDM L2O 46.0 is the final-iterate number; its selected re-run is still going.
+Reacher DMPO at tau 0.1: LeJEPA 40.7, PLDM 36.0.
+
+Readings:
+- **Selection is not a uniform win, which is the point.** Four cells gain (+4.0, +4.0, +4.0, +0.7),
+  three are flat, two lose slightly (-0.7, -1.4). It is the same treatment RLP gets, applied whether or
+  not it flatters the baseline.
+- **DMPO's chosen step is early and scattered** (200, 200, 400, 600, 600, 800, 800, 200 across the eight
+  cells) and the final iterate never wins. That is the trendless PPO walk seen in the training curves,
+  confirmed on held-out draws.
+- **L2O is the opposite**: TwoRoom h25 validation rises monotonically along the ladder (92.67, 96.83,
+  97.67, 96.33, 97.50, 98.17) and picks the LAST point. L2O is still improving at 18k, so the budget cut
+  from 50k may cost it — see the note below.
+- **Reacher DMPO is settled, not unlucky.** All five snapshots validate in a 39.5-41.8 band and selection
+  moved tau .05 by +0.7 / -1.4. DMPO genuinely cannot hit Reacher's tolerance; it is not a checkpoint
+  artifact.
+
+### Correction to the budget rationale
+Cutting L2O from 50k to 18k steps was argued partly on "the objective is flat from ~step 1,000". That
+read the *imitation loss*, which is a DAgger training loss against a moving target. Held-out task success
+tells a different story: on TwoRoom h25 it climbs the whole ladder and is still highest at 18k. The
+practical cost looks small there (9k -> 18k is +0.5, inside noise) and validation selection bounds the
+damage by construction, but the claim "flat from step 1,000" was wrong and should not be repeated.
+
+### Pod / cluster cross-check
+TwoRoom LeJEPA h25 L2O ran on BOTH a RunPod H200 pod and the cluster. Both selected `final` and returned
+per-arm 98.0 / 98.0 / 97.3 — identical. That qualifies the pod for this campaign and is a useful
+determinism check across hosts.
+
