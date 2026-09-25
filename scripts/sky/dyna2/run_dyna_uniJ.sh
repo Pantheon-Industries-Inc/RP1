@@ -82,7 +82,7 @@ for IT in $(seq ${START_IT:-1} $N); do
       JN=rlp-cu-uniJ-h${HZ}${P}-dyna${IT}
       TID[$BASE$HZ]=""
       for _try in 1 2 3 4 5 6; do
-        TID[$BASE$HZ]=$(sky jobs queue --limit 400 2>/dev/null | awk -v n="$JN" '"'"'$3==n {print $1; exit}'"'"')
+        TID[$BASE$HZ]=$(sky jobs queue --limit 400 2>/dev/null | awk -v n="$JN" '$3==n {print $1; exit}')
         [ -n "${TID[$BASE$HZ]}" ] && break
         sleep 20
       done
