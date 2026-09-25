@@ -145,6 +145,16 @@ for ENVN in $ENVS; do
                     --env EVAL_TAG=rh5fixed --env ONLYCFG="$FIXED_ROW" --env TD_SNAPS="$FT" --env TRAIN_SEEDS="${FIXED_SEEDS:-$SEEDS}"
                     --env CKPT_SELECT=0 --env MAXPAR=$(echo ${FIXED_SEEDS:-$SEEDS} | wc -w | tr -d ' '))
         fi
+        # EXTRA_ENVS="K=V;K=V with spaces;...": appended LAST so they override anything set above. For one-off
+        # repairs (e.g. re-evaluating an already-deployed actor on draws whose eval failed) without forking this
+        # launcher. Semicolon-separated because values such as EVAL_SEEDS contain spaces.
+        if [ -n "${EXTRA_ENVS:-}" ]; then
+          _rest=$EXTRA_ENVS
+          while [ -n "$_rest" ]; do
+            case "$_rest" in *\;*) _kv=${_rest%%;*}; _rest=${_rest#*;};; *) _kv=$_rest; _rest="";; esac
+            [ -n "$_kv" ] && CU_ENVS+=(--env "$_kv")
+          done
+        fi
         if [ -n "${POD:-}" ]; then
           # POD=host:port -> same yaml on a RunPod SSH host; cube = 1 actor per GPU (evals are GPU-bound), MAXPAR from SLOTS
           echo "==> cube / $BASE  ($NAME) on POD $POD"
