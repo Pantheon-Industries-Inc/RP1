@@ -304,3 +304,23 @@ restarts at iteration 2.
 **Earlier Dyna data is intact**: the full config-B Dyna table (two iterations, both bases, both horizons,
 n=6) is drop-in at `docs/paper/tables_configB.tex` (`tab:dyna`) — LeWM 95.7 / 86.7, PLDM 92.3 / 85.3, with
 hard-success gains of +13.0 and +12.2 at h25 and ~+0.5 at h100.
+
+## Validation-selected baselines (first rows, 2026-09-24)
+
+Protocol change: the baselines now deploy a snapshot CHOSEN on validation draws 48-51, one shared step
+per cell by the mean over training seeds (ties -> earlier step) — RLP's own rule. Previously they
+deployed a fixed final iterate while RLP got a validation-selected pair, which was not the same
+treatment. DMPO snapshots every 200 of the paper's 1000 PPO iterations; L2O every 3,000 of 18,000
+(the same six-point ladder the RLP teacher uses).
+
+| cell | selected step | val mean (selected / final) | test, selected | test, final iterate | delta |
+|---|---|---|---|---|---|
+| TwoRoom LeJEPA h25 DMPO | **200** of 1000 | 77.50 / 73.83 | **73.3** | 69.3 | +4.0 |
+| TwoRoom PLDM h25 DMPO | **200** of 1000 | 80.17 / 76.33 | **76.7** | 72.7 | +4.0 |
+| TwoRoom PLDM h100 DMPO | 800 of 1000 | 45.67 / 44.83 | 44.0 | 44.7 | -0.7 |
+
+Two of three cells select the EARLIEST snapshot (200 of 1000) and rank the final iterate WORST on
+validation — the training-curve reading (a trendless PPO walk whose last point is arbitrary) confirmed
+on held-out draws. Those cells gain 4.0 points, i.e. the old protocol was reporting a needlessly weak
+DMPO. The h100 cell is the honest counter-example: validation preferred step 800 and test moved -0.7,
+inside noise. Selection is not a free win per cell; it is the same treatment RLP gets.
