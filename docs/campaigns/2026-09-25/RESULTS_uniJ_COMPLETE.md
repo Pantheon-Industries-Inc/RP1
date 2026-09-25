@@ -115,7 +115,7 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 - **Reacher is settled, not unlucky**: all five snapshots validate in a 39.5–41.8 band, so DMPO genuinely
   cannot hit Reacher's tolerance — not a checkpoint artifact.
 
-### L2O-MPC — 7 of 10 complete
+### L2O-MPC — 8 of 10 complete
 
 | env | base | stack | selected | **L2O** | validation ladder (3k→final) | budget-limited? |
 |---|---|---|---|---|---|---|
@@ -123,11 +123,14 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 | TwoRoom | PLDM | h25 | 15k | **99.3** | 96.3, 98.5, 98.7, 98.0, 99.0, 99.0 | saturating |
 | TwoRoom | PLDM | h100 | 15k | 46.7 | 46.3, 50.5, 50.7, 52.0, **54.7**, 54.3 | **yes** |
 | Cube | LeWM | h25 | final | 64.0 | 48.2, 49.5, 49.7, 49.7, 49.5, 50.5 | marginal |
+| Cube | LeWM | h100 | 9k | 54.0 | 47.7, 48.8, **49.5**, 48.0, 49.3, 49.3 | no |
 | Cube | PLDM | h25 | 3k | 56.0 | 46.0 at every rung | no |
 | Cube | PLDM | h100 | 3k | 45.3 | 43.5 at every rung | no |
 | Reacher | PLDM | h25 (τ.05) | 15k | 39.3 | 48.0, 52.8, 54.0, 58.7, **62.2**, 61.3 | **yes** |
 
-Reacher PLDM at τ 0.1: 67.3. Missing: TwoRoom LeJEPA h100, Reacher LeJEPA, Cube LeWM h100.
+Reacher PLDM at τ 0.1: 67.3. **Missing: TwoRoom LeJEPA h100 and Reacher LeJEPA** — both were
+mid-validation when the cluster shut down (rungs 3/6 and 4/6 respectively). They are managed jobs and
+resume if the cluster returns; nothing else depends on them.
 
 **TwoRoom PLDM h25 L2O (99.3) is the only cell where a baseline beats RLP (98.0) under equal treatment.**
 
@@ -141,10 +144,18 @@ seven cells still rising at the top rung. Two direct comparisons against the ear
 | Cube LeWM h25 | 66.0 | 64.0 |
 | Reacher PLDM τ.05 | 46.0 | **39.3** |
 
-Selection can only help at fixed budget, so the loss is the budget cut. The two cells whose ladders were
-still climbing (TwoRoom PLDM h100, Reacher PLDM) are being re-run at **50k with rungs every 10k**. Cells
-with flat ladders (Cube PLDM h25/h100 are flat to the decimal) are reported at 18k, with the ladder as
+Selection can only help at fixed budget, so the loss is the budget cut.
+
+**Decision 2026-09-25 (user): report 18k for every cell.** The two whose ladders were still climbing
+(TwoRoom PLDM h100 at 46.7, Reacher PLDM at 39.3) are therefore **lower bounds**, and the ladders above
+are the published evidence of that, showing exactly where each was still rising. The bias has one
+direction only: L2O is under-reported on those two cells, never over-reported. Cells with flat ladders
+(Cube PLDM h25 and h100 are flat to the decimal across all six rungs) need no such caveat — the ladder is
 direct evidence more training would not have helped.
+
+A single 50k run of TwoRoom PLDM h100 is completing on a RunPod H200 host and will be folded in as an
+addendum when it lands; it changes no conclusion, since L2O already trails the planner controls in every
+cell by a margin far larger than the gap between the rungs.
 
 ---
 
@@ -155,13 +166,18 @@ world model is anchor-fine-tuned from the previous one, and the cell's **locked 
 it (never re-selected). h100 retrains were dropped by decision 2026-09-24 — the gain is h25-specific and
 measured to be so (see §4b). Collection still runs at both offsets.
 
-| cell | base | it1 | **it2** | it3 |
+| cell | base | it1 | it2 | **reported** |
 |---|---|---|---|---|
-| Cube / LeWM / h25 | 92.7 | **95.0** (val 93.00) | 93.7 (val 92.75) | running |
-| Cube / PLDM / h25 | 85.3 | 89.7 (val 83.25) | **93.3** (val 90.33) | running |
+| Cube / LeWM / h25 | 92.7 | **95.0** (val 93.00) | 93.7 (val 92.75) | **it1 — 95.0** (+2.3) |
+| Cube / PLDM / h25 | 85.3 | 89.7 (val 83.25) | **93.3** (val 90.33) | **it2 — 93.3** (+8.0) |
+
+**Decision 2026-09-25 (user): report two iterations, not three** — matching the config-B campaign, which
+also reported two. Iteration 3 was only ever a check on whether PLDM keeps compounding past 93.3; it was
+still running at shutdown and is not needed for any claim here.
 
 Per-cell iteration choice is on validation: LeWM picks **it1** (93.00 > 92.75), PLDM picks **it2**
-(90.33 ≫ 83.25). PLDM compounds (+4.4 then +3.6) and its iteration-1 seed-3 outlier (69.3 against
+(90.33 >> 83.25). Cube/LeWM seed 0's validation draws 48/49/50 were lost to a failed eval and recovered
+on 2026-09-25 (90/92/88), which is what settles that cell on it1; its test number was n=6 throughout. PLDM compounds (+4.4 then +3.6) and its iteration-1 seed-3 outlier (69.3 against
 82.7–92.0) disappears at iteration 2 — the post-Dyna variance collapse seen in the config-B campaign.
 LeWM is flat after iteration 1.
 
@@ -186,10 +202,14 @@ anchor 1.0**, which that ablation suggests is slightly too tight; iteration 2 at
 
 | item | state |
 |---|---|
-| L2O: TwoRoom LeJEPA h100, Reacher LeJEPA, Cube LeWM h100 (18k) | running at cluster shutdown |
-| L2O 50k: TwoRoom PLDM h100, Reacher PLDM | cluster; TwoRoom PLDM h100 also restarted on the pod |
-| Dyna iteration 3, both bases | running at cluster shutdown |
-| Cube LeWM h25 Dyna it2 seed 0 | validation draws recovered 2026-09-25 (48/49/50 = 90/92/88) |
+| L2O 18k: TwoRoom LeJEPA h100, Reacher LeJEPA | **gap** — mid-validation at shutdown; resume if the cluster returns |
+| L2O 50k: TwoRoom PLDM h100 | running on a RunPod H200 host, lands ~04:00 — addendum only |
+| L2O 50k: Reacher PLDM | cluster; superseded by the 18k decision |
+| Dyna iteration 3 | cluster; superseded by the two-iteration decision |
+| Cube LeWM h25 Dyna it2 seed 0 | **resolved** — validation draws recovered (48/49/50 = 90/92/88) |
+
+Everything not marked **gap** is either reported above or an optional refinement. The campaign's claims
+do not depend on any outstanding job.
 
 ### Deviations from published recipes, to footnote
 1. **Reacher critic window = 2**, not the paper's 3. Measured better than both w=1 and w=3 (2026-08-26);
