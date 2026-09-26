@@ -1,6 +1,6 @@
 # @package core.world_model
 name: lewm
-checkpoint: assets/core/world_model/lewm_cube
+checkpoint: assets/core/world_model/cube_lewm
 architecture:
   _target_: stable_worldmodel.wm.lewm.LeWM
   encoder:

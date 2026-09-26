@@ -1,9 +1,8 @@
 # @package core.world_model
-# The authors' pretrained PLDM cube checkpoint, converted 1:1 into the LeWM
-# key layout (see tools/convert_pldm). Architecturally identical to LeWM
-# (vit_hf tiny / patch14 / 224), so all LeWM code paths apply unchanged.
+# the authors' PLDM checkpoint, converted into the LeWM key layout by the
+# convert_pldm job; the architecture is LeWM's
 defaults:
   - lewm
   - _self_
 name: pldm
-checkpoint: assets/core/world_model/pldm_cube
+checkpoint: assets/core/world_model/cube_pldm

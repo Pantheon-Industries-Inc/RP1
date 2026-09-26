@@ -1,5 +1,0 @@
-# @package data
-path: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/ogb_cube_single.lance
-stats: ${data.path}
-cache_dir: null
-keys_to_cache: [action]

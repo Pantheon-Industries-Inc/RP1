@@ -1,9 +1,0 @@
-# @package data
-# PushT evaluation draws from the authors' expert pool
-# (`pixi run tool tool=fetch_dataset dataset=pusht`, 18,685 episodes of 109
-# steps at 224px). Unlike the TwoRoom release, the h5 already carries explicit
-# `episode_idx`/`step_idx` columns, so no derived eval h5 is needed.
-path: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/datasets/pusht/pusht_expert_train.h5
-stats: ${data.path}
-cache_dir: null
-keys_to_cache: [action]

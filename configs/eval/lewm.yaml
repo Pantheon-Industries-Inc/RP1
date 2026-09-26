@@ -1,6 +1,0 @@
-# @package _global_
-defaults:
-  - _cube_model
-  - /core/world_model: lewm
-  - /core/policy: world_model
-  - _self_

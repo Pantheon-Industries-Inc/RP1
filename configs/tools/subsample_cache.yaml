@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - /logging: default
-  - _self_
-entrypoint: {_target_: rlp.tools.data.subsample_cache._run}
-inp: ???
-out: ???
-frameskip: 5

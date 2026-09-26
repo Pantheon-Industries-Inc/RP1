@@ -1,4 +1,4 @@
-# L2O-MPC — Learning to Optimize in MPC as an RLP baseline
+# L2O-MPC — Learning to Optimize in MPC as an rp1 baseline
 
 Sacks, Boots, *Learning to Optimize in Model Predictive Control*, ICRA 2022
 ([arXiv:2212.02603](https://arxiv.org/abs/2212.02603), the direct predecessor
@@ -28,13 +28,13 @@ unlike DMPO (PPO → pathwise) no gradient-method substitution is needed.
 
 | Paper | Code |
 |---|---|
-| Gated update rule `m_theta` (GRU-style, sigmoid gates) | `L2ONet.forward` — `src/rlp/core/planner/l2o.py` |
+| Gated update rule `m_theta` (GRU-style, sigmoid gates) | `L2ONet.forward` — `rp1.core.agent.planner.l2o` |
 | DMD-MPC / MPPI expert update (Eq. 12) | `mppi_update` (free function, arbitrary sample count) |
 | Fixed Halton sample set | `L2ONet.plans` via `gaussian_halton` (shared with DMPO) |
 | Standard shift warm start (no learned shift) | `L2ONet.warm_start` |
-| DAgger training, `beta_k = 0.8^k` over 20 rounds | `src/rlp/train/l2o.py`, `dagger_beta` |
+| DAgger training, `beta_k = 0.8^k` over 20 rounds | `rp1.training.phases.agent.l2o.dagger_beta` |
 | Fixed diagonal covariance (paper experiments) | `learn_std=false` default; the paper's gated covariance formulation behind `learn_std=true` |
-| Deployment | `L2OSolver` — `src/rlp/core/solver/l2o.py` |
+| Deployment | `L2OSolver` — `rp1.core.agent.solver.l2o` |
 
 Paper hyperparameters carried over: two ReLU hidden layers with dropout 0.1,
 Adam at 1e-3, 20 DAgger rounds with decay 0.8, Halton samples, fixed diagonal
@@ -47,7 +47,7 @@ covariance, expert `N` ≫ learner `M`.
    shares that substitution; it is what makes the rows comparable, and it means
    L2O-MPC here inherits world-model error the paper's controllers never saw.
 2. **Plan costs are the goal-conditioned quasimetric critic**, not a
-   hand-designed task cost — the same critic the RLP, DMPO, and value-CEM/MPPI
+   hand-designed task cost — the same critic the rp1, DMPO, and value-CEM/MPPI
    rows plan against, so the table isolates the planner.
 3. **DAgger's state distribution is the inner loop, not the receding-horizon
    loop.** The paper visits states by running the controller closed loop in
@@ -75,40 +75,37 @@ covariance, expert `N` ≫ learner `M`.
 | Adam | 3,000 forward + 3,000 backward |
 | DMPO (defaults) | 256 forward (256 × 1) |
 | **L2O-MPC** (defaults) | **256 forward (64 × 4)** — DMPO's exact budget |
-| RLP / LIP | 9 forward + 8 backward |
+| rp1 / rp1 | 9 forward + 8 backward |
 
 The sample count is baked into the trained network (costs are read
 positionally); the iteration count can be varied at test time
-(`core.solver.iters`), as in the paper's sweeps.
+(`core.agent.solver.iters`), as in the paper's sweeps.
 
 ## Commands
 
-L2O-MPC trains against a frozen critic, so produce the caches and `value_td`
-first (the RLP pipeline with the planner stage skipped), then train and
-evaluate:
+L2O-MPC trains against a frozen value, so first run the agent pipeline without its planner stage to
+produce the caches and `value_td`:
 
 ```bash
-pixi run train model=rlp skip=[planner] wm=assets/core/world_model/lewm_cube dataset=$RLP_DATA_HOME/datasets/ogb_cube_single.lance name=cube_lewm
+pixi run posttrain training.wm=assets/core/world_model/cube_lewm \
+    training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance training.name=cube_lewm \
+    "training.stages=[cache,subsample,actions,value]"
 ```
 
+Then train and evaluate:
+
 ```bash
-pixi run train model=l2o wm=assets/core/world_model/lewm_cube cache=$RLP_DATA_HOME/caches/cube_lewm_fs5.pt h5=$RLP_DATA_HOME/caches/cube_lewm_actions.h5 init_value=logs/<date>/<time>/checkpoints/value_td core.planner.action_limit=1.6
+pixi run posttrain --config-name phases/agent/l2o training.wm=assets/core/world_model/cube_lewm \
+    training.cache=$RP1_DATA_HOME/caches/cube_lewm_fs5.pt \
+    training.h5=$RP1_DATA_HOME/caches/cube_lewm_actions.h5 \
+    training.init_value=<run>/checkpoints/value_td core.agent.planner.action_limit=1.6
+pixi run evaluate benchmark=cube_lewm core/agent/solver=l2o core.agent.solver.checkpoint.path=<l2o.pt>
 ```
 
-```bash
-pixi run eval model=lewm core/solver=l2o core.solver.actor_path=<l2o.pt>
-```
-
-The like-for-like hand-written baseline (what the expert computes, deployed
-with the standard budget) is the value-objective MPPI row:
+The hand-written counterpart, what the expert computes deployed at the standard budget, is MPPI under
+the same value:
 
 ```bash
-pixi run eval model=lewm core/solver=mppi core/value=metric core.value.checkpoints=[<value_td>]
-```
-
-Whole campaign (caches → critic → three planner seeds → h25 and h100 on report
-draws 42/43/44), one job per environment × base:
-
-```bash
-sky jobs launch scripts/sky/l2o_campaign.yaml -n l2o-cube-lewm --priority p1 --env ENVNAME=cube --env BASE=lewm --env AMAX=1.6 --env EXPERIMENT_TAG=l2o-cube-lewm-20260815 -y
+pixi run evaluate benchmark=cube_lewm core/agent/solver=mppi \
+    core/agent/value=metric core.agent.value.checkpoints=[<value_td>]
 ```

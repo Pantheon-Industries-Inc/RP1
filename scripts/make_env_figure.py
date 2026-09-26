@@ -2,7 +2,7 @@
 
 Renders one frame per evaluation environment straight from the registered
 Stable-WM envs and lays them out as a labelled panel.  Because every task in
-RLP is goal-conditioned, each panel also marks where the goal is; ``--style``
+rp1 is goal-conditioned, each panel also marks where the goal is; ``--style``
 picks how.
 
     ghost  translucent copy of the goal state drawn into the frame

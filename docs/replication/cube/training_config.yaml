@@ -1,8 +1,5 @@
-# Training config — LeWM ViT-tiny from scratch on OGBench-Cube (84.0% run)
-# wandb: entity pantheoninc-pantheon-inc / project sambhav_lewm_pusht
-#   training run: lewm_lewm_scratch_cls_cube1
-#   hourly probes: probe_cube1_lewm_scratch_cls
-# Final checkpoint: weights_epoch_22.pt (Volume lewm-data:final/lewm_lewm_scratch_cls_cube1)
+# The training and evaluation settings of the vendored Cube LeWM (assets/core/world_model/cube_lewm),
+# trained from scratch.
 
 variant: lewm_scratch_cls        # entire encoder trained from scratch, CLS readout
 
@@ -23,7 +20,7 @@ windowing:
   clip_starts: every valid start within each episode (start <= ep_len - span)
   shuffle: per-epoch permutation, np.random.default_rng(1000 + epoch)
 
-action_preprocessing:            # *** CRITICAL — see REPLICATION_CUBE.md item 1 ***
+action_preprocessing:            # see REPLICATION_CUBE.md, "Action normalization"
   nan_handling: np.nan_to_num(actions, nan=0.0)   # dataset contains NaN action rows
   normalization: per-dim z-score with stats over the FULL dataset action column
   # exact constants (must match sklearn StandardScaler fit at eval time):
@@ -68,17 +65,17 @@ optimization:
   epochs: 22                     # ~313k optimizer steps total
   schedule: cosine decay to 0, linear warmup over first 1% of total steps
   grad_clip: 1.0
-  grad_guard: skip optimizer step if clip_grad_norm_ returns non-finite  # *** item 3 ***
+  grad_guard: skip optimizer step if clip_grad_norm_ returns non-finite  # see REPLICATION_CUBE.md, "Non-finite gradients"
   precision: bf16 autocast (params fp32)
   hardware: 1x H100
 
-eval:                            # pixi run eval model=lewm
+eval:
   command: >
-    pixi run eval model=lewm
-    core.world_model.checkpoint=lewm_lewm_scratch_cls_cube1/weights_epoch_22.pt
-    data.path=/root/run/data_cube_dinowm/shard_0.lance
-    evaluation.image_size=224
-  eval.dataset_name: local lance copy of the SAME training dataset (quentinll/lewm-cube converted)
+    pixi run evaluate benchmark=cube_lewm
+    core.world_model.checkpoint=<checkpoint>
+    data.path=<the training dataset as lance>
+    runtime.bfloat16=true
+  dataset: the training dataset itself (quentinll/lewm-cube, converted to lance)
   num_eval: 50
   goal_offset_steps: 25          # goal image/state = dataset state 25 raw steps after start
   eval_budget: 50
@@ -106,4 +103,4 @@ eval:                            # pixi run eval model=lewm
 
 results:
   success_rate: 84.0             # 50 episodes
-  random_policy_baseline: 42.0   # same protocol/seed — note the high floor
+  random_policy_baseline: 42.0   # same protocol and seed
