@@ -115,7 +115,7 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 - **Reacher is settled, not unlucky**: all five snapshots validate in a 39.5–41.8 band, so DMPO genuinely
   cannot hit Reacher's tolerance — not a checkpoint artifact.
 
-### L2O-MPC — 9 of 10 complete
+### L2O-MPC — 10 of 10 complete
 
 | env | base | stack | selected | **L2O** | validation ladder (3k→final) | budget-limited? |
 |---|---|---|---|---|---|---|
@@ -128,6 +128,7 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 | Cube | PLDM | h25 | 3k | 56.0 | 46.0 at every rung | no |
 | Cube | PLDM | h100 | 3k | 45.3 | 43.5 at every rung | no |
 | Reacher | PLDM | h25 (τ.05) | 15k | 39.3 | 48.0, 52.8, 54.0, 58.7, **62.2**, 61.3 | **yes** |
+| Reacher | LeJEPA | h25 (τ.05) | final | **46.7** | 46.7, 59.2, 54.5, 63.3, 67.3, **67.7** | mild |
 
 Reacher PLDM at τ 0.1: 67.3.
 
@@ -135,9 +136,11 @@ Reacher PLDM at τ 0.1: 67.3.
 (92.7 vs CEM 73.0) while still trailing RLP (99.3). Its ladder climbs steeply (70.3 → 91.8) but ties at
 the top two rungs, so 18k is sufficient there.
 
-**Remaining: Reacher LeJEPA.** Its 18k checkpoints were rescued off the cluster volume before shutdown and
-are being evaluated on a RunPod H200 host. A completed 50k final-iterate run of this cell exists at
-**τ.05 47.3 / τ.1 76.0** (job 28288) and is the fallback number if the pod evaluation cannot be qualified.
+**Reacher LeJEPA = 46.7** (τ.1: 68.0), the last cell. Its 18k checkpoints were rescued off the cluster
+volume before shutdown and evaluated on a RunPod H200 host. Two independent checks qualify that host:
+its first four validation rungs (46.67, 59.17, 54.50, 63.33) reproduce the interrupted cluster run's
+exactly, and the completed 50k final-iterate run of the same cell scored τ.05 47.3 (job 28288) against
+46.7 here — consistent, and slightly higher at the larger budget as the ladder predicts.
 
 **TwoRoom PLDM h25 L2O (99.3) is the only cell where a baseline beats RLP (98.0) under equal treatment.**
 
@@ -210,14 +213,23 @@ anchor 1.0**, which that ablation suggests is slightly too tight; iteration 2 at
 | item | state |
 |---|---|
 | L2O 18k: TwoRoom LeJEPA h100 | **resolved 2026-09-25** — checkpoints rescued to a pod, evaluated there: 92.7 |
-| L2O 18k: Reacher LeJEPA | evaluating on the pod; fallback = 50k final iterate, τ.05 47.3 |
+| L2O 18k: Reacher LeJEPA | **resolved 2026-09-25** — 46.7 on the pod; cross-checked against the cluster rungs and the 50k run |
 | L2O 50k: TwoRoom PLDM h100 | running on a RunPod H200 host, lands ~04:00 — addendum only |
 | L2O 50k: Reacher PLDM | cluster; superseded by the 18k decision |
 | Dyna iteration 3 | cluster; superseded by the two-iteration decision |
 | Cube LeWM h25 Dyna it2 seed 0 | **resolved** — validation draws recovered (48/49/50 = 90/92/88) |
 
-Everything not marked **gap** is either reported above or an optional refinement. The campaign's claims
-do not depend on any outstanding job.
+**All 52 reported cells are complete.** Nothing outstanding; the 50k L2O re-runs and Dyna round 3 are
+optional refinements that no claim depends on.
+
+### Result-file collision (found and fixed 2026-09-25)
+`run_eval` located a finished evaluation with `find logs -name "$unique.txt" | head -1`. That name is
+unique within a cell but not across jobs, and `find` returns directory order — oldest first. Every managed
+cluster job gets a fresh workdir, so this never fired there; on a pod, where one `~/sky_workdir` is reused,
+a reacher cell silently adopted a tworoom cell's 72 validation results verbatim (byte-identical files,
+different inodes, different eval commands). Caught because the two ladders matched to 0.01 across six
+rungs. Both campaigns now take the newest match by mtime. Blast radius was checked file by file: only that
+one cell was affected, it was re-run clean, and no cluster result can be touched by this.
 
 ### Deviations from published recipes, to footnote
 1. **Reacher critic window = 2**, not the paper's 3. Measured better than both w=1 and w=3 (2026-08-26);
