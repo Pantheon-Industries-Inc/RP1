@@ -8,7 +8,6 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [
   { name = "Armin SOMMER" },
-  { name = "Oliver SOMMER" },
 ]
 
 [build-system]

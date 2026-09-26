@@ -1,5 +1,5 @@
 [workspace]
-authors = ["Armin SOMMER, Oliver SOMMER"]
+authors = ["Armin SOMMER"]
 channels = ["https://prefix.dev/conda-forge"]
 name = "rp1"
 platforms = [{ platform = "osx-arm64", macos = "14.0" }, "linux-64"]
