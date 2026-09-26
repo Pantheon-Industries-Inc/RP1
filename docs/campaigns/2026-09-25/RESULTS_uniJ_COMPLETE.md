@@ -115,7 +115,7 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 - **Reacher is settled, not unlucky**: all five snapshots validate in a 39.5–41.8 band, so DMPO genuinely
   cannot hit Reacher's tolerance — not a checkpoint artifact.
 
-### L2O-MPC — 8 of 10 complete
+### L2O-MPC — 9 of 10 complete
 
 | env | base | stack | selected | **L2O** | validation ladder (3k→final) | budget-limited? |
 |---|---|---|---|---|---|---|
@@ -124,13 +124,20 @@ Reacher DMPO at τ 0.1: LeJEPA 40.7, PLDM 36.0.
 | TwoRoom | PLDM | h100 | 15k | 46.7 | 46.3, 50.5, 50.7, 52.0, **54.7**, 54.3 | **yes** |
 | Cube | LeWM | h25 | final | 64.0 | 48.2, 49.5, 49.7, 49.7, 49.5, 50.5 | marginal |
 | Cube | LeWM | h100 | 9k | 54.0 | 47.7, 48.8, **49.5**, 48.0, 49.3, 49.3 | no |
+| TwoRoom | LeJEPA | h100 | 15k | **92.7** | 70.3, 75.7, 84.2, 87.7, **91.8**, 91.8 | no (flat at top) |
 | Cube | PLDM | h25 | 3k | 56.0 | 46.0 at every rung | no |
 | Cube | PLDM | h100 | 3k | 45.3 | 43.5 at every rung | no |
 | Reacher | PLDM | h25 (τ.05) | 15k | 39.3 | 48.0, 52.8, 54.0, 58.7, **62.2**, 61.3 | **yes** |
 
-Reacher PLDM at τ 0.1: 67.3. **Missing: TwoRoom LeJEPA h100 and Reacher LeJEPA** — both were
-mid-validation when the cluster shut down (rungs 3/6 and 4/6 respectively). They are managed jobs and
-resume if the cluster returns; nothing else depends on them.
+Reacher PLDM at τ 0.1: 67.3.
+
+**TwoRoom LeJEPA h100 = 92.7** is the second cell where L2O beats every planner control by a wide margin
+(92.7 vs CEM 73.0) while still trailing RLP (99.3). Its ladder climbs steeply (70.3 → 91.8) but ties at
+the top two rungs, so 18k is sufficient there.
+
+**Remaining: Reacher LeJEPA.** Its 18k checkpoints were rescued off the cluster volume before shutdown and
+are being evaluated on a RunPod H200 host. A completed 50k final-iterate run of this cell exists at
+**τ.05 47.3 / τ.1 76.0** (job 28288) and is the fallback number if the pod evaluation cannot be qualified.
 
 **TwoRoom PLDM h25 L2O (99.3) is the only cell where a baseline beats RLP (98.0) under equal treatment.**
 
@@ -202,7 +209,8 @@ anchor 1.0**, which that ablation suggests is slightly too tight; iteration 2 at
 
 | item | state |
 |---|---|
-| L2O 18k: TwoRoom LeJEPA h100, Reacher LeJEPA | **gap** — mid-validation at shutdown; resume if the cluster returns |
+| L2O 18k: TwoRoom LeJEPA h100 | **resolved 2026-09-25** — checkpoints rescued to a pod, evaluated there: 92.7 |
+| L2O 18k: Reacher LeJEPA | evaluating on the pod; fallback = 50k final iterate, τ.05 47.3 |
 | L2O 50k: TwoRoom PLDM h100 | running on a RunPod H200 host, lands ~04:00 — addendum only |
 | L2O 50k: Reacher PLDM | cluster; superseded by the 18k decision |
 | Dyna iteration 3 | cluster; superseded by the two-iteration decision |
