@@ -61,49 +61,37 @@ any point, and the same rule is applied to the learned baselines
 \begin{table}[H]
 \centering
 \footnotesize
-\renewcommand{\arraystretch}{1.22}
-\setlength{\tabcolsep}{7pt}
-\begin{tabular}{@{}l@{\hspace{1.5em}}l@{}}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}ll@{\hspace{2.2em}}ll@{}}
 \toprule
-\textbf{Hyperparameter} & \textbf{All domains and bases}\\
+\textbf{Hyperparameter} & \textbf{Value} & \textbf{Hyperparameter} & \textbf{Value}\\
 \midrule
-\textbf{Plan refiner}\\
-refinement iterations $K$ (no restarts)                    & $8$\\
-plan horizon $H$ (chunks of $5$ primitive steps)           & $5$\\
-receding horizon (replan every)                            & $5$ chunks\\
-clip range $a_{\max}$ (Eq.~\ref{eq:residual-update})       & $2.5$\\
-refiner MLP (width $\times$ hidden layers)                 & $512\times2$\\
+\multicolumn{2}{@{}l}{\textbf{Plan refiner}} & \multicolumn{2}{@{}l}{\textbf{Co-trained critic}}\\
+refinement iterations $K$      & $8$                  & $\gamma$ ($h25$ / $h100$)      & $0.98$ / $0.99$\\
+plan horizon $H$ (chunks)      & $5$                  & $n$-step                       & $1$\\
+replan every                   & $5$ chunks           & expectile (annealed)           & $0.1{\to}0.03$\\
+clip range $a_{\max}$          & $2.5$                & critic LR (annealed)           & $10^{-3}{\to}10^{-4}$\\
+refiner MLP (width $\times$ layers) & $512\times2$    & live fraction of actor steps   & $0.8$\\
+                               &                      & EMA $\tau$ / TD batch          & $0.005$ / $1{,}024$\\
 \addlinespace[3pt]
-\textbf{Actor}\\
-mean-weight $\lambda_{\mathrm{mean}}$ (Eq.~\ref{eq:RP1-training-objective}) & $0.3$\\
-actor LR (cosine-annealed to $1/10$)                       & $3{\cdot}10^{-4}$\\
-batch size                                                 & $256$\\
-step cap / snapshot cadence                                & $12{,}000$ / $2{,}000$\\
-max-delta (hindsight-goal cap, chunks)                     & $20$\\
-cross-episode goal probability                             & $0.3$\\
-anti-constancy weight                                      & $0.5$\\
-replay probability / value-expansion weight                & $0$ / $0$\\
-\addlinespace[3pt]
-\textbf{Co-trained critic} (initialized from the offline teacher)\\
-$\gamma$ (by planning horizon) / $n$-step                  & $0.98$ ($h25$), $0.99$ ($h100$) / $1$\\
-expectile (annealed)                                       & $0.1{\to}0.03$\\
-critic LR (annealed)                                       & $10^{-3}{\to}10^{-4}$\\
-live fraction of actor steps, then frozen EMA teacher      & $0.8$\\
-EMA rate $\tau$ / TD batch size                            & $0.005$ / $1{,}024$\\
-head                                                       & MRN quasimetric, hidden $256$, embed $128$, depth $2$\\
-\addlinespace[3pt]
-\textbf{Offline teacher} (critic initialization, Sec.~\ref{sec:value-learning})\\
-step cap / snapshot cadence                                & $18{,}000$ / $3{,}000$\\
-expectile / teachers per actor seed                        & $0.03$ / $1$\\
-\addlinespace[3pt]
-\textbf{Critic latent window}                              & $1$ frame ($2$ on Reacher, lag $5$)\\
+\multicolumn{2}{@{}l}{\textbf{Actor}} & head & MRN, $256/128$, depth $2$\\
+mean-weight $\lambda_{\mathrm{mean}}$ & $0.3$          & \multicolumn{2}{@{}l}{}\\
+actor LR (cosine to $1/10$)    & $3{\cdot}10^{-4}$    & \multicolumn{2}{@{}l}{\textbf{Offline teacher}}\\
+batch size                     & $256$                & step cap / snapshot            & $18{,}000$ / $3{,}000$\\
+step cap / snapshot            & $12{,}000$ / $2{,}000$ & expectile                    & $0.03$\\
+max-delta (chunks)             & $20$                 & teachers per actor seed        & $1$\\
+cross-episode goal probability & $0.3$                & \multicolumn{2}{@{}l}{}\\
+anti-constancy weight          & $0.5$                & \multicolumn{2}{@{}l}{\textbf{Critic latent window}}\\
+replay / value-expansion       & $0$ / $0$            & all domains (Reacher)          & $1$ ($2$, lag $5$) frames\\
 \bottomrule
 \end{tabular}
 \caption{\textbf{The RP1 configuration.} One setting for every environment
-(TwoRoom, Cube, Reacher) and both world-model bases (LeWM/LeJEPA, PLDM). The two
-entries that vary are not tuned: the discount follows the horizon being planned, and the
-Reacher critic reads two frames because velocity is unobservable from one. The only
-per-cell choice is the (teacher budget, actor step) stopping pair, selected on the
-validation draws as described above.}
+(TwoRoom, Cube, Reacher) and both world-model bases (LeWM/LeJEPA, PLDM); the critic head
+is an MRN quasimetric with hidden width $256$, embedding $128$ and depth $2$. The two
+entries that vary are not tuned: the discount follows the horizon being planned, so that
+$1/(1-\gamma)$ covers it, and the Reacher critic reads two latent frames because joint
+velocity is unobservable from one. The only per-cell choice is the (teacher budget,
+actor step) stopping pair, selected on the validation draws as described above.}
 \label{tab:rp1-hypers-uniJ}
 \end{table}
