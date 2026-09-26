@@ -1,0 +1,109 @@
+% Replacement for \subsection{General Setup} (app:results-general), 2026-09-25.
+% The previous version described the pre-unification (config-B) protocol: selection on
+% draws {50,51}, three training seeds, and a per-domain / per-base hyperparameter table.
+% The uniJ campaign replaced all three. Most importantly, the old Table
+% tab:rp1-hypers-all listed per-base slashed values -- exactly what the unified recipe
+% eliminates -- so a three-column table now contradicts the claim it sits under.
+
+\subsection{General Setup}
+\label{app:results-general}
+
+\paragraph{Data and evaluation protocol.}
+All world-model encoders and dynamics predictors are frozen throughout; critics and
+planners are trained purely from cached latents. Each domain provides $10{,}000$
+episodes: value functions and planners train on episodes $0$--$7{,}999$, and all
+evaluations draw start/goal states from the held-out episodes $8{,}000$--$9{,}999$.
+Every choice -- including the stopping point of Table~\ref{tab:rp1-hypers-uniJ} -- is
+made on the validation draws $\{48,49,50,51\}$, which are never reported. Reported
+numbers use the disjoint draws $\{42,43,44\}$, $50$ episodes each, and are the
+\emph{median} over six planner training seeds $\{0,\dots,5\}$ of each seed's mean over
+those three draws; we give the mean over seeds alongside. Test draws are touched once
+per cell, after the stopping point is fixed.
+
+\paragraph{Planning protocol.}
+All planners use $5$-step action chunks and optimize $H{=}5$ chunks ($25$ primitive
+steps) open loop, replanning every $5$ chunks (receding horizon $5$). The goal is the
+state $h$ primitive steps ahead and the episode budget is $2h$ steps; TwoRoom and Cube
+evaluate $h\in\{25,100\}$ ($h25$, $h100$), Reacher $h{=}25$. Simulator evaluations run
+under EGL with a pinned render device and at most one evaluation per GPU; we verified
+that this parallelism is bit-identical to fully serialized evaluation before adopting it.
+
+\paragraph{Objectives.}
+Every planner scores the predicted terminal state with one of the two objectives of
+Sec.~\ref{sec:baseline-hyperparameters}: the latent-distance objective
+$C_{\mathrm{latent}}(\hat z_N,z_g)=\lVert\hat z_N-z_g\rVert_2^2$, or the value objective
+$C_{\mathrm{value}}(\hat z_N,z_g)=V_\psi(\hat z_N,z_g)$, the goal-conditioned
+temporal-distance critic of Sec.~\ref{sec:value-learning} (MRN quasimetric-style head)
+trained on the frozen cached latents of each base.
+
+\paragraph{One recipe for every domain.}
+Unlike the per-domain configurations of earlier work, every number we report for RP1
+comes from the single configuration of Table~\ref{tab:rp1-hypers-uniJ}: the same actor,
+critic and refiner settings for all three environments and both world-model bases. Two
+quantities vary, and neither is a tuned hyperparameter. The discount is set by the
+horizon being planned, $\gamma{=}0.98$ for $h25$ and $\gamma{=}0.99$ for $h100$, so that
+$1/(1-\gamma)$ covers the horizon; consequently each TwoRoom and Cube cell is two
+independent stacks, while Reacher is $h25$ only. And the critic reads a $2$-frame latent
+window on Reacher rather than $1$, because joint velocity is unobservable from a single
+frame; this is a property of the observation, not a choice we searched over.
+
+\paragraph{Stopping point.}
+The only quantity selected per cell is \emph{when to stop}, and it is selected jointly
+over the critic and the actor. The offline teacher is snapshotted every $3{,}000$ steps
+to its $18{,}000$-step cap and the actor every $2{,}000$ steps to its $12{,}000$-step
+cap; each of the $6\times6$ (teacher budget, actor step) pairs is trained and scored on
+the validation draws, and \emph{one} pair is fixed for the whole cell by the mean score
+over the six seeds, ties broken toward the smaller budget and then the earlier step. All
+six seeds are then evaluated at that single pair. No per-seed selection is performed at
+any point, and the same rule is applied to the learned baselines
+(Sec.~\ref{sec:baselines}).
+
+\begin{table}[H]
+\centering
+\footnotesize
+\renewcommand{\arraystretch}{1.22}
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{@{}l@{\hspace{1.5em}}l@{}}
+\toprule
+\textbf{Hyperparameter} & \textbf{All domains and bases}\\
+\midrule
+\textbf{Plan refiner}\\
+refinement iterations $K$ (no restarts)                    & $8$\\
+plan horizon $H$ (chunks of $5$ primitive steps)           & $5$\\
+receding horizon (replan every)                            & $5$ chunks\\
+clip range $a_{\max}$ (Eq.~\ref{eq:residual-update})       & $2.5$\\
+refiner MLP (width $\times$ hidden layers)                 & $512\times2$\\
+\addlinespace[3pt]
+\textbf{Actor}\\
+mean-weight $\lambda_{\mathrm{mean}}$ (Eq.~\ref{eq:RP1-training-objective}) & $0.3$\\
+actor LR (cosine-annealed to $1/10$)                       & $3{\cdot}10^{-4}$\\
+batch size                                                 & $256$\\
+step cap / snapshot cadence                                & $12{,}000$ / $2{,}000$\\
+max-delta (hindsight-goal cap, chunks)                     & $20$\\
+cross-episode goal probability                             & $0.3$\\
+anti-constancy weight                                      & $0.5$\\
+replay probability / value-expansion weight                & $0$ / $0$\\
+\addlinespace[3pt]
+\textbf{Co-trained critic} (initialized from the offline teacher)\\
+$\gamma$ (by planning horizon) / $n$-step                  & $0.98$ ($h25$), $0.99$ ($h100$) / $1$\\
+expectile (annealed)                                       & $0.1{\to}0.03$\\
+critic LR (annealed)                                       & $10^{-3}{\to}10^{-4}$\\
+live fraction of actor steps, then frozen EMA teacher      & $0.8$\\
+EMA rate $\tau$ / TD batch size                            & $0.005$ / $1{,}024$\\
+head                                                       & MRN quasimetric, hidden $256$, embed $128$, depth $2$\\
+\addlinespace[3pt]
+\textbf{Offline teacher} (critic initialization, Sec.~\ref{sec:value-learning})\\
+step cap / snapshot cadence                                & $18{,}000$ / $3{,}000$\\
+expectile / teachers per actor seed                        & $0.03$ / $1$\\
+\addlinespace[3pt]
+\textbf{Critic latent window}                              & $1$ frame ($2$ on Reacher, lag $5$)\\
+\bottomrule
+\end{tabular}
+\caption{\textbf{The RP1 configuration.} One setting for every environment
+(TwoRoom, Cube, Reacher) and both world-model bases (LeWM/LeJEPA, PLDM). The two
+entries that vary are not tuned: the discount follows the horizon being planned, and the
+Reacher critic reads two frames because velocity is unobservable from one. The only
+per-cell choice is the (teacher budget, actor step) stopping pair, selected on the
+validation draws as described above.}
+\label{tab:rp1-hypers-uniJ}
+\end{table}
