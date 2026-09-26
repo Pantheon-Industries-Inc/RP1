@@ -72,7 +72,7 @@ refinement iterations $K$      & $8$                  & $\gamma$ ($h25$ / $h100$
 plan horizon $H$ (chunks)      & $5$                  & $n$-step                       & $1$\\
 replan every                   & $5$ chunks           & expectile (annealed)           & $0.1{\to}0.03$\\
 clip range $a_{\max}$          & $2.5$                & critic LR (annealed)           & $10^{-3}{\to}10^{-4}$\\
-refiner MLP (width $\times$ layers) & $512\times2$    & live fraction of actor steps   & $0.8$\\
+refiner MLP (hidden width, layers) & $512$, $2$      & live fraction of actor steps   & $0.8$\\
                                &                      & EMA $\tau$ / TD batch          & $0.005$ / $1{,}024$\\
 \addlinespace[3pt]
 \multicolumn{2}{@{}l}{\textbf{Actor}} & head & MRN, $256/128$, depth $2$\\
@@ -88,7 +88,8 @@ replay / value-expansion       & $0$ / $0$            & all domains (Reacher)   
 \end{tabular}
 \caption{\textbf{The RP1 configuration.} One setting for every environment
 (TwoRoom, Cube, Reacher) and both world-model bases (LeWM/LeJEPA, PLDM); the critic head
-is an MRN quasimetric with hidden width $256$, embedding $128$ and depth $2$. The two
+is an MRN quasimetric with hidden width $256$, embedding $128$ and depth $2$, and the plan
+refiner is an MLP with two hidden layers of width $512$ followed by a linear head. The two
 entries that vary are not tuned: the discount follows the horizon being planned, so that
 $1/(1-\gamma)$ covers it, and the Reacher critic reads two latent frames because joint
 velocity is unobservable from one. The only per-cell choice is the (teacher budget,
