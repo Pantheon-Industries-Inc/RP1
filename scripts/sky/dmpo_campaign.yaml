@@ -284,7 +284,11 @@ run: |
            tail -3 "$D/log_${unique}.txt"
            echo "$label seed=$seed" >> "$D/.failed_cells"
            return 0; }
-    local produced=$(find logs -name "${unique}.txt" | head -1)
+    # NEWEST match, not the first: `find | head -1` returns directory order, and ${unique} is unique
+    # within a cell but NOT across jobs that share a workdir. On a pod (one ~/sky_workdir reused by
+    # every job) that silently copied a PREVIOUS job's identically-named result into this cell --
+    # observed 2026-09-25, a reacher cell adopted a tworoom cell's 72 validation results verbatim.
+    local produced=$(find logs -name "${unique}.txt" -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -1 | cut -d" " -f2-)
     [ -n "$produced" ] && cp "$produced" "$out"
     echo "----- RESULT $label seed=$seed -----"; cat "$out" 2>/dev/null || echo "(missing)"
   }
