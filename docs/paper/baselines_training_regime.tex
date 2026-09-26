@@ -8,31 +8,27 @@ DMPO keeps the MPPI update and learns a residual on it: a network reads the samp
 distribution and the $N$ rollout costs (no state, no gradient) and emits a gated mean
 correction, a covariance update, and a learned warm-start shift \citep{sacks2024deep}.
 We train it with the paper's objective, PPO, closed inside the frozen world model
-against the same critic $V_\psi$ the RLP row deploys, for the paper's budget of $1000$
-policy-improvement iterations ($4$ closed-loop decisions per imagined episode, batch
-$16$). We deploy a budget of $256$ rollouts per decision ($256{\times}1$).
+against the same critic $V_\psi$ the cell's RLP row deploys, for the paper's budget of
+$1000$ policy-improvement iterations. Both baselines are given the protocol we give our
+own method: three training seeds, snapshots taken through training (here every $200$
+iterations), and \emph{one} shared snapshot per cell chosen by the mean score over seeds
+on the validation draws, ties broken toward the earlier snapshot -- the same rule, on the
+same draws, by which RLP selects its (teacher, actor) pair. Reporting a fixed final
+iterate would not be equal treatment: DMPO's PPO return is a trendless walk over its
+budget, and its final iterate is selected in only one of ten cells. We train DMPO with a
+budget of $256$ rollouts per decision ($256{\times}1$).
 
 \paragraph{Learning-to-Optimize MPC (L2O-MPC).}
 L2O-MPC, DMPO's predecessor, learns the \emph{whole} sampling update rather than a
 residual: a network reads the mean, covariance, and $N$ costs and emits a gated
 replacement mean \citep{sacks2022learning}. As it is not a working optimizer untrained,
-it is trained by DAgger imitation of a larger-budget MPPI expert, computed through the
-same frozen world model and critic. We match the paper's DAgger structure exactly --
-$20$ rounds, $\beta_k = 0.8^k$, and an expert budget far above the learner's
-($N{=}512$ against $M{=}64$) -- but not its literal optimizer budget of roughly $10^6$
-gradient steps per seed: in the original setting a step is a small MLP update, whereas
-here it is a world-model unroll. We instead train to convergence, $18{,}000$ steps, and
-verify convergence per cell from the selection curve below. We deploy a budget of $256$
-rollouts per decision ($64{\times}4$), matching DMPO.
-
-\paragraph{Equal treatment.}
-Both baselines are given the protocol we give our own method. Each uses the cell's
-locked critic $V_\psi$, trained for exactly the teacher budget that cell's RLP row
-selected, on the same world model, data split and evaluation draws. Each is trained at
-three seeds, snapshotted periodically through training (DMPO every $200$ of its $1000$
-iterations; L2O-MPC every $3{,}000$ of its $18{,}000$ steps), and \emph{one} shared
-snapshot per cell is chosen by the mean score over seeds on the validation draws, ties
-broken toward the earlier snapshot -- the identical rule, and the identical draws, by
-which RLP selects its (teacher, actor) pair. Reporting a fixed final iterate instead
-would not be the same treatment: DMPO's PPO return is a trendless walk over its budget,
-and its final iterate is selected in only one of ten cells.
+it is trained by DAgger imitation of a larger-budget MPPI expert, computed here through
+the same frozen world model and critic. We match the paper's DAgger structure exactly --
+$20$ rounds, $\beta_k = 0.8^k$, and an expert budget far above the learner's ($N{=}512$
+against $M{=}64$) -- but not its literal optimizer budget of roughly $10^6$ gradient
+steps per seed: in the original setting a step is a small MLP update, whereas here it is
+a world-model unroll. We instead train to convergence, $18{,}000$ steps, snapshot every
+$3{,}000$, and select as above; the per-cell selection curves in
+Table~\ref{tab:baselines} show the objective flat over the final snapshots in all but two
+cells, whose reported scores are therefore lower bounds. We train L2O-MPC with a budget
+of $256$ rollouts per decision ($64{\times}4$), matching DMPO.
