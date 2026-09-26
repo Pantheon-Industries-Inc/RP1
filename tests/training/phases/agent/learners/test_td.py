@@ -1,17 +1,17 @@
-"""The eikonal penalty constrains the critic's INPUT GRADIENT magnitude.
+"""Offline TD value learning.
 
-A temporal-distance critic should change by one unit per one step's worth of
-latent displacement, i.e. ``||grad_z V|| == 1 / step_norm``. The refiner
-descends exactly this gradient through the frozen world model, so its
-magnitude is a property worth pinning.
+The eikonal penalty constrains the value's input-gradient magnitude: a temporal
+distance changes by one unit per step's worth of latent displacement, i.e.
+``||grad_z V|| == 1 / step_norm``, and the planner descends exactly this
+gradient through the frozen world model.
 """
 
 from __future__ import annotations
 
 import torch
 
-from rlp.core.value.learners.td import TDConfig, fit
-from rlp.data import LatentCache
+from rp1.data import LatentCache
+from rp1.training.phases.agent.learners.td import TDConfig, fit
 
 
 def _cache() -> LatentCache:
@@ -23,9 +23,10 @@ def _cache() -> LatentCache:
     )
 
 
-def _config(weight: float) -> TDConfig:
+def _config(weight: float, save_every: int = 0) -> TDConfig:
     return TDConfig(
         head="quasimetric",
+        symmetric=False,
         hidden_dim=32,
         depth=2,
         embed_dim=16,
@@ -35,9 +36,25 @@ def _config(weight: float) -> TDConfig:
         p_cross=0.3,
         batch_size=64,
         steps=150,
+        save_every=save_every,
         seed=0,
         eikonal_weight=weight,
         max_delta=6,
+        lr=1e-3,
+        weight_decay=1e-4,
+        tau=0.005,
+        balanced=True,
+        n_buckets=10,
+        huber_beta=1.0,
+        num_components=8,
+        rank_weight=0.0,
+        rank_margin=0.5,
+        rank_max_delta=200,
+        softplus=True,
+        sym_frac=0.5,
+        alpha_init=0.75,
+        near_frac=0.0,
+        near_max=3,
     )
 
 
@@ -73,3 +90,9 @@ def test_zero_weight_leaves_training_untouched() -> None:
     b = fit(cache, _config(0.0), "cpu")
     for pa, pb in zip(a.parameters(), b.parameters(), strict=True):
         assert torch.equal(pa, pb), "TD fit is not deterministic at a fixed seed"
+
+
+def test_snapshots_arrive_every_save_every_steps_before_the_last() -> None:
+    steps: list[int] = []
+    fit(_cache(), _config(0.0, save_every=50), "cpu", lambda head, step: steps.append(step))
+    assert steps == [50, 100]

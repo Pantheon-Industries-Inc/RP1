@@ -14,6 +14,7 @@ training:
   window_lag: 1
   near_frac: 0.0         # td: fraction of in-episode hindsight goals drawn 1..near_max steps ahead
   near_max: 3
+  max_episodes: null     # train on source episodes [0, N) of the cache
   learner: td
   steps: 5000
   batch_size: 1024
@@ -28,6 +29,7 @@ training:
   expectile: 0.7
   target_update_rate: 0.005
   n_step: 5
+  save_every: 0          # td: also save <checkpoint>_step<N> every N steps
   p_cross: 0.3
   no_balanced: false
   rank_max_delta: 200

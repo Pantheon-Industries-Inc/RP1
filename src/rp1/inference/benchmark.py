@@ -174,8 +174,13 @@ def run(cfg: DictConfig) -> None:
     image = image_transform(cfg.benchmark.image_size, cfg.benchmark.train_resolution, image_dtype)
     dataset = load_dataset(cfg, cfg.data.path)
     process = fit_normalizers(cfg, dataset)
-    world.set_policy(build_policy(cfg, device, process, {"pixels": image, "goal": image}))
+    policy = build_policy(cfg, device, process, {"pixels": image, "goal": image})
+    world.set_policy(policy)
     episodes, starts = sample_tasks(cfg, dataset)
+    # solvers that read the dataset task behind each environment, such as the oracle subgoal
+    solver = getattr(policy, "solver", None)
+    if hasattr(solver, "set_task_context"):
+        solver.set_task_context(episodes.tolist(), starts.tolist())
 
     video_directory = Path(cfg.run.videos)
     logger.info(f"Saving evaluation videos to {video_directory}")

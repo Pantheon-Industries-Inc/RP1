@@ -13,14 +13,17 @@ training:
   dataset: ???
   name: rp1
   frameskip: 5
+  actor_phases: 1       # residue classes of the stride kept in the planner's block cache
   state_key: null
   train_episodes: 8000
   train_res: null
   cache_directory: ${oc.env:RP1_DATA_HOME,${oc.env:HOME}/.cache/rp1}/caches
   stages: [cache, subsample, actions, value, planner]
+  teacher: null         # an existing value to train the planner against, in place of the value stage
 
 # overrides of the metric phase, which trains the offline value
   value:
+    learner: td           # l2 plans against the parameter-free latent distance, CEM's objective
     steps: 12000
     batch_size: 1024
     gamma: 0.98
@@ -28,6 +31,11 @@ training:
     n_step: 1
     p_cross: 0.3
     depth: null           # value-head depth; null keeps the value config's
+    head: null            # quasimetric | iqe | mlp; mlp with expectile 0.5 is plain goal-conditioned TD
+    symmetric: null
+    eikonal_weight: null  # pins ||grad_z V|| to one step's latent displacement, the gradient the planner follows
+    save_every: null      # also save value_td_step<N> every N steps, candidate teachers
+    max_episodes: null
     window_frames: null   # a window value stacks this many frames; the planner inherits it
     window_lag: null      # must equal frameskip whenever window_frames >= 2
     near_frac: null
@@ -42,6 +50,7 @@ training:
     mean_weight: 0.1
     max_delta: 20
     p_cross: 0.3
+    band_mix: null
     replay_prob: 0.5
     gamma: 0.98
     n_step: 50
@@ -59,3 +68,11 @@ training:
     ckpt_every: null
     near_frac: null
     near_max: null
+    max_episodes: null
+    grounding: null       # pusht: the dataset h5 is passed on as the state h5
+    ground_weight: null
+    ground_margin: null
+    ground_tau: null
+    ground_ref: null
+    ground_deadzone: null
+    ground_quantile: null

@@ -17,6 +17,7 @@ training:
   init_value: ???    # the frozen offline value (value_td): reward and plan cost
   cache_mmap: true
   ppo_iterations: 400    # policy-improvement rounds (reference: ~1000 on-system)
+  save_every: 0          # also save a planner snapshot every N rounds
   batch: 16              # imagined problems per round
   decisions: 4           # closed-loop decisions per imagined episode
   receding: 5            # plan blocks executed per decision (the eval protocol)

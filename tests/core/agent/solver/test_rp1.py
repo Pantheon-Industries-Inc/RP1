@@ -21,6 +21,11 @@ def _solver(world_model: Path, planner: Path, **overrides: Any) -> RP1Solver:
         "iters_override": None,
         "graphed": False,
         "graph_warmup_iters": 5,
+        "update_rule": "learned",
+        "gd_lr": 0.03,
+        "band_limit": None,
+        "use_action_history": False,
+        "ground_weight": None,
     }
     solver = RP1Solver(
         model=load_wm(str(world_model)),
@@ -63,3 +68,17 @@ def test_plans_are_deterministic_and_inside_the_action_limit(cube_world_model: P
 def test_zero_iterations_emit_the_initial_plan(cube_world_model: Path, cube_planner: Path) -> None:
     solver = _solver(cube_world_model, cube_planner, iters_override=0)
     assert torch.count_nonzero(solver.solve(_observation())["actions"]) == 0
+
+
+def test_a_one_mode_band_limit_keeps_plans_constant_in_time(cube_world_model: Path, cube_planner: Path) -> None:
+    actions = _solver(cube_world_model, cube_planner, band_limit=1).solve(_observation())["actions"]
+    assert torch.count_nonzero(actions) > 0
+    assert torch.allclose(actions, actions[:, :1].expand_as(actions), atol=1e-5)
+
+
+def test_the_gradient_rule_replaces_the_learned_update(cube_world_model: Path, cube_planner: Path) -> None:
+    learned = _solver(cube_world_model, cube_planner).solve(_observation())["actions"]
+    solver = _solver(cube_world_model, cube_planner, update_rule="gradient")
+    gradient = solver.solve(_observation())["actions"]
+    assert not torch.equal(learned, gradient)
+    assert gradient.abs().max() <= solver.actor.action_limit

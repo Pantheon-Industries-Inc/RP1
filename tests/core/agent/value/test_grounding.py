@@ -6,7 +6,7 @@ import numpy as np
 import pymunk
 import torch
 
-from rlp.core.grounding import (
+from rp1.core.agent.value.grounding import (
     ACTION_SCALE,
     AGENT_RADIUS,
     GroundingPenalty,
@@ -213,7 +213,23 @@ def _synthetic_dataset(seed: int = 0) -> tuple[torch.Tensor, np.ndarray, np.ndar
 def test_calibration_end_to_end() -> None:
     z, state, act, epi = _synthetic_dataset()
     module, report = calibrate_pusht_grounding(
-        z, state, act, epi, amu=np.zeros(2), astd=np.ones(2), n_windows=2000, n_check=5000, seed=0
+        z,
+        state,
+        act,
+        epi,
+        amu=np.zeros(2),
+        astd=np.ones(2),
+        frameskip=5,
+        horizon=5,
+        margin=None,
+        tau=5.0,
+        ref=10.0,
+        weight=1.0,
+        deadzone=None,
+        quantile=0.95,
+        n_windows=2000,
+        n_check=5000,
+        seed=0,
     )
     assert report["probe_r2_block"] > 0.99 and report["probe_r2_angle"] > 0.99 and report["kin_r2"] > 0.99
     assert report["moved_given_clear"] < 0.05  # the geometry explains the motion

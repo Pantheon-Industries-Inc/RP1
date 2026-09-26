@@ -9,6 +9,8 @@
 Caches and the action h5 go to ``cache_directory`` and are reused across runs, so
 ``training.stages=[value,planner]`` iterates on the recipe without re-encoding.
 ``training.value.*`` and ``training.planner.*`` override the two phase configs.
+``training.teacher=<value>`` trains the planner against an existing value, such
+as a snapshot the value stage saved with ``save_every``, instead of this run's.
 
 Example::
 
@@ -27,6 +29,9 @@ from rp1.utils.logging import logger
 from rp1.utils.run import save_stage_config
 
 STAGES = ("cache", "subsample", "actions", "value", "planner")
+# stage overrides that configure the value and planner architectures rather than their trainers
+VALUE_ARCHITECTURE = ("depth", "head", "symmetric", "eikonal_weight")
+PLANNER_ARCHITECTURE = ("action_limit", "iterations")
 
 
 def _stage(parent: DictConfig, index: int, name: str, config_name: str, **values: object) -> object:
@@ -52,6 +57,11 @@ def _overrides(subtree: DictConfig) -> dict[str, object]:
     return {str(key): value for key, value in flat.items() if value is not None}
 
 
+def _route(overrides: dict[str, object], architecture: tuple[str, ...], group: str) -> dict[str, object]:
+    """Stage overrides as dotted keys: architecture keys onto ``group``, the rest onto the trainer."""
+    return {(f"{group}.{key}" if key in architecture else f"training.{key}"): value for key, value in overrides.items()}
+
+
 def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "training")
     stages = set(args.stages)
@@ -61,19 +71,18 @@ def run(cfg: DictConfig) -> None:
     cache_directory = Path(str(args.cache_directory)).expanduser()
     cache_directory.mkdir(parents=True, exist_ok=True)
     cache_fs1 = str(cache_directory / f"{args.name}_fs1.pt")
-    cache_fs5 = str(cache_directory / f"{args.name}_fs{args.frameskip}.pt")
+    # a phase-multiplexed cache is a different artefact from the single-phase one
+    phases = f"p{args.actor_phases}" if args.actor_phases > 1 else ""
+    cache_fs5 = str(cache_directory / f"{args.name}_fs{args.frameskip}{phases}.pt")
     actions_h5 = str(cache_directory / f"{args.name}_actions.h5")
     value_checkpoint = str(Path(cfg.run.checkpoints) / "value_td")
-    teacher = cfg.get("teacher")
-    if teacher:
-        # joint teacher x actor early stopping: train the planner against a chosen teacher snapshot
-        # (a metric dir saved by an earlier value stage) instead of this run's value_td
-        value_checkpoint = str(Path(str(teacher)).expanduser())
-        if "value" not in skip:
-            raise ValueError("teacher=<dir> requires skip=[...,value]: the value stage would be trained and ignored")
+    if args.teacher is not None:
+        if "value" in stages:
+            raise ValueError("training.teacher replaces the value stage; drop `value` from training.stages")
+        value_checkpoint = str(Path(str(args.teacher)).expanduser())
         if not Path(value_checkpoint).exists():
-            raise FileNotFoundError(f"teacher metric dir not found: {value_checkpoint}")
-        logger.info(f"Planner teacher override: {value_checkpoint}")
+            raise FileNotFoundError(f"teacher value not found: {value_checkpoint}")
+        logger.info(f"Planner teacher: {value_checkpoint}")
     stage_index = 0
 
     def run_stage(name: str, config_name: str, **values: object) -> object:
@@ -103,6 +112,7 @@ def run(cfg: DictConfig) -> None:
                 "preparation.inp": cache_fs1,
                 "preparation.out": cache_fs5,
                 "preparation.frameskip": args.frameskip,
+                "preparation.phases": args.actor_phases,
             },
         )
     if "actions" in stages:
@@ -122,33 +132,22 @@ def run(cfg: DictConfig) -> None:
             f"frameskip ({args.frameskip}), got {window_lag}"
         )
     if "value" in stages:
-        value_overrides = _overrides(args.value)
-        # `depth` belongs to the value architecture, not the trainer
-        value_depth = value_overrides.pop("depth", None)
-        if value_depth is not None:
-            value_overrides["core.agent.value.depth"] = value_depth
         run_stage(
             "value",
             "training/phases/agent/metric",
             **{
                 "training.cache": cache_fs1,
-                "training.learner": "td",
                 "runtime.device": args.device,
                 "runtime.seed": args.seed,
             },
             **{"output.checkpoint": "value_td"},
-            **{
-                (key if key.startswith("core.") else f"training.{key}"): value for key, value in value_overrides.items()
-            },
+            **_route(_overrides(args.value), VALUE_ARCHITECTURE, "core.agent.value"),
         )
     if "planner" in stages:
         planner_overrides = _overrides(args.planner)
-        # `action_limit` and `iterations` belong to the planner architecture, not the trainer
-        action_limit = planner_overrides.pop("action_limit")
-        planner_overrides["core.agent.planner.action_limit"] = action_limit
-        iterations = planner_overrides.pop("iterations", None)
-        if iterations is not None:
-            planner_overrides["core.agent.planner.iterations"] = iterations
+        if planner_overrides.get("grounding") is not None:
+            # the grounding probe is fitted on the dataset's state column
+            planner_overrides["state_h5"] = str(args.dataset)
         run_stage(
             "planner",
             "training/phases/agent/rp1_ac",
@@ -163,10 +162,7 @@ def run(cfg: DictConfig) -> None:
                 "runtime.seed": args.seed,
             },
             **{"output.planner_checkpoint": "planner.pt", "output.value_checkpoint": "value_ac"},
-            **{
-                (key if key.startswith("core.") else f"training.{key}"): value
-                for key, value in planner_overrides.items()
-            },
+            **_route(planner_overrides, PLANNER_ARCHITECTURE, "core.agent.planner"),
         )
     planner = Path(cfg.run.checkpoints) / "planner.pt"
     logger.success(

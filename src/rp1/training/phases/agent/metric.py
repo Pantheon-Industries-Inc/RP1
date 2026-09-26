@@ -33,11 +33,7 @@ def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "training", cfg.core.agent.value)
 
     device = pick_device(args.device)
-    base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap))
-    max_episodes = args.get("max_episodes")
-    if max_episodes:
-        base_cache = base_cache.first_episodes(int(max_episodes))
-        logger.info(f"Data-volume cap: training on episodes [0, {int(max_episodes)})")
+    base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap)).first_episodes(args.max_episodes)
     cache = base_cache.windowed(int(args.window_frames), int(args.window_lag))
     logger.info(f"Loaded cache: {len(cache.z)} latents dim={cache.latent_dim} on {device}")
 
@@ -83,6 +79,7 @@ def run(cfg: DictConfig) -> None:
             n_buckets=args.n_buckets,
             batch_size=args.batch_size,
             steps=args.steps,
+            save_every=args.save_every,
             seed=args.seed,
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
@@ -101,12 +98,11 @@ def run(cfg: DictConfig) -> None:
             near_max=args.near_max,
         )
 
-        def _save_snapshot(head: nn.Module, step: int) -> None:
-            # teacher early-stopping grid: <checkpoint>_step<N> next to the final <checkpoint>
+        def snapshot(head: nn.Module, step: int) -> None:
             path = save_metric(head, run_name=f"{args.output.checkpoint}_step{step}", cache_dir=args.run.directory)
-            logger.info(f"Saved TD teacher snapshot step={step} to {path}")
+            logger.info(f"Saved TD snapshot at step {step} to {path}")
 
-        module = learners.td.fit(cache, td_cfg, device, save_fn=_save_snapshot if td_cfg.save_every > 0 else None)
+        module = learners.td.fit(cache, td_cfg, device, snapshot)
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,

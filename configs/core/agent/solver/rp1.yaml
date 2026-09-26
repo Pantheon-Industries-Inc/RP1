@@ -21,3 +21,8 @@ init_samples: 64
 init_scale: 1.5
 cem_init_steps: 30
 iters_override: null  # refinement iterations at deployment; null = the trained count
+update_rule: learned  # learned | gradient: a plain gradient step of size gd_lr on the same energy
+gd_lr: 0.03
+band_limit: null  # keep each update to its first N temporal DCT modes; N = horizon is a no-op
+use_action_history: false  # needs planning.history_len > 1, which publishes the executed actions
+ground_weight: null  # grounding-term weight; null = the checkpoint's, 0 = deploy without it

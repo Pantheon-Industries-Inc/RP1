@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import torch
@@ -41,13 +42,12 @@ class LatentCache:
 
     @property
     def phase_multiplex(self) -> int:
-        """Residue classes of the stride stored as separate episodes (1 = none).
+        """Residue classes of the stride stored as separate episodes, 1 when there are none.
 
-        Set by tools/subsample_cache with phases>1; then episode id = e*P + k and
-        consumers indexing per-episode arrays must map back with divmod(e, P).
+        A multiplexed cache numbers phase ``k`` of source episode ``e`` as ``e * P + k``;
+        anything indexed by source episode maps back with ``divmod(episode, P)``.
         """
-        raw = (self.meta or {}).get("phase_multiplex", 1)
-        return int(raw) if isinstance(raw, (int, float, str)) else 1
+        return int(cast(int, (self.meta or {}).get("phase_multiplex", 1)))
 
     def episodes(self) -> dict[int, np.ndarray]:
         """Map each episode id to its row indices, sorted by ``step_idx``."""
@@ -58,6 +58,25 @@ class LatentCache:
             rows = np.nonzero(ep == e)[0]
             out[int(e)] = rows[np.argsort(st[rows])]
         return out
+
+    def first_episodes(self, count: int | None) -> LatentCache:
+        """The rows of source episodes ``[0, count)``; the whole cache when ``count`` is None.
+
+        The cap is a lower id range, so evaluation draws taken from the top of the
+        episode range stay held out whatever the cap.
+        """
+        if count is None:
+            return self
+        rows = torch.nonzero(self.episode_idx < count * self.phase_multiplex).squeeze(1)
+        if rows.numel() == 0:
+            raise ValueError(f"no rows in episodes [0, {count}); episode ids start at {int(self.episode_idx.min())}")
+        return type(self)(
+            self.z[rows],
+            self.episode_idx[rows],
+            self.step_idx[rows],
+            None if self.state is None else self.state[rows],
+            dict(self.meta or {}, max_episodes=count),
+        )
 
     def windowed(self, frames: int, lag: int) -> LatentCache:
         """Return a cache whose latent rows concatenate causal frame windows.

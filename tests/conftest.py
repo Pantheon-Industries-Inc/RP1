@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,14 @@ import torch
 from rp1.data import LatentCache
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "core"
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # each xdist worker would otherwise start a thread per core, and the workers'
+    # spinning thread pools starve each other by an order of magnitude
+    workers = os.environ.get("PYTEST_XDIST_WORKER_COUNT")
+    if workers:
+        torch.set_num_threads(max(1, (os.cpu_count() or 1) // int(workers)))
 
 
 @pytest.fixture

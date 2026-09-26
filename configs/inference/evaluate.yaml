@@ -12,9 +12,7 @@ runtime:
 planning:
   horizon: 5
   receding_horizon: 5
-  history_len: 1        # frames the policy stacks for the planner, one action block apart
-                        # (3 = the WM's window: real pixels_hist + action_hist on replans;
-                        # 1 = pre-E29 behaviour, the solver tiles the current frame)
+  history_len: 1
   action_block: 5
   warm_start: true
   budget: 50

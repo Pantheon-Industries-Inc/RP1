@@ -82,7 +82,8 @@ pixi run pretrain data=reacher_lewm
 
 The PLDM world models are the authors' checkpoints converted into the LeWM key layout, which shares the
 architecture. `job=convert_pldm` converts another PLDM export; pair the result with the `config.json` of
-`assets/core/world_model/cube_pldm`.
+`assets/core/world_model/cube_pldm`. `pixi run pretrain --config-name phases/world_model/pldm` trains
+one from scratch with the authors' objective, on PushT by default (`data=` selects another dataset).
 
 ```bash
 pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<out.pt>

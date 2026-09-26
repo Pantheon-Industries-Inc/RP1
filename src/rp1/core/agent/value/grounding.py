@@ -1,10 +1,10 @@
-"""Physics grounding of the refiner's energy on PushT.
+"""Physics grounding of the planner's energy on PushT.
 
 A frozen world model smooths the contact discontinuity into a ramp, so a
-gradient planner can imagine block motion the agent never causes (PushT E16:
-51 px of fabricated block displacement per failed first plan, against 5 px
-for the sampling planner on the same model). The grounding term makes that
-fiction expensive with information the model does not have:
+gradient planner can imagine block motion the agent never causes: on PushT a
+failed first plan imagined 51 px of block displacement, against 5 px for the
+sampling planner on the same model. The grounding term makes that fiction
+expensive with information the model does not have:
 
 * a fixed linear probe reads agent position, block position and block angle
   out of every imagined latent (fitted by ridge regression on the offline
@@ -18,9 +18,9 @@ fiction expensive with information the model does not have:
 
 The penalty is a linear read of latents already computed plus a few dozen
 scalar ops: no samples, no second model, and it is identical at training and
-deploy (the probe and the calibrated thresholds travel in the actor
-checkpoint). Imagined block rotation without contact is not penalised in this
-version; the E16 signal was position.
+deploy (the probe and the calibrated thresholds travel in the planner
+checkpoint). Imagined rotation without contact is not penalised; the
+fabricated motion was translation.
 
 Geometry follows ``stable_worldmodel.envs.pusht.PushT``: a 512-px world, an
 agent disc of radius 15, and a T of two rectangles in the block body frame
@@ -40,6 +40,7 @@ __all__ = [
     "AGENT_RADIUS",
     "GroundingPenalty",
     "calibrate_pusht_grounding",
+    "decode_state",
     "fit_agent_kinematics",
     "fit_state_probe",
     "tee_distance",
@@ -160,6 +161,12 @@ def fit_agent_kinematics(
     return torch.as_tensor(g, dtype=torch.float32), 1.0 - resid / total
 
 
+def decode_state(z: torch.Tensor, probe_w: torch.Tensor) -> torch.Tensor:
+    """Latent (..., D) -> (..., 6) state read by a probe from :func:`fit_state_probe`."""
+    ones = z.new_ones(*z.shape[:-1], 1)
+    return torch.cat([z, ones], dim=-1) @ probe_w
+
+
 def _kinematic_path(agent0: torch.Tensor, u: torch.Tensor, u_prev: torch.Tensor, gains: torch.Tensor) -> torch.Tensor:
     """Agent position after each commanded displacement: (B, T, 2) from (B, 2), (B, T, 2), (B, 2)."""
     prev = torch.cat([u_prev.unsqueeze(1), u[:, :-1]], dim=1)
@@ -185,11 +192,11 @@ class GroundingPenalty(nn.Module):
         astd: torch.Tensor,
         gains: torch.Tensor,
         *,
-        margin: float = 10.0,
-        tau: float = 5.0,
-        deadzone: float = 15.0,
-        ref: float = 10.0,
-        weight: float = 1.0,
+        margin: float,
+        tau: float,
+        deadzone: float,
+        ref: float,
+        weight: float,
     ) -> None:
         super().__init__()
         if probe_w.shape[-1] != STATE_DIM:
@@ -214,8 +221,7 @@ class GroundingPenalty(nn.Module):
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         """Latent (..., D) -> (..., 6) decoded state."""
-        ones = z.new_ones(*z.shape[:-1], 1)
-        return torch.cat([z, ones], dim=-1) @ self.probe_w
+        return decode_state(z, self.probe_w)
 
     def commands(self, plan: torch.Tensor) -> torch.Tensor:
         """Normalised plan (B, H, fs*act_dim) -> commanded displacements (B, H*fs, act_dim) in px."""
@@ -306,14 +312,14 @@ def calibrate_pusht_grounding(
     *,
     amu: np.ndarray,
     astd: np.ndarray,
-    fs: int = 5,
-    horizon: int = 5,
-    margin: float | None = None,
-    tau: float = 5.0,
-    ref: float = 10.0,
-    weight: float = 1.0,
-    deadzone: float | None = None,
-    quantile: float = 0.95,
+    frameskip: int,
+    horizon: int,
+    margin: float | None,
+    tau: float,
+    ref: float,
+    weight: float,
+    deadzone: float | None,
+    quantile: float,
     n_windows: int = 50_000,
     n_check: int = 300_000,
     seed: int = 0,
@@ -322,7 +328,7 @@ def calibrate_pusht_grounding(
 
     All inputs are row-aligned over the offline data: ``z`` (N, D) latents,
     ``state`` (N, >=5) env states, ``action_raw`` (N, act_dim) raw env actions,
-    ``episode_idx`` (N,). ``amu``/``astd`` are the actor's action statistics.
+    ``episode_idx`` (N,). ``amu``/``astd`` are the planner's action statistics.
 
     Checks, all reported: the probe's held-out accuracy; the kinematic fit's
     R2; and, on TRUE states, how often the block moves in a step where the
@@ -378,6 +384,7 @@ def calibrate_pusht_grounding(
         )
 
     # windows of `horizon` blocks: true motion, true closest approach, decoded motion, decoded contact
+    fs = frameskip
     span = horizon * fs
     starts = np.flatnonzero(epi[span:] == epi[:-span])
     starts = np.sort(rng.choice(starts, size=min(n_windows, len(starts)), replace=False))
@@ -388,10 +395,9 @@ def calibrate_pusht_grounding(
     gap_window_true = gap_all[steps].min(axis=1)
     static = true_disp.max(axis=1) < 3.0
     push = true_disp[:, -1] > 30.0
-    probe = GroundingPenalty(probe_w, torch.as_tensor(amu), torch.as_tensor(astd), gains)
     with torch.no_grad():
-        dec_start = probe.decode(z[torch.as_tensor(starts)].float())  # (W, 6)
-        dec_end = probe.decode(z[torch.as_tensor(ends.reshape(-1))].float()).view(w, horizon, 6)
+        dec_start = decode_state(z[torch.as_tensor(starts)].float(), probe_w)  # (W, 6)
+        dec_end = decode_state(z[torch.as_tensor(ends.reshape(-1))].float(), probe_w).view(w, horizon, 6)
         decoded_disp = (dec_end[..., 2:4] - dec_start[:, None, 2:4]).norm(dim=-1).numpy()  # (W, H)
         # the kinematic agent path the penalty will see, from the true start position and true actions
         u = torch.as_tensor(act[starts[:, None] + np.arange(span)[None, :]] * ACTION_SCALE, dtype=torch.float32)

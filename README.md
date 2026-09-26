@@ -45,6 +45,8 @@ pixi run posttrain training.wm=<world model> training.dataset=<dataset>   # trai
 pixi run evaluate benchmark=cube_lewm                              # evaluate a policy
 ```
 
+`pretrain --config-name phases/world_model/pldm` trains a PLDM world model instead of a LeWM one.
+
 `posttrain` runs the full agent pipeline on a frozen world model: latent caching, action extraction, the
 offline value, and actor-critic training of the planner. `training.stages=[value,planner]` reruns part of
 it against existing caches, and `--config-name phases/agent/<phase>` runs a single phase instead, such

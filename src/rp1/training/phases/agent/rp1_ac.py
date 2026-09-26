@@ -26,6 +26,11 @@ errors, so compare against ``expand_weight=0``. ``expand_traj`` adds the H
 single-block backups  d(z_t,zg) <- fs + d_bar(z_{t+1},zg)  along the same
 rollout, at no extra world-model cost.
 
+``grounding=pusht`` adds the physics-grounding penalty of
+:mod:`rp1.core.agent.value.grounding` to the energy the planner is trained on;
+the calibrated term travels in the planner checkpoint, so the solver deploys
+the same energy.
+
 The planner checkpoint records the value's path, so the solver finds the
 teacher it was trained against.
 """
@@ -55,6 +60,7 @@ from rp1.data import LatentCache
 from rp1.data.base import load_action_stats
 from rp1.training.harness.checkpointing import load_metric, load_pretrained, save_metric
 from rp1.training.harness.schedule import cosine_interpolate
+from rp1.training.phases.agent.grounding import Grounding
 from rp1.training.phases.agent.learners.td import expectile_loss
 from rp1.training.phases.agent.samplers import NStepGoalSampler
 from rp1.utils.config import phase_config
@@ -69,35 +75,65 @@ type ExpandBatch = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 class ActionBlocks:
-    """Normalized action blocks of ``frameskip`` primitive steps, read from an action h5."""
+    """Normalized action blocks of ``frameskip`` primitive steps, read from an action h5.
 
-    def __init__(self, path: str, frameskip: int, stats: str | None) -> None:
+    Episodes are those of the block cache; with ``phases > 1`` (a phase-multiplexed
+    cache) episode ``e * phases + k`` is source episode ``e`` starting at step ``k``.
+    """
+
+    def __init__(self, path: str, frameskip: int, stats: str | None, phases: int) -> None:
         with h5py.File(path, "r") as file:
-            actions = file["action"][:]
+            self.actions = file["action"][:]
             self.offsets = file["ep_offset"][:]
             self.lengths = file["ep_len"][:] if "ep_len" in file else None
         # nan-aware: some datasets pad episode-terminal steps with NaN actions;
         # those rows are never sampled but must not poison the statistics
-        mean, std = np.nanmean(actions, 0), np.nanstd(actions, 0) + 1e-6
+        mean, std = np.nanmean(self.actions, 0), np.nanstd(self.actions, 0) + 1e-6
         if stats is not None:
             mean, std = load_action_stats(stats)
-            if mean.shape != (actions.shape[-1],):
-                raise ValueError(f"action statistics have shape {mean.shape}; actions have {actions.shape[-1]}")
+            if mean.shape != (self.actions.shape[-1],):
+                raise ValueError(f"action statistics have shape {mean.shape}; actions have {self.actions.shape[-1]}")
             logger.info(f"Actions normalized with statistics from {stats}")
-        self.normalized = ((actions - mean) / std).astype(np.float32)
+        self.mean, self.std = mean, std
+        self.normalized = ((self.actions - mean) / std).astype(np.float32)
         self.frameskip = frameskip
-        self.dim = actions.shape[-1] * frameskip
+        self.phases = phases
+        self.dim = self.actions.shape[-1] * frameskip
+
+    def row(self, episode: int, block: int) -> int:
+        """The h5 row of the block's first primitive step."""
+        source, phase = divmod(episode, self.phases)
+        offset = phase + self.frameskip * block
+        if self.lengths is not None:
+            offset = min(offset, max(0, int(self.lengths[source]) - self.frameskip))
+        return int(self.offsets[source] + offset)
+
+    def first_row(self, episode: int) -> int:
+        return int(self.offsets[episode // self.phases])
 
     def __call__(self, episode: int, block: int) -> np.ndarray:
-        offset = self.frameskip * block
-        if self.lengths is not None:
-            offset = min(offset, max(0, int(self.lengths[episode]) - self.frameskip))
-        start = int(self.offsets[episode] + offset)
+        start = self.row(episode, block)
         return np.asarray(self.normalized[start : start + self.frameskip]).reshape(-1)
 
 
+@dataclass(frozen=True)
+class Problems:
+    """A batch of planning problems; ``rows`` are the action-h5 rows where each plan starts."""
+
+    histories: torch.Tensor
+    actions: torch.Tensor
+    goals: torch.Tensor
+    rows: np.ndarray
+    has_previous: np.ndarray
+
+
 class PlanningTasks:
-    """Three-frame latent histories, their two action blocks, and a goal latent."""
+    """Three-frame latent histories, their two action blocks, and a goal latent.
+
+    In-episode goals are ``1..max_delta`` blocks ahead; with ``band_mix`` a band is
+    drawn uniformly first and the offset uniformly within it, so each deployment
+    horizon gets equal mass instead of the long ones dominating.
+    """
 
     def __init__(
         self,
@@ -105,10 +141,13 @@ class PlanningTasks:
         blocks: ActionBlocks,
         *,
         max_delta: int,
+        band_mix: list[int] | None,
         p_cross: float,
         rng: np.random.Generator,
         device: str,
     ) -> None:
+        if band_mix and max(band_mix) > max_delta:
+            raise ValueError(f"band_mix {band_mix} exceeds max_delta {max_delta}")
         self.z = cache.z.to(device).float()
         episodes = cache.episodes()
         keys = [key for key in episodes if len(episodes[key]) > max_delta + 4]
@@ -122,29 +161,49 @@ class PlanningTasks:
         self.episodes = np.array(keys)
         self.blocks = blocks
         self.max_delta = max_delta
+        self.band_mix = band_mix
         self.p_cross = p_cross
         self.rng = rng
         self.device = device
 
-    def sample(self, batch: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _offset(self, remaining: int) -> int:
+        if not self.band_mix:
+            return int(self.rng.integers(1, self.max_delta + 1))
+        high = min(self.max_delta, remaining)
+        if high < 1:
+            return 1
+        band = self.band_mix[int(self.rng.integers(len(self.band_mix)))]
+        return int(self.rng.integers(1, min(band, high) + 1))
+
+    def sample(self, batch: int) -> Problems:
         z, rng = self.z, self.rng
         histories: list[torch.Tensor] = []
         actions: list[np.ndarray] = []
         goals: list[torch.Tensor] = []
-        for _ in range(batch):
+        starts = np.empty(batch, dtype=np.int64)
+        has_previous = np.empty(batch, dtype=bool)
+        for i in range(batch):
             episode = int(self.episodes[rng.integers(len(self.episodes))])
             rows = self.rows[episode]
             length = len(rows)
             t = int(rng.integers(2, length - 2))
             histories.append(torch.stack([z[rows[t - 2]], z[rows[t - 1]], z[rows[t]]]))
             actions.append(np.stack([self.blocks(episode, t - 2), self.blocks(episode, t - 1)]))
+            starts[i] = self.blocks.row(episode, t)
+            has_previous[i] = starts[i] > self.blocks.first_row(episode)
             if rng.random() < self.p_cross:
                 other = self.rows[int(self.episodes[rng.integers(len(self.episodes))])]
                 goals.append(z[other[rng.integers(len(other))]])
             else:
-                delta = int(rng.integers(1, self.max_delta + 1))
+                delta = self._offset(length - 1 - t)
                 goals.append(z[rows[min(t + delta, length - 1)]])
-        return torch.stack(histories), torch.from_numpy(np.stack(actions)).to(self.device), torch.stack(goals)
+        return Problems(
+            torch.stack(histories),
+            torch.from_numpy(np.stack(actions)).to(self.device),
+            torch.stack(goals),
+            starts,
+            has_previous,
+        )
 
 
 @dataclass(frozen=True)
@@ -196,8 +255,14 @@ class Critic:
                 near_max=a.near_max,
             )
         )
+        # a parameter-free value (the latent L2 distance) can only ever be frozen
+        trainable = any(True for _ in module.parameters())
+        if cache is not None and not trainable and a.freeze_critic_frac > 0:
+            raise ValueError(f"{type(module).__name__} has no parameters to co-train; set freeze_critic_frac=0")
         self.optimizer = (
-            None if cache is None else torch.optim.AdamW(module.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
+            None
+            if cache is None or not trainable
+            else torch.optim.AdamW(module.parameters(), lr=a.critic_lr, weight_decay=a.critic_wd)
         )
 
     @property
@@ -325,7 +390,7 @@ def window_lag(a: DictConfig, frames: int) -> int | None:
 class Actor:
     """The planner network, its optimizer, and the replay of its own imagined histories."""
 
-    def __init__(self, a: DictConfig, action_dim: int, device: str) -> None:
+    def __init__(self, a: DictConfig, action_dim: int, grounding: Grounding | None, device: str) -> None:
         self.net = PlannerNet(
             horizon=a.horizon,
             action_dim=action_dim,
@@ -336,44 +401,55 @@ class Actor:
         self.optimizer = torch.optim.AdamW(self.net.parameters(), lr=a.actor_lr, weight_decay=a.actor_weight_decay)
         self.a = a
         self.action_dim = action_dim
+        self.grounding = grounding
         self.device = device
-        self.replay: tuple[torch.Tensor, torch.Tensor] | None = None
+        # histories and goals; with grounding also the agent position and last command
+        self.replay: tuple[torch.Tensor, ...] | None = None
+        self.grounding_log: dict[str, float] = {}
 
-    def _replayed(
-        self, histories: torch.Tensor, actions: torch.Tensor, goals: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Swap a ``replay_prob`` share of the batch for the previous step's imagined endpoints."""
+    def _replayed(self, batch: list[torch.Tensor]) -> list[torch.Tensor]:
+        """Swap a ``replay_prob`` share of the batch for the previous step's imagined endpoints.
+
+        ``batch`` is histories, actions, goals and, with grounding, the anchors.
+        """
         if self.a.replay_prob <= 0 or self.replay is None:
-            return histories, actions, goals
-        replay_histories, replay_goals = self.replay
+            return batch
         picked = torch.nonzero(torch.rand(self.a.batch, device=self.device) < self.a.replay_prob).squeeze(1)
         if not picked.numel():
-            return histories, actions, goals
-        take = torch.randint(0, replay_histories.shape[0], (picked.numel(),), device=self.device)
-        histories, actions, goals = histories.clone(), actions.clone(), goals.clone()
-        histories[picked] = replay_histories[take]
-        goals[picked] = replay_goals[take]
-        actions[picked] = 0.0  # deployed replans query with zero action history
-        return histories, actions, goals
+            return batch
+        take = torch.randint(0, self.replay[0].shape[0], (picked.numel(),), device=self.device)
+        batch = [tensor.clone() for tensor in batch]
+        batch[1][picked] = 0.0  # deployed replans query with zero action history
+        for index, replayed in zip([0, *range(2, len(batch))], self.replay, strict=True):
+            batch[index][picked] = replayed[take]
+        return batch
 
     def step(
         self, tasks: PlanningTasks, wm: LatentWorldModel, teacher: ValueFunction, frames: int
     ) -> tuple[float, float, ExpandBatch]:
-        a = self.a
-        histories, actions, goals = self._replayed(*tasks.sample(a.batch))
+        a, grounding = self.a, self.grounding
+        problems = tasks.sample(a.batch)
+        batch = [problems.histories, problems.actions, problems.goals]
+        if grounding is not None:
+            batch.extend(grounding.anchors(problems.rows, problems.has_previous))
+        histories, actions, goals, *anchors = self._replayed(batch)
         start = histories[:, -1]
 
-        def score(trajectory: torch.Tensor) -> torch.Tensor:
+        def score(trajectory: torch.Tensor, plan: torch.Tensor) -> torch.Tensor:
             if frames > 1:
-                return windowed_trajectory_value(teacher, trajectory, goals, histories, frames, a.temporal_objective)
-            return trajectory_value(teacher, trajectory, goals, start, a.temporal_objective)
+                energy = windowed_trajectory_value(teacher, trajectory, goals, histories, frames, a.temporal_objective)
+            else:
+                energy = trajectory_value(teacher, trajectory, goals, start, a.temporal_objective)
+            if grounding is not None:
+                energy = energy + grounding.penalty(start, trajectory, plan, *anchors)
+            return energy
 
         plan = torch.zeros(a.batch, a.horizon, self.action_dim, device=self.device)
         energies: list[torch.Tensor] = []
         trajectory: torch.Tensor | None = None
         if a.reuse_refinement_rollouts:
             reused_plan = plan.detach().requires_grad_(True)
-            reused_score = score(rollout_traj(wm, histories, actions, reused_plan))
+            reused_score = score(rollout_traj(wm, histories, actions, reused_plan), reused_plan)
         for k in range(a.iterations):
             # the gradient is an input to the learned rule, not part of the training path
             if a.reuse_refinement_rollouts:
@@ -382,12 +458,12 @@ class Actor:
             else:
                 with torch.enable_grad():  # type: ignore[no-untyped-call]  # PyTorch stub is untyped.
                     probe = plan.detach().requires_grad_(True)
-                    probe_score = score(rollout_traj(wm, histories, actions, probe))
+                    probe_score = score(rollout_traj(wm, histories, actions, probe), probe)
                     (gradient,) = torch.autograd.grad(probe_score.sum(), probe)
                 energy = probe_score.detach()
             plan = self.net(plan, gradient.detach(), energy)
             trajectory = rollout_traj(wm, histories, actions, plan)
-            plan_score = score(trajectory)
+            plan_score = score(trajectory, plan)
             energies.append(plan_score.mean())
             if a.reuse_refinement_rollouts and k + 1 < a.iterations:
                 reused_plan, reused_score = plan, plan_score
@@ -395,6 +471,19 @@ class Actor:
             raise RuntimeError("the planner ran no refinement iteration")
         if a.replay_prob > 0:
             self.replay = (trajectory[:, -3:].detach(), goals.detach())
+            if grounding is not None:
+                with torch.no_grad():
+                    # the replayed start is this rollout's end: the agent sits where the plan took it
+                    end = grounding.penalty.agent_path(plan.detach(), *anchors)[:, -1]
+                    self.replay += (end, grounding.penalty.commands(plan.detach())[:, -1])
+        if grounding is not None:
+            with torch.no_grad():
+                terms = grounding.penalty.terms(start, trajectory.detach(), plan.detach(), *anchors)
+            self.grounding_log = {
+                "penalty": float(grounding.penalty.weight * terms["penalty"].mean()),
+                "displacement": float(terms["displacement"][:, -1].mean()),
+                "unsupported": float(terms["unsupported"][:, -1].mean()),
+            }
 
         loss = energies[-1] + a.mean_weight * torch.stack(energies).mean()
         if a.ac_weight > 0:
@@ -421,7 +510,13 @@ class Actor:
 
 
 def planner_payload(
-    a: DictConfig, state_dict: dict[str, torch.Tensor], action_dim: int, value: Path, frames: int, lag: int | None
+    a: DictConfig,
+    state_dict: dict[str, torch.Tensor],
+    action_dim: int,
+    value: Path,
+    frames: int,
+    lag: int | None,
+    grounding: Grounding | None,
 ) -> dict[str, object]:
     """The deployable planner checkpoint around an actor state dict."""
     return {
@@ -436,6 +531,7 @@ def planner_payload(
         "temporal_objective": a.temporal_objective,
         "window_frames": frames,
         "window_lag": lag,
+        "grounding": None if grounding is None else grounding.penalty.export(),
     }
 
 
@@ -455,22 +551,28 @@ def run(cfg: DictConfig) -> None:
     wm_module.requires_grad_(False)
     wm = cast(LatentWorldModel, wm_module)
 
-    blocks = ActionBlocks(a.h5, a.frameskip, a.action_stats)
+    cache = LatentCache.load(a.cache, mmap=bool(a.cache_mmap)).first_episodes(a.max_episodes)
+    if cache.phase_multiplex > 1:
+        logger.info(f"Planner cache is phase-multiplexed x{cache.phase_multiplex}")
+    blocks = ActionBlocks(a.h5, a.frameskip, a.action_stats, cache.phase_multiplex)
+    band_mix = None if a.band_mix is None else [int(band) for band in a.band_mix]
     tasks = PlanningTasks(
-        LatentCache.load(a.cache, mmap=bool(a.cache_mmap)),
-        blocks,
-        max_delta=a.max_delta,
-        p_cross=a.p_cross,
-        rng=rng,
-        device=device,
+        cache, blocks, max_delta=a.max_delta, band_mix=band_mix, p_cross=a.p_cross, rng=rng, device=device
     )
     dense = None if a.actor_only else LatentCache.load(a.cache_td, mmap=bool(a.cache_mmap))
+    grounding = None
+    if a.grounding is not None:
+        if dense is None:
+            raise ValueError("grounding needs the dense cache (cache_td) to fit its state probe")
+        grounding = Grounding(a, dense, blocks.actions, blocks.mean, blocks.std, device)
+    if dense is not None:
+        dense = dense.first_episodes(a.max_episodes)
     if a.near_frac > 0:
         logger.info(f"rp1-AC co-critic near-goal oversampling: frac={a.near_frac} max={a.near_max} steps")
     module, frames = build_critic(a, int(tasks.z.shape[-1] if dense is None else dense.latent_dim), dense, device)
     lag = window_lag(a, frames)
     critic = Critic(a, module, dense, frames, device)
-    actor = Actor(a, blocks.dim, device)
+    actor = Actor(a, blocks.dim, grounding, device)
 
     planner_checkpoint = Path(a.run.checkpoints) / a.output.planner_checkpoint
     # the teacher is saved next to the planner, so checkpoints refer to it by name
@@ -508,18 +610,13 @@ def run(cfg: DictConfig) -> None:
             snapshot = planner_checkpoint.with_name(f"{planner_checkpoint.stem}_step{step + 1}.pt")
             snapshot.parent.mkdir(parents=True, exist_ok=True)
             state = {key: value.detach().cpu().clone() for key, value in actor.net.state_dict().items()}
-            torch.save(planner_payload(a, state, blocks.dim, value_checkpoint, frames, lag), snapshot)
+            torch.save(planner_payload(a, state, blocks.dim, value_checkpoint, frames, lag, grounding), snapshot)
             logger.info(f"Saved planner snapshot at step {step + 1} to {snapshot}")
         if step % 500 == 0:
-            ground_msg = (
-                f" ground {ground_log['penalty']:.3f} disp_end {ground_log['disp_end']:.1f}px"
-                f" unsupported_end {ground_log['unsupported_end']:.2f}"
-                if ground_log
-                else ""
-            )
+            grounded = "".join(f" ground_{key} {value:.3f}" for key, value in actor.grounding_log.items())
             logger.info(
                 f"step {step}: E_final {final:.3f} E_first {first:.3f} "
-                f"td_loss {td_loss:.4f} tau {tau:.3f} clr {critic_lr:.2e} alr {actor_lr:.2e}"
+                f"td_loss {td_loss:.4f} tau {tau:.3f} clr {critic_lr:.2e} alr {actor_lr:.2e}{grounded}"
             )
 
     # the teacher first: the planner checkpoint references it
@@ -527,6 +624,7 @@ def run(cfg: DictConfig) -> None:
     logger.success(f"Saved teacher value to {saved_value}")
     actor.net.eval()
     torch.save(
-        planner_payload(a, actor.net.cpu().state_dict(), blocks.dim, value_checkpoint, frames, lag), planner_checkpoint
+        planner_payload(a, actor.net.cpu().state_dict(), blocks.dim, value_checkpoint, frames, lag, grounding),
+        planner_checkpoint,
     )
     logger.success(f"Saved learned planner to {planner_checkpoint}")

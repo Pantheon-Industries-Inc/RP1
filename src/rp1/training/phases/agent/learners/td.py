@@ -19,7 +19,7 @@ The planner terminal cost is ``d(z_pred, z_goal)`` (lower == closer).
 from __future__ import annotations
 
 import copy
-from typing import Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -44,6 +44,7 @@ class TDConfig:
     weight_decay: float
     batch_size: int
     steps: int
+    save_every: int
     tau: float
     expectile: float
     p_cross: float
@@ -102,7 +103,13 @@ def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
     )
 
 
-def fit(cache: LatentCache, cfg: TDConfig, device: str) -> MetricHead:
+def fit(
+    cache: LatentCache,
+    cfg: TDConfig,
+    device: str,
+    snapshot: Callable[[MetricHead, int], None] | None = None,
+) -> MetricHead:
+    """Train a temporal-distance head, handing ``snapshot`` a CPU copy every ``save_every`` steps."""
     torch.manual_seed(cfg.seed)
     value = _make_head(cfg, cache.latent_dim).to(device)
     target = copy.deepcopy(value).to(device)
@@ -201,9 +208,8 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str) -> MetricHead:
                 f"TD training step={step + 1}/{cfg.steps} loss={loss.item():.6f} "
                 f"prediction_mean={pred.mean().item():.6f}"
             )
-        if save_fn is not None and cfg.save_every > 0 and (step + 1) % cfg.save_every == 0 and (step + 1) < cfg.steps:
-            # intermediate teacher snapshot (the final head is returned below); a CPU copy in eval mode
-            save_fn(copy.deepcopy(value).cpu().eval(), step + 1)
+        if snapshot is not None and cfg.save_every > 0 and (step + 1) % cfg.save_every == 0 and step + 1 < cfg.steps:
+            snapshot(copy.deepcopy(value).cpu().eval(), step + 1)
     logger.success(f"TD trained (n={cfg.n_step} gamma={cfg.gamma} head={cfg.head}), final loss={loss.item():.4f}")
     value.eval()
     return value

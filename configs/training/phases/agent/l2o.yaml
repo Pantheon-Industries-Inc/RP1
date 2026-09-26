@@ -17,6 +17,7 @@ training:
   init_value: ???    # the offline value (value_td); L2O never updates it
   cache_mmap: true
   steps: 2000
+  save_every: 0          # also save a planner snapshot every N steps
   batch: 16
   frameskip: 5
   max_delta: 10

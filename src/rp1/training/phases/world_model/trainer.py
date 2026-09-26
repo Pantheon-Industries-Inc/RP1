@@ -1,4 +1,7 @@
-"""Pretrain a LeWM world model: the JEPA prediction loss with SIGReg on the encoder's latents."""
+"""Pretrain a LeWM world model: the JEPA prediction loss with SIGReg on the encoder's latents.
+
+The data, model and fitting steps are shared with the PLDM objective in :mod:`.pldm`.
+"""
 
 from collections.abc import Callable, Mapping
 from functools import partial
@@ -13,6 +16,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 from stable_worldmodel.data import column_normalizer as get_column_normalizer
 from stable_worldmodel.wm.loss import SIGReg
+from torch import nn
 
 from rp1.data.base import load_action_stats
 from rp1.training.harness.callbacks import NonFiniteGradientGuard, PortableCheckpointCallback
@@ -69,7 +73,8 @@ def lejepa_forward(self: Any, batch: dict[str, torch.Tensor], stage: str, cfg: D
     return output
 
 
-def run(cfg: DictConfig) -> None:
+def loaders(cfg: DictConfig) -> tuple[Any, Any, Any]:
+    """The dataset and its train and validation loaders, over episodes ``[0, data.train_episodes)``."""
     raw_dataset_cfg = OmegaConf.to_container(cfg.data.dataset, resolve=True)
     if not isinstance(raw_dataset_cfg, Mapping):
         raise TypeError("data.dataset must resolve to a mapping")
@@ -111,9 +116,18 @@ def run(cfg: DictConfig) -> None:
     transform = compose(*transforms)
     dataset.transform = transform
 
+    pool: Any = dataset
+    if cfg.data.train_episodes is not None:
+        # clips are (episode, start) pairs; the episodes above the cap are the evaluation draws
+        keep = [i for i, (episode, _) in enumerate(dataset.clip_indices) if episode < cfg.data.train_episodes]
+        if not keep:
+            raise ValueError(f"no clips in episodes [0, {cfg.data.train_episodes})")
+        logger.info(f"Training on episodes [0, {cfg.data.train_episodes}): {len(keep)}/{len(dataset)} clips")
+        pool = cast(Any, torch.utils.data.Subset(dataset, keep))
+
     rnd_gen = torch.Generator().manual_seed(cfg.runtime.seed)
     train_set, val_set = spt.data.random_split(
-        dataset,
+        pool,
         lengths=[cfg.data.train_split, 1 - cfg.data.train_split],
         generator=rnd_gen,
     )
@@ -127,39 +141,41 @@ def run(cfg: DictConfig) -> None:
     val_cfg["shuffle"] = False
     val_cfg["drop_last"] = False
     val = torch.utils.data.DataLoader(val_set, **val_cfg)
+    return dataset, train, val
 
-    model_cfg = OmegaConf.create(OmegaConf.to_container(cfg.core.world_model.architecture, resolve=True))
+
+def world_model(cfg: DictConfig, dataset: Any) -> tuple[DictConfig, nn.Module]:
+    """The architecture config, its action width set from the dataset, and the model built from it."""
+    model_cfg = cast(
+        DictConfig, OmegaConf.create(OmegaConf.to_container(cfg.core.world_model.architecture, resolve=True))
+    )
     model_cfg.action_encoder.input_dim = cfg.data.dataset.frameskip * dataset.get_dim("action")
-    world_model = hydra.utils.instantiate(model_cfg)
-
+    model = cast(nn.Module, hydra.utils.instantiate(model_cfg))
     init_weights = cfg.training.initial_weights
     if init_weights:
         state_dict = torch.load(init_weights, map_location="cpu", weights_only=True)
-        world_model.load_state_dict(state_dict, strict=True)
-        logger.info(f"Initialized LeWM weights from {init_weights}")
+        model.load_state_dict(state_dict, strict=True)
+        logger.info(f"Initialized world-model weights from {init_weights}")
+    return model_cfg, model
 
+
+def schedule(cfg: DictConfig, modules: str, train: Any) -> dict[str, Any]:
+    """The optimizer of ``modules``: linear warmup over the first 1% of steps, then cosine annealing."""
     total_steps = cfg.training.trainer.max_epochs * len(train)
-    optimizers = {
-        "model_opt": {
-            "modules": "model",
-            "optimizer": dict(cfg.training.optimizer),
-            "scheduler": {
-                "type": "LinearWarmupCosineAnnealingLR",
-                "warmup_steps": max(1, int(0.01 * total_steps)),
-                "max_steps": total_steps,
-            },
-            "interval": "epoch",
+    return {
+        "modules": modules,
+        "optimizer": dict(cfg.training.optimizer),
+        "scheduler": {
+            "type": "LinearWarmupCosineAnnealingLR",
+            "warmup_steps": max(1, int(0.01 * total_steps)),
+            "max_steps": total_steps,
         },
+        "interval": "epoch",
     }
 
-    data_module = spt.data.DataModule(train=train, val=val)
-    world_model = spt.Module(
-        model=world_model,
-        sigreg=SIGReg(**cfg.training.loss.sigreg.kwargs),
-        forward=partial(lejepa_forward, cfg=cfg),
-        optim=optimizers,
-    )
 
+def fit(cfg: DictConfig, module: Any, model_cfg: DictConfig, train: Any, val: Any) -> None:
+    """Train ``module``, resuming from the run's trainer checkpoint, and export the world model every epoch."""
     run_dir = Path(cfg.run.directory)
     experiment_logger = make_logger(cfg)
     hyperparameters = OmegaConf.to_container(cfg, resolve=True)
@@ -169,7 +185,7 @@ def run(cfg: DictConfig) -> None:
 
     object_dump_callback = PortableCheckpointCallback(
         run_name=cfg.output.model_name,
-        config=cast(DictConfig, model_cfg),
+        config=model_cfg,
         cache_dir=run_dir,
         epoch_interval=cfg.output.checkpoint_epoch_interval,
         step_interval=cfg.output.save_every_steps,
@@ -197,10 +213,20 @@ def run(cfg: DictConfig) -> None:
     ckpt_path = Path(cfg.run.checkpoints) / "trainer.ckpt"
     manager = spt.Manager(
         trainer=trainer,
-        module=world_model,
-        data=data_module,
+        module=module,
+        data=spt.data.DataModule(train=train, val=val),
         ckpt_path=str(ckpt_path) if ckpt_path.exists() else None,  # ty: ignore[invalid-argument-type]  # Manager accepts None to disable resume despite its narrow annotation.
     )
-
     manager()
-    return
+
+
+def run(cfg: DictConfig) -> None:
+    dataset, train, val = loaders(cfg)
+    model_cfg, model = world_model(cfg, dataset)
+    module = spt.Module(
+        model=model,
+        sigreg=SIGReg(**cfg.training.loss.sigreg.kwargs),
+        forward=partial(lejepa_forward, cfg=cfg),
+        optim={"model_opt": schedule(cfg, "model", train)},
+    )
+    fit(cfg, module, model_cfg, train, val)

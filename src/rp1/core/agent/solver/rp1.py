@@ -9,6 +9,7 @@ from stable_worldmodel.solver.cem import CEMSolver
 
 from rp1.core.agent.planner import PlannerNet
 from rp1.core.agent.solver.base import EncoderWorldModel, EnvironmentCost, PlannerCheckpoint, unwrap_encoder
+from rp1.core.agent.value.grounding import ACTION_SCALE, GroundingPenalty
 from rp1.core.agent.value.temporal import ValueFunction, trajectory_value, window_pair, windowed_trajectory_value
 from rp1.core.world_model.base import LatentWorldModel
 from rp1.core.world_model.rollout import rollout_terminal, rollout_traj
@@ -24,6 +25,13 @@ class RP1Solver(CEMSolver):
     iterations from one initial plan. ``n_steps > 0`` then runs MPPI
     (temperature ``lam``) around the refined plan. The horizon comes from the
     checkpoint.
+
+    ``update_rule="gradient"`` swaps the learned update for a plain gradient step
+    of size ``gd_lr`` on the same energy, inside the same loop, which tells an
+    exploitable energy landscape apart from a rule that learned to exploit it.
+    ``band_limit`` projects every update onto the first temporal DCT modes of the
+    plan. A checkpoint trained with physics grounding adds the same penalty to
+    the energy; ``ground_weight`` rescales it, and 0 deploys without it.
     """
 
     def __init__(
@@ -39,9 +47,23 @@ class RP1Solver(CEMSolver):
         iters_override: int | None,
         graphed: bool,
         graph_warmup_iters: int,
+        update_rule: str,
+        gd_lr: float,
+        band_limit: int | None,
+        use_action_history: bool,
+        ground_weight: float | None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+        if update_rule not in {"learned", "gradient"}:
+            raise ValueError(f"unsupported update rule: {update_rule}")
+        self.update_rule = update_rule
+        self.gd_lr = float(gd_lr)
+        self.band_limit = band_limit or None
+        self._band_projection: torch.Tensor | None = None
+        # the policy publishes the executed action blocks in the planner's normalized
+        # space; the planner trained on zeros for replayed histories, so it is opt-in
+        self.use_action_history = use_action_history
         self.lam = lam
         self.rp1_select = rp1_select
         self.init_mode = init_mode
@@ -86,25 +108,25 @@ class RP1Solver(CEMSolver):
             logger.info(f"Window value over {self.vframes} frames")
             if self.graphed:
                 raise ValueError("graphed refinement does not support windowed values")
-
-    def _band_projection(self) -> torch.Tensor:
-        """P = B B^T onto the first M temporal DCT-II modes, cached."""
-        if self._band_proj is None:
-            h, m = self.horizon, int(self.band_limit or 0)
-            t = torch.arange(h, dtype=torch.float32, device=self.device)
-            k = torch.arange(m, dtype=torch.float32, device=self.device)
-            basis = torch.cos(torch.pi * (t[:, None] + 0.5) * k[None, :] / h)  # (H, M)
-            basis = basis / basis.norm(dim=0, keepdim=True)  # orthonormal columns
-            self._band_proj = basis @ basis.T  # (H, H)
-        return self._band_proj
-
-    def _apply_update(self, a_prev: torch.Tensor, a_new: torch.Tensor) -> torch.Tensor:
-        """Keep only the low-frequency part of the step, then re-clip."""
-        if self.band_limit is None:
-            return a_new
-        delta = torch.einsum("ij,bja->bia", self._band_projection(), a_new - a_prev)
-        amax = float(self.actor.amax)
-        return (a_prev + delta).clamp(-amax, amax)
+        self.grounding: GroundingPenalty | None = None
+        exported = payload.get("grounding")
+        if exported:
+            grounding = GroundingPenalty.from_export(exported).to(self.device)
+            if ground_weight is not None:
+                grounding.weight = float(ground_weight)
+            if grounding.weight == 0:
+                logger.info("Grounding: trained with the term, deployed without it")
+            elif self.graphed:
+                raise ValueError("graphed refinement does not support the grounding term")
+            else:
+                self.grounding = grounding
+                logger.info(
+                    f"Grounding: weight {grounding.weight:g} margin {grounding.margin:.1f}px "
+                    f"deadzone {grounding.deadzone:.1f}px tau {grounding.tau:g}"
+                )
+        elif ground_weight:
+            raise ValueError("ground_weight is set, but the planner checkpoint carries no grounding term")
+        self._grounding_anchors: tuple[torch.Tensor, torch.Tensor] | None = None
 
     @property
     def horizon(self) -> int:
@@ -113,13 +135,58 @@ class RP1Solver(CEMSolver):
     def _base(self) -> torch.nn.Module:
         return unwrap_encoder(self.model)
 
-    def _score(self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor) -> torch.Tensor:
-        """Value of an imagined trajectory, over windows of ``vframes`` frames when the value is windowed."""
+    def _score(
+        self, trajectory: torch.Tensor, goal: torch.Tensor, history: torch.Tensor, plan: torch.Tensor
+    ) -> torch.Tensor:
+        """Energy of an imagined trajectory: its value, over windows of ``vframes`` frames when the
+        value is windowed, plus the grounding penalty of the ``plan`` that produced it."""
         if self.vframes > 1:
-            return windowed_trajectory_value(
+            energy = windowed_trajectory_value(
                 self.rp1_value, trajectory, goal, history, self.vframes, self.temporal_objective
             )
-        return trajectory_value(self.rp1_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        else:
+            energy = trajectory_value(self.rp1_value, trajectory, goal, history[:, -1], self.temporal_objective)
+        if self.grounding is not None:
+            if self._grounding_anchors is None:
+                raise RuntimeError("grounding term scored before the agent position was read")
+            copies = trajectory.shape[0] // self._grounding_anchors[0].shape[0]  # candidates per environment
+            agent, command = (anchor.repeat_interleave(copies, dim=0) for anchor in self._grounding_anchors)
+            penalty = self.grounding(history[:, -1].float(), trajectory.float(), plan.float(), agent, command)
+            energy = energy + penalty.to(energy.dtype)
+        return energy
+
+    def _band_limited(self, previous: torch.Tensor, refined: torch.Tensor) -> torch.Tensor:
+        """``refined`` with the update from ``previous`` kept to the first ``band_limit`` DCT-II modes."""
+        if self.band_limit is None:
+            return refined
+        if self._band_projection is None:
+            t = torch.arange(self.horizon, dtype=torch.float32, device=self.device)
+            k = torch.arange(self.band_limit, dtype=torch.float32, device=self.device)
+            basis = torch.cos(torch.pi * (t[:, None] + 0.5) * k[None, :] / self.horizon)
+            basis = basis / basis.norm(dim=0, keepdim=True)
+            self._band_projection = basis @ basis.T
+        update = torch.einsum("ij,bja->bia", self._band_projection, refined - previous)
+        return (previous + update).clamp(-self.actor.action_limit, self.actor.action_limit)
+
+    def _grounding_anchors_of(self, info_dict: dict[str, Any], a_hist: torch.Tensor) -> None:
+        """The agent position (px) and the preceding command (px) the grounding term starts from."""
+        if self.grounding is None:
+            self._grounding_anchors = None
+            return
+        proprio = info_dict.get("proprio")
+        if proprio is None:
+            raise KeyError("the grounding term needs 'proprio' (the agent position) in the observation")
+        position = torch.as_tensor(np.asarray(proprio) if not torch.is_tensor(proprio) else proprio)
+        position = position.to(self.device).float()
+        if position.dim() == 3:
+            position = position[:, -1]
+        batch = a_hist.shape[0]
+        # the last executed primitive action when the history is used, else the mean action
+        command = torch.zeros(batch, self.grounding.act_dim, device=self.device)
+        if self.use_action_history and "action_hist" in info_dict:
+            last = a_hist[:, -1].float().reshape(batch, -1, self.grounding.act_dim)[:, -1]
+            command = (last * self.grounding.astd + self.grounding.amu) * ACTION_SCALE
+        self._grounding_anchors = (position[:, :2], command)
 
     def _value_init(
         self,
@@ -227,8 +294,8 @@ class RP1Solver(CEMSolver):
         encode_start = time.time()
         wm = cast(EncoderWorldModel, self._base())
         with torch.no_grad():
-            hist_key = "pixels_hist" if "pixels_hist" in info_dict else "pixels"
-            px = info_dict[hist_key].to(self.device, dtype=self.dtype)
+            # lagged frames one action block apart when the policy keeps a history
+            px = info_dict.get("pixels_hist", info_dict["pixels"]).to(self.device, dtype=self.dtype)
             enc_in = {"pixels": px}
             if getattr(wm, "wants_proprio", False):
                 pro = info_dict.get("proprio")
@@ -238,17 +305,9 @@ class RP1Solver(CEMSolver):
                 enc_in["proprio"] = pro.reshape(px.shape[0], px.shape[1], -1)
             enc = wm.encode(enc_in)
             z_hist = enc["emb"][:, -3:].float()
-            real_frames = int(z_hist.shape[1])
-            if z_hist.shape[1] < 3:  # pad short history (episode start, or planning.history_len < 3)
+            if z_hist.shape[1] < 3:  # pad a short history: episode start, or planning.history_len < 3
                 pad = z_hist[:, :1].expand(-1, 3 - z_hist.shape[1], -1)
                 z_hist = torch.cat([pad, z_hist], dim=1)
-            act_regime = "real" if self.use_action_history and "action_hist" in info_dict else "zeros"
-            if getattr(self, "_history_logged", None) != (hist_key, real_frames, act_regime):
-                # logged whenever the regime changes: the first plan of an episode has no
-                # past (the policy pads the frame stack and omits action_hist), later
-                # replans carry real lagged frames and, if opted in, real actions
-                logger.info(f"LIP history: {real_frames} frame(s) from '{hist_key}', action history {act_regime}")
-                self._history_logged = (hist_key, real_frames, act_regime)
             gx = info_dict["goal"].to(self.device, dtype=self.dtype)
             genc_in = {"pixels": gx}
             if getattr(wm, "wants_proprio", False):
@@ -266,30 +325,9 @@ class RP1Solver(CEMSolver):
         zh_r, zg_r = z_hist, zg
         a_hist = torch.zeros(B, 2, self.action_dim, device=self.device)
         if self.use_action_history and "action_hist" in info_dict:
-            # rlp.core.policy buffers the solver's OUTPUT actions before it inverse-transforms
-            # them for the env, so `action_hist` (B, 2, a_dim) is already in the normalised
-            # space the actor trained in (dataset action mean/std), oldest block first,
-            # time-major within a block, zero-padded (= the mean action) at episode start.
-            # Take it as-is: no stats to apply, and none exist on non-DINO checkpoints.
+            # oldest block first, zero (the mean action) where the episode has no past yet
             a_hist = torch.as_tensor(info_dict["action_hist"], device=self.device).reshape(B, 2, -1).to(a_hist.dtype)
-        self._ground_agent0 = self._ground_u_prev = None
-        if self.grounding is not None:
-            # the agent's real position (proprio = agent xy + velocity, raw px) anchors the
-            # commanded path; the step before the plan comes from the executed history
-            # when the policy publishes it, else the mean action (zero), as in training
-            proprio = info_dict.get("proprio")
-            if proprio is None:
-                raise KeyError("grounding term needs 'proprio' (agent position) in the observation")
-            pro = torch.as_tensor(np.asarray(proprio) if not torch.is_tensor(proprio) else proprio).to(self.device)
-            pro = pro.float()
-            if pro.dim() == 3:
-                pro = pro[:, -1]
-            self._ground_agent0 = pro[:, :2]
-            u_prev = torch.zeros(B, self.grounding.act_dim, device=self.device)
-            if self.use_action_history and "action_hist" in info_dict:
-                last = a_hist[:, -1].float().reshape(B, -1, self.grounding.act_dim)[:, -1]
-                u_prev = (last * self.grounding.astd + self.grounding.amu) * ACTION_SCALE
-            self._ground_u_prev = u_prev
+        self._grounding_anchors_of(info_dict, a_hist)
         A = torch.zeros(B, self.horizon, self.action_dim, device=self.device)
         if self.init_mode == "value":
             A = self._value_init(wm, z_hist, a_hist, zg)
@@ -309,7 +347,11 @@ class RP1Solver(CEMSolver):
                     (gA,) = torch.autograd.grad(score.sum(), A_in)
             with torch.no_grad():
                 E = E_graphed if graphed_ref is not None else score.detach()
-                A = self.actor(A, gA, E)
+                if self.update_rule == "gradient":
+                    refined = (A - self.gd_lr * gA).clamp(-self.actor.action_limit, self.actor.action_limit)
+                else:
+                    refined = self.actor(A, gA, E)
+                A = self._band_limited(A, refined)
                 buf.append(A.clone())
         with torch.no_grad():
             if not buf:  # zero iterations: the initial plan

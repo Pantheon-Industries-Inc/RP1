@@ -1,26 +1,17 @@
-"""High-level (macro-action) world model for hierarchical planning.
+"""A high-level world model over macro-actions, for hierarchical planning.
 
-Port of the 2026-07 HWM campaign's high level (`train_hwm.py`, itself a port of
-arXiv 2604.03208 to the LeWM stack) into this repository, because the original
-lives in a pasted Stable-WM source tree whose ``stable_worldmodel.trm`` module
-does not exist in the published wheel.
+After arXiv:2604.03208, on the LeWM stack:
 
-Two components:
+* ``PosteriorMLP`` / ``PosteriorTF`` encode a chunk of ``chunk_len`` primitive
+  actions into one ``macro_dim`` macro-action; the transformer variant is the
+  one the paper uses on Franka and PushT.
+* ``HWM`` is a LeWM predictor conditioned on an embedding of the macro-action.
+  It exposes the low-level world model's ``predict`` / ``action_encoder``
+  surface, so :func:`rp1.core.world_model.rollout.rollout_traj` unrolls it
+  unchanged.
 
-* ``PosteriorMLP`` / ``PosteriorTF`` — ``A_psi``: a chunk of ``chunk_len``
-  primitive actions -> one ``macro_dim`` macro-action (LayerNorm'd). The MLP is
-  the paper's ``PosteriorContinuous``; the transformer-CLS variant is the one
-  they use on Franka/PushT.
-* ``HWM`` — ``F2``: a clone of the LeWM predictor conditioned on an
-  ``Embedder`` of the macro-action. It deliberately exposes the same
-  ``predict`` / ``action_encoder`` surface as the low-level WM, so
-  :func:`rlp.core.rollout.rollout_traj` and the planner code work at the high
-  level unchanged.
-
-Why fixed stride matters here: with ``stride=25`` and ``horizon=8`` a plan spans
-200 primitive steps, which is what an h200 cube task needs (episodes are 201
-steps). Hi-LeWM's released cube high level cannot reach that — its waypoints cap
-at 5 x ``max_span`` 15 = 75 primitive steps.
+At stride 25 a horizon-8 plan spans 200 primitive steps, a whole OGBench cube
+episode.
 """
 
 from __future__ import annotations
@@ -32,7 +23,7 @@ import torch
 from stable_worldmodel.wm.lewm.module import MLP, Embedder, Predictor
 from torch import nn
 
-from rlp.core.rollout import rollout_traj
+from rp1.core.world_model.rollout import rollout_traj
 
 __all__ = ["HWM", "PosteriorMLP", "PosteriorTF", "load_hwm", "save_hwm"]
 
@@ -87,9 +78,7 @@ class PosteriorTF(nn.Module):
 class HWM(nn.Module):
     """High-level world model over macro-actions.
 
-    Exposes ``predict`` / ``action_encoder`` so it satisfies
-    :class:`rlp.core.world_model.protocols.LatentWorldModel` and can be unrolled
-    by :func:`rlp.core.rollout.rollout_traj` exactly like the low-level WM.
+    Satisfies :class:`rp1.core.world_model.base.LatentWorldModel`.
     """
 
     def __init__(
@@ -111,9 +100,7 @@ class HWM(nn.Module):
         self.macro_dim, self.z_dim = macro_dim, z_dim
         self.chunk_len, self.act_dim = chunk_len, act_dim
         self.posterior: nn.Module = (
-            PosteriorMLP(chunk_len, act_dim, macro_dim)
-            if ae == "mlp"
-            else PosteriorTF(chunk_len, act_dim, macro_dim)
+            PosteriorMLP(chunk_len, act_dim, macro_dim) if ae == "mlp" else PosteriorTF(chunk_len, act_dim, macro_dim)
         )
         self.action_encoder = Embedder(input_dim=macro_dim, smoothed_dim=macro_dim, emb_dim=z_dim)
         self.predictor = Predictor(
@@ -127,9 +114,7 @@ class HWM(nn.Module):
             dim_head=dim_head,
             dropout=dropout,
         )
-        self.pred_proj: nn.Module = (
-            MLP(z_dim, 2048, z_dim, norm_fn=nn.BatchNorm1d) if use_pred_proj else nn.Identity()
-        )
+        self.pred_proj: nn.Module = MLP(z_dim, 2048, z_dim, norm_fn=nn.BatchNorm1d) if use_pred_proj else nn.Identity()
 
     def predict(self, emb: torch.Tensor, act_emb: torch.Tensor) -> torch.Tensor:
         """Mirrors ``LeWM.predict``: ``(B, T, D), (B, T, D) -> (B, T, D)``."""
@@ -143,11 +128,10 @@ class HWM(nn.Module):
         return cast(torch.Tensor, self.posterior(chunks.reshape(b * t, *chunks.shape[2:])).reshape(b, t, -1))
 
     def rollout_from(self, z0: torch.Tensor, macros: torch.Tensor) -> torch.Tensor:
-        """Solver-convention rollout: z-history = ``z0`` x3, zero macro history.
+        """Unroll ``macros`` from ``z0`` tiled as the history, with a zero macro history.
 
-        The deployed solver is stateless — it has no real waypoint history at
-        plan time — so training and deployment must both use this convention or
-        the high level is evaluated off-distribution.
+        The planner has no waypoint history at plan time, so training must use
+        this convention too, or the high level is evaluated off-distribution.
         """
         z_hist = z0.unsqueeze(1).expand(-1, 3, -1)
         a_hist = torch.zeros(z0.shape[0], 2, self.macro_dim, device=z0.device, dtype=macros.dtype)
@@ -155,14 +139,14 @@ class HWM(nn.Module):
 
 
 def save_hwm(model: HWM, path: str | Path, cfg: dict[str, Any], stats: dict[str, Any]) -> Path:
-    """Persist weights plus the config//stats a solver needs to rebuild it."""
+    """Save the weights with the config and statistics a solver needs to rebuild the model."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"kind": "hwm", "sd": model.state_dict(), "cfg": cfg, **stats}, out)
     return out
 
 
-def load_hwm(path: str | Path, device: str = "cpu") -> tuple[HWM, dict[str, Any]]:
+def load_hwm(path: str | Path, device: str | torch.device = "cpu") -> tuple[HWM, dict[str, Any]]:
     """Load a checkpoint written by :func:`save_hwm`; returns ``(model, blob)``."""
     blob = torch.load(str(path), map_location=device, weights_only=False)
     if blob.get("kind") != "hwm":

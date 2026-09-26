@@ -61,21 +61,13 @@ class WindowSampler:
         latents = LatentCache.load(cache, mmap=mmap)
         self.z = latents.z.to(device).float()
         episodes = latents.episodes()
-        # Hindsight goals and reference blocks below are CLAMPED to the episode
-        # end, so requiring every episode to be longer than max_delta + 4 is
-        # both unnecessary and wrong for horizon-matched TwoRoom: its fs5
-        # episodes hold 20 blocks (100 primitive steps) while the unified
-        # recipe's goal band is max_delta = 20. We only need enough rows for
-        # the two-frame history and the [2, L-2) query range. This mirrors the
-        # RLP actor trainer, which relaxed the same guard for the same reason
-        # (scripts/sky/overlays/train_lip_ac.py).
+        # goals and reference blocks are clamped to the episode end, so an episode only
+        # needs the two-frame history and the [2, L-2) query range; horizon-matched
+        # TwoRoom episodes are shorter than the goal band
         keys = [key for key in episodes if len(episodes[key]) > 4]
         if not keys:
             lengths = [len(rows) for rows in episodes.values()]
-            raise ValueError(
-                f"no episode in {cache} has more than 4 rows "
-                f"(len min/med/max = {min(lengths)}/{int(np.median(lengths))}/{max(lengths)})"
-            )
+            raise ValueError(f"no episode in {cache} has more than 4 rows (longest has {max(lengths, default=0)})")
         self.ep_rows = {episode: np.asarray(rows) for episode, rows in episodes.items() if episode in set(keys)}
         self.ep_ids = np.array(keys)
 
