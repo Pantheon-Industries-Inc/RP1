@@ -22,6 +22,7 @@ labels: "true"
 gamma: 1.0
 expectile: 0.7
 n_step: 5
+save_every: 0         # td: also save <checkpoint>_step<N> every N steps (teacher early-stopping grid; 0 = off)
 p_cross: 0.3
 no_balanced: false
 temperature: 1.0

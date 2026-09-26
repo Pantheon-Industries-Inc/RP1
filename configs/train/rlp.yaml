@@ -23,6 +23,7 @@ train_episodes: 8000  # value/planner train on episodes [0, N); eval draws the r
 train_res: null
 cache_directory: ${oc.env:RLP_DATA_HOME,${oc.env:HOME}/.cache/rlp}/caches
 skip: []           # stages to skip, e.g. skip=[cache,subsample,actions]
+teacher: null      # planner init_value override: a saved metric dir (e.g. .../checkpoints/value_td_step6000); use with skip=[...,value]
 device: auto
 seed: 0
 
@@ -37,6 +38,7 @@ value:
   expectile: 0.03
   n_step: 1
   p_cross: 0.3
+  save_every: null      # td teacher snapshots every N steps -> checkpoints/value_td_step<N> (joint teacher x actor early stopping)
   depth: null           # MRN value-head depth (null = core default 2)
   head: null            # value head: quasimetric (MRN, default) | iqe | mlp -- `mlp` +
                         # expectile 0.5 is plain goal-conditioned TD, V(z,g) an MLP,

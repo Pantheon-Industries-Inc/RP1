@@ -89,7 +89,7 @@ envs:
   UNIG_PC: "0.3"           # cross-episode goal fraction (teacher + co-critic)
   UNIG_WIDTH: "512"        # v4 refiner MLP width
   UNIG_LAYERS: "2"         # v4 refiner hidden layers
-  UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og | frz);
+  UNIG_SCHED: "tw"         # GRID=unig co-train critic schedule (tw | f05 | og | frz | uni);
                            # frz = freeze-critic-frac 0: the offline teacher is
                            # deployed verbatim, no co-training (PushT's recipe)
                            # og = the cube/reacher package (freeze 0.5,
@@ -97,6 +97,17 @@ envs:
   TW_REPLAY: "0"           # tworoom replay_prob (cube/reacher train at 0.5;
                            # 0.5 here removes the last per-env actor knob)
   TD_STEPS: "6000"         # offline TD teacher steps (12000 = longer warm-start)
+  TD_SAVE_EVERY: "0"       # teacher snapshot interval (steps); 0 = final only (critic early stopping)
+  # UNIG_SCHED=uni reads the unified co-critic package from these (recipes/uniJ.env is the source of truth)
+  UNI_FREEZE: "0.8"
+  UNI_EXPECTILE: "0.1"
+  UNI_EXPECTILE_FINAL: "0.03"
+  UNI_CRITIC_LR: "1e-3"
+  UNI_CRITIC_LR_FINAL: "1e-4"
+  UNI_EXPAND: "0"
+  UNI_REPLAY: "0"
+  TD_SNAPS: ""             # GRID=unig: extra actor rows unig_ctrl_a2.5_t<N>, each trained on the
+                           # teacher snapshot at step N (joint teacher x actor early stopping)
   TD_HEAD: "quasimetric"   # offline teacher head: quasimetric (MRN) | mlp (plain
                            # pairwise MLP V(z,g); with expectile 0.5 = plain TD)
   TW_TD_EXPECTILE: "0.1"   # tworoom offline teacher expectile (cube: CU_TD_EXPECTILE;
@@ -115,6 +126,15 @@ envs:
                            # (requires REUSE_ONLY=1)
   CKPT_EVERY: "0"          # trainer snapshot interval (steps); 0 = final only
   CKPT_SELECT: "0"         # 1 = within-run early stopping: score every snapshot
+  REPORT_EVAL: "1"         # 0 = no per-row test eval (draws 42-44); shared fixed-stop protocol evaluates the chosen pair separately
+  PAR_CKV: "0"             # 1 = score the snapshots of an actor in PARALLEL (non-cube); W&B off for those evals
+  JANITOR_PRUNE_PREFIXES: ""        # janitor 2nd pass: our finished campaigns' scratch dirs under /mnt/raid0 (e.g. "rlp-re-uniJ rlp-tw-uniJ")
+  JANITOR_PRUNE_CACHE_PREFIXES: ""  # same under /mnt/raid0/rlp-cache (e.g. "tw-")
+  LAUNCH_STAGGER: "20"     # seconds between row launches (burst starts killed actors at W&B init, 2026-09-23)
+  DEPLOY_STEP: ""          # fixed actor step to deploy (no snapshot selection); "" or final = the trained final actor
+  CUBE_LOCK: "node"        # cube eval serialization: node (banked) | gpu (one eval per GPU lane) | none
+  EVAL_TAG: ""             # W&B key prefix of the report eval (default rh<RH>); e.g. rh5fixed for a
+                           # fixed-stop re-evaluation so it does not overwrite the deployed row's eval/rh5/*
                            # (+ final) on the SELECTION draws, deploy the argmax.
                            # Per-run checkpoint selection; report draws untouched.
   CKPT_VAL_SEEDS: "50 51"  # selection draws for ckpt-select
@@ -175,6 +195,9 @@ envs:
                            #     confound in RLP-vs-CEM comparisons.
   ONLYCFG: ""              # restrict the grid to one config-name prefix
   PLANNERS: "cem adam mppi" # GRID=planners: sampling/gradient arms, base fixed
+  PLANNERS_LATENT: "mppi"  # planners run with the LATENT cost (the others are value-only by decision 2026-09-24)
+  PLANNER_CRIT_SEEDS: ""   # GRID=planners: one arm per training seed's TD teacher (n=6 same-critic control)
+  PLANNER_CRIT_STEP: ""    # teacher snapshot step for those arms (empty = the final teacher)
   PLANNER_COSTS: ""         # optional explicit subset: latent | value | "latent value"
   PLANNER_EVAL_SEEDS: "42 43 44"
   PRE_MEASUREMENT_SMOKE: "0" # tiny on-protocol path check before full planner cells
@@ -322,7 +345,7 @@ setup: |
   cp /tmp/codex-overlays/train_metric.py "$HOME/repo/stable-worldmodel/scripts/plan/train_metric.py"
   cp /tmp/codex-overlays/td.py "$HOME/repo/stable-worldmodel/stable_worldmodel/trm/learners/td.py"
 
-  python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=m, f"{n} GPUs < MAXPAR {m}"; print(f"[env] torch {torch.__version__} gpus {n}")'
+  python3 -c 'import os, torch; n=torch.cuda.device_count(); m=int(os.environ.get("MAXPAR","8")); assert n>=1 and m<=3*n, f"{n} GPUs, MAXPAR {m} (max 3 slots per GPU; 2 is the GPU-bound sweet spot, 3 only to fill a tail wave)"; print(f"[env] torch {torch.__version__} gpus {n} slots {m}")'
 
   # raid0 janitor: node-local caches accumulate across campaigns and a full
   # raid0 both ENOSPC-kills new jobs and leaves truncated files that poison
@@ -341,6 +364,19 @@ setup: |
     done
     df -h /mnt/raid0 | tail -1
     FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9')
+  fi
+  # second pass (2026-09-23): still short -> drop OUR OWN finished campaigns' node-local dirs by explicit prefix
+  # (JANITOR_PRUNE_PREFIXES under /mnt/raid0, JANITOR_PRUNE_CACHE_PREFIXES under /mnt/raid0/rlp-cache), regardless of
+  # age; never the current tag/cache, never a dir touched in the last hour or holding a build lock
+  if [ "${FREE_GB:-999}" -lt 150 ] && [ -n "${JANITOR_PRUNE_PREFIXES:-}${JANITOR_PRUNE_CACHE_PREFIXES:-}" ]; then
+    for d in $(for p in ${JANITOR_PRUNE_PREFIXES:-}; do ls -d /mnt/raid0/${p}* 2>/dev/null; done; for p in ${JANITOR_PRUNE_CACHE_PREFIXES:-}; do ls -d /mnt/raid0/rlp-cache/${p}* 2>/dev/null; done); do
+      [ -d "$d" ] || continue
+      case "$d" in *"${CACHE_VERSION}-${ENVNAME}-${BASE}"*|*"${EXPERIMENT_TAG}"*) continue;; esac
+      [ -n "$(find "$d" -maxdepth 2 -mmin -60 -print -quit 2>/dev/null)" ] && { echo "[janitor] keep (active <1h) $d"; continue; }
+      if [ -f "$d/build.lock" ]; then flock -n "$d/build.lock" true 2>/dev/null || continue; fi
+      echo "[janitor] rm (prefix) $(du -sh "$d" 2>/dev/null | cut -f1) $d"; rm -rf "$d" 2>/dev/null || true
+    done
+    FREE_GB=$(df -BG --output=avail /mnt/raid0 2>/dev/null | tail -1 | tr -dc '0-9'); echo "[janitor] after prefix pass: ${FREE_GB}GB free"
   fi
   echo "[node] k8s=${K8S_NODE:-unknown} pod=$(hostname) raid0_free=${FREE_GB:-?}GB"
   if [ "${FREE_GB:-999}" -lt 150 ]; then
@@ -441,19 +477,27 @@ setup: |
   else
     REPO=quentinll/lewm-cube;     FILE=cube_single_expert.tar.zst
   fi
-  if ! ls ~/gd/*.h5 >/dev/null 2>&1; then
-    cd ~/gd
-    HF_HUB_ENABLE_HF_TRANSFER=1 python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$REPO','$FILE',repo_type='dataset',local_dir='.')"
-    tar --use-compress-program=unzstd -xf "$FILE" && rm -f "$FILE"
-  fi
-  python3 -c "
+  # A preempted job can leave a TRUNCATED h5 behind (tar interrupted mid-extract): an
+  # existence check then passes and h5py fails ("truncated file: eof < stored_eof").
+  # Validate by opening; on failure wipe and fetch again (one retry, then fail loudly).
+  for _attempt in 1 2; do
+    if ! ls ~/gd/*.h5 >/dev/null 2>&1; then
+      cd ~/gd
+      HF_HUB_ENABLE_HF_TRANSFER=1 python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('$REPO','$FILE',repo_type='dataset',local_dir='.')"
+      tar --use-compress-program=unzstd -xf "$FILE" && rm -f "$FILE"
+    fi
+    if python3 -c "
   import hdf5plugin, h5py, glob, os
   f = sorted(glob.glob(os.path.expanduser('~/gd/*.h5')))[0]
   h = h5py.File(f, 'r')
   print('[dataset]', os.path.basename(f), h['action'].shape[0], 'frames',
         '| %.1f GB' % (os.path.getsize(f) / 1e9))
   h.close()
-  "
+  "; then break; fi
+    echo "[dataset] h5 unreadable (truncated download/extract?) -- wiping ~/gd and refetching (attempt $_attempt)"
+    rm -f ~/gd/*.h5 ~/gd/*.tar.zst ~/gd/*.tar
+    [ "$_attempt" = 2 ] && { echo "[dataset] still unreadable after refetch" >&2; exit 1; }
+  done
 
   # ---- caches: one build shared by all 30 configs
   cd ~/repo/stable-worldmodel
@@ -513,7 +557,7 @@ setup: |
         --head quasimetric --cache ~/gc/fs1.pt $TDFLAGS --n-step ${TR_NSTEP:-50} \
         --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} \
         --boundary ${BOUNDARY:-legacy} \
-        --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
+        --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt --save-every ${TD_SAVE_EVERY:-0} \
         > ~/gl/td_critic_s${TDS}.log 2>&1
     fi
   done
@@ -558,7 +602,7 @@ setup: |
           --head quasimetric --cache ~/gc/fs1.pt $BF_TDFLAGS --n-step ${TR_NSTEP:-50} \
           --near-frac ${NEAR_FRAC:-0} --near-max ${NEAR_MAX:-3} \
           --boundary ${BOUNDARY:-legacy} \
-          --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt \
+          --batch-size 1024 --seed $TDS --out ~/gm/td_grid_s${TDS}.pt --save-every ${TD_SAVE_EVERY:-0} \
           > ~/gl/td_backfill_s${TDS}.log 2>&1 \
           || { echo "[cache-backfill] FAILED for s${TDS}"; tail -20 ~/gl/td_backfill_s${TDS}.log; exit 1; }
       fi
@@ -692,19 +736,34 @@ run: |
   # actor training can crash.  All of our cube actor cells therefore share a
   # node-global readers/writer lock. Training takes a shared lock; evaluation
   # takes the exclusive lock, which both drains training and serializes evals.
-  CUBE_WORK_LOCK=/mnt/raid0/rlp-cube-train-eval.lock
+  # CUBE_LOCK=node (default, the banked behaviour): ONE cube eval at a time per node -- a 4-GPU job runs
+  #   its 27 evals/row serially (measured 2026-09-22: ~4 min/eval, ~7 h/row, GPU ~1% averaged over a row).
+  # CUBE_LOCK=gpu : one eval at a time PER GPU (render index = compute index, pinned): 4 lanes per job.
+  #   Basis: the 2026-08-05 EGL atlas -- one eval per GPU with a pinned MUJOCO_EGL_DEVICE_ID is bit-exact;
+  #   the hazard that motivated the node lock was the render/compute index mismatch, not multi-GPU concurrency.
+  # CUBE_LOCK=none: no serialization (evals may share a render device; not qualified).
+  CUBE_LOCK=${CUBE_LOCK:-node}
+  cube_lock_path() {
+    case "$CUBE_LOCK" in
+      gpu) echo "/mnt/raid0/rlp-cube-train-eval.gpu${GPU:-0}.lock";;
+      *)   echo "/mnt/raid0/rlp-cube-train-eval.lock";;
+    esac
+  }
   cube_train_lock() {
     [ "$ENVNAME" != cube ] && return 0
-    exec 7>"$CUBE_WORK_LOCK"
+    [ "$CUBE_LOCK" = none ] && return 0
+    exec 7>"$(cube_lock_path)"
     flock -s 7
   }
   cube_eval_lock() {
     [ "$ENVNAME" != cube ] && return 0
-    exec 7>"$CUBE_WORK_LOCK"
+    [ "$CUBE_LOCK" = none ] && return 0
+    exec 7>"$(cube_lock_path)"
     flock -x 7
   }
   cube_work_unlock() {
     [ "$ENVNAME" != cube ] && return 0
+    [ "$CUBE_LOCK" = none ] && return 0
     flock -u 7
     exec 7>&-
   }
@@ -1020,6 +1079,10 @@ run: |
     UK=${UNIG_K:-8}
     CFG+=("unig_ctrl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} none ${USC}")
     CFG+=("unig_vlog_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} log ${USC}")
+    # joint critic early stopping: one actor row per teacher snapshot (field 15 = teacher step)
+    for TSN in ${TD_SNAPS:-}; do
+      CFG+=("unig_ctrl_a2.5_t${TSN} 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} none ${USC} ${TSN}")
+    done
     CFG+=("unig_vscl_a2.5 2.5 ${MWX} ${LRX} 0.00 - terminal off terminal ${UMD} ${UNIG_OFF:-25,100} ${UK} scale ${USC}")
   fi
   # GRID=g98matrix (2026-08-18, expansion). Full TwoRoom matrix for the
@@ -1127,7 +1190,13 @@ run: |
     done
     CFG=("${NEW[@]}")
   fi
-  echo "[grid] GRID=${GRID:-axes} $ENVNAME/$BASE -> ${#CFG[@]} configs, ${MAXPAR} in flight"
+  NGPU=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d " "); [ "${NGPU:-0}" -ge 1 ] || NGPU=8
+  # a cancelled/preempted incarnation of this tag on the SAME node leaves its mkdir slot locks behind on the node-local
+  # scratch; nothing of THIS job holds a slot yet, so clear them (2026-09-23: three relaunched cube jobs hung here for 8 h)
+  if [ -d ~/gl/slots ] && [ -n "$(ls -A ~/gl/slots 2>/dev/null)" ]; then
+    echo "[grid] clearing $(ls -A ~/gl/slots | wc -l) stale slot lock(s) from a previous incarnation"; rm -rf ~/gl/slots/*
+  fi
+  echo "[grid] GRID=${GRID:-axes} $ENVNAME/$BASE -> ${#CFG[@]} configs, ${MAXPAR} in flight on ${NGPU} GPUs"
 
   # mkdir-based slot allocator: exactly MAXPAR runs at a time, next starts as one
   # finishes. Modulo alone would idle GPUs whenever runs finish out of order.
@@ -1280,10 +1349,24 @@ run: |
 
     PDRAWS=${EVAL_SEEDS}
     [ "${GRID}" = telescoping_all ] && PDRAWS=${PLANNER_EVAL_SEEDS}
-    for P in ${PLANNERS:-cem adam mppi}; do
+    # PLANNER_CRIT_SEEDS="0 1 .." (+ optional PLANNER_CRIT_STEP=<N>): run the planner arm once per TRAINING SEED's
+    # TD teacher (snapshot _step<N> when given) -- the "same critic as the locked RLP pair, different optimizer"
+    # control, reported as n=6 like the RLP rows. Unset = one arm on the default critic.
+    for CSEED in ${PLANNER_CRIT_SEEDS:-__none__}; do
+    if [ "$VCOST_PY" = latent ]; then
+      # the latent cost ignores the critic entirely -> a single arm, no per-seed duplication
+      [ "${LATENT_ARM_DONE:-0}" = 1 ] && continue
+      LATENT_ARM_DONE=1; CSTAG=""
+    elif [ "$CSEED" != __none__ ]; then
+      CRIT=~/gm/td_grid_s${CSEED}${PLANNER_CRIT_STEP:+_step${PLANNER_CRIT_STEP}}.pt
+      [ -f "$CRIT" ] || { echo "[planners] missing teacher $CRIT" >&2; exit 2; }
+      CSTAG="_cs${CSEED}"
+    else CSTAG=""; fi
+    PLIST=${PLANNERS:-cem adam mppi}; [ "$VCOST_PY" = latent ] && PLIST=${PLANNERS_LATENT:-mppi}
+    for P in $PLIST; do
     for O in ${OFFSETS}; do
     for D in ${PDRAWS}; do
-      NMP="${ENVNAME}_${BASE}_${VCOST_PY}_${P}_h${O}_e${D}"
+      NMP="${ENVNAME}_${BASE}_${VCOST_PY}${CSTAG}_${P}_h${O}_e${D}"
       grep -Eq "^${NMP},[0-9]" "$SUMP" 2>/dev/null && continue
       G=$(acquire)
       (
@@ -1316,7 +1399,7 @@ run: |
         echo "[cell] ${NMP} = ${SR:-FAIL}"
         rmdir "$SLOT/$G" 2>/dev/null
       ) &
-    done; done; done
+    done; done; done; done
     wait
     python3 - <<'PY'
   import collections, os, statistics, wandb
@@ -1399,13 +1482,15 @@ run: |
   # exercises the exact code path -- cache, critic, train, artifact, eval, wandb --
   # so a wrong flag fails in minutes instead of after a 46 GB download.
   if [ "${SMOKE:-0}" = 1 ]; then
-    CFG=("${CFG[0]}"); TRAIN_SEEDS="0"; EVAL_SEEDS="42"; STEPS=60
+    # with teacher-snapshot rows, smoke the LAST row (a _t<N> row) so the snapshot path is exercised
+    if [ -n "${TD_SNAPS:-}" ]; then CFG=("${CFG[${#CFG[@]}-1]}"); else CFG=("${CFG[0]}"); fi
+    TRAIN_SEEDS="0"; EVAL_SEEDS="42"; STEPS=60
     echo "[smoke] one config, 60 steps: ${CFG[0]}"
   fi
 
   for SEED in ${TRAIN_SEEDS}; do
   for row in "${CFG[@]}"; do
-    set -- $row; NM=$1; AM=$2; MW=$3; LR=$4; AW=$5; WF=$6; MODE=${7:-randhorizon}; AFV=${8:-off}; TOBJ=${9:-terminal}; MD=${10:-$MAX_DELTA}; EOFF=${11:-$OFFSETS}; K=${12:-8}; VN=${13:-none}; SCHED=${14:-tw}
+    set -- $row; export NM=$1 SEED; AM=$2; MW=$3; LR=$4; AW=$5; WF=$6; MODE=${7:-randhorizon}; AFV=${8:-off}; TOBJ=${9:-terminal}; MD=${10:-$MAX_DELTA}; EOFF=${11:-$OFFSETS}; K=${12:-8}; VN=${13:-none}; SCHED=${14:-tw}; TCS=${15:-}
     # field 14: co-train critic schedule. tw = shipped TwoRoom (freeze 0.8,
     # flat expectile 0.1, flat critic-lr 1e-3); f05 = freeze at 0.5 only;
     # og = the OGBench/Reacher package (freeze 0.5, expectile 0.1->0.03,
@@ -1414,11 +1499,15 @@ run: |
     [ "$SCHED" = f05 ] && SCHEDFLAGS="--freeze-critic-frac 0.5"
     [ "$SCHED" = og ] && SCHEDFLAGS="--freeze-critic-frac 0.5 --expectile 0.1 --expectile-final 0.03 --critic-lr 1e-3 --critic-lr-final 1e-4"
     [ "$SCHED" = frz ] && SCHEDFLAGS="--freeze-critic-frac 0"
+    # uni = the fully unified recipe (2026-09-21): freeze 0.8, expectile 0.1->0.03,
+    # critic-lr 1e-3->1e-4, NO value expansion, NO replay -- identical in every env/base.
+    [ "$SCHED" = uni ] && SCHEDFLAGS="--freeze-critic-frac ${UNI_FREEZE:-0.8} --expectile ${UNI_EXPECTILE:-0.1} --expectile-final ${UNI_EXPECTILE_FINAL:-0.03} --critic-lr ${UNI_CRITIC_LR:-1e-3} --critic-lr-final ${UNI_CRITIC_LR_FINAL:-1e-4} --expand-weight ${UNI_EXPAND:-0} --replay-prob ${UNI_REPLAY:-0}"
     # field 11 may carry several offsets as a comma list ("25,100"); the row is
     # word-split, so a space-separated value there would be eaten by field 12.
     EOFF=$(echo "$EOFF" | tr ',' ' ')
     OUT=$PERSIST/actors/g_${ENVNAME}_${BASE}_${NM}_s${SEED}.pt
     S=$(acquire)
+    GPU=$((S % ${NGPU:-8}))   # slot -> physical GPU; slots >= #GPUs share a GPU (2 actors/GPU oversubscription)
     (
       if [ ! -f "$OUT" ]; then
         if [ "${REUSE_ONLY:-0}" = 1 ]; then
@@ -1429,12 +1518,15 @@ run: |
           TRAIN_CRIT="$CRIT"
           [ "$ENVNAME" = tworoom ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
           [ "${TD_PER_SEED:-}" = 1 ] && TRAIN_CRIT=~/gm/td_grid_s${SEED}.pt
+          # teacher snapshot row: train on <teacher>_step<N>.pt (critic early stopping)
+          [ -n "$TCS" ] && TRAIN_CRIT="${TRAIN_CRIT%.pt}_step${TCS}.pt"
+          [ -n "$TCS" ] && [ ! -f "$TRAIN_CRIT" ] && { echo "[teacher-snap] missing $TRAIN_CRIT" >&2; touch "$FAILDIR/train_${NM}_s${SEED}"; }
           AFVFLAG=""; [ "$AFV" = on ] && AFVFLAG="--align-from-value"
           VNFLAG=""; [ "$VN" != none ] && VNFLAG="--vnorm $VN"
           # warm-frac "-" means drop the closed-loop term entirely
           if [ "$WF" = "-" ]; then WARMFLAG=""; else WARMFLAG="--train-warm --warm-state-frac $WF"; fi
           cube_train_lock
-          CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
+          CUDA_VISIBLE_DEVICES=$GPU MUJOCO_EGL_DEVICE_ID=$GPU \
           timeout 14400 python3 scripts/plan/train_lip_ac.py \
           --h5 "$H5" --wm "$CK" --cache ~/gc/fs5.pt --cache-td ~/gc/fs1.pt \
           --init-value "$TRAIN_CRIT" \
@@ -1470,7 +1562,14 @@ run: |
         # SELECTION draws, deploy the argmax. Standard per-run checkpoint
         # selection; report draws stay untouched. Snapshots share the final's
         # train_args, so the [args-ok] verdict above covers them.
-        if [ "${CKPT_SELECT:-0}" = 1 ] && ls "${OUT%.pt}"_step*.pt >/dev/null 2>&1; then
+        if [ -n "${DEPLOY_STEP:-}" ] && [ "${DEPLOY_STEP}" != final ]; then
+          # fixed config (the shared stop chosen on the base run): deploy the step-N snapshot, no selection
+          if [ -f "${OUT%.pt}_step${DEPLOY_STEP}.pt" ]; then
+            cp -f "${OUT%.pt}_step${DEPLOY_STEP}.pt" "$OUT"; echo "[ckpt-select] ${NM} s${SEED} fixed step ${DEPLOY_STEP} -> deployed" | tee -a "$DRV"
+          else
+            echo "[deploy-step] missing ${OUT%.pt}_step${DEPLOY_STEP}.pt" >&2; touch "$FAILDIR/deploy_${NM}_s${SEED}"
+          fi
+        elif [ "${CKPT_SELECT:-0}" = 1 ] && ls "${OUT%.pt}"_step*.pt >/dev/null 2>&1; then
           AFVEVAL=""; [ "$AFV" = on ] && AFVEVAL="--align-from-value"
           WARMEVAL=""; [ "$WF" != "-" ] && WARMEVAL="--warm-start"
           EXTRAEVAL=""; [ "$ENVNAME" = cube ] && EXTRAEVAL="--override ++bf16=true +eval.ep_range=8000:10000"
@@ -1478,12 +1577,30 @@ run: |
           K2C=""; [ "$BASE" = dinowm ] && K2C="--keys-to-cache action"
           CKVLOG=$PERSIST/logs/g_${NM}_s${SEED}_ckptval.log
           BEST=""; BESTV="-1"
-          for CKP in "${OUT%.pt}"_step*.pt "$OUT"; do
-            cube_eval_lock
-            CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S             python3 scripts/plan/eval_log.py --actor "$CKP"               --env-config "$ENVNAME" --h5 "$H5" --policy "$CK"               --rh ${RH} --seeds ${CKPT_VAL_SEEDS:-50 51} --offsets ${EOFF}               $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir ~/gl --tag ckv${RH}               2>&1 | tee -a "$CKVLOG" | tail -3
-            cube_work_unlock
-            V=$(grep -oE '"mean_rh[0-9]+_all": [0-9.]+' "$CKVLOG" | tail -1 | grep -oE '[0-9.]+$' || true)
-            echo "[ckpt-select] ${NM} s${SEED} $(basename "$CKP") val=${V:-none}" | tee -a "$DRV"
+          CKPS=( "${OUT%.pt}"_step*.pt "$OUT" )
+          # Each snapshot is scored into its OWN log (ckptval_<snapshot>.log); PAR_CKV=1 runs them in
+          # parallel on the slot's GPU (non-cube only: TwoRoom eval is CPU-side env stepping and
+          # leaves the GPU idle; cube keeps the exclusive render lock). W&B is disabled for these
+          # selection evals (concurrent resumes of one run collide; the scores are read from the logs
+          # and the deployed score is written to W&B as eval/ckv5/best_all below).
+          ckv_eval() {   # $1 snapshot, $2 log
+            WANDB_MODE=${CKV_WANDB_MODE:-online} CUDA_VISIBLE_DEVICES=$GPU MUJOCO_EGL_DEVICE_ID=$GPU \
+            python3 scripts/plan/eval_log.py --actor "$1" --env-config "$ENVNAME" --h5 "$H5" --policy "$CK" \
+              --rh ${RH} --seeds ${CKPT_VAL_SEEDS:-50 51} --offsets ${EOFF} \
+              $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir ~/gl --tag ckv${RH} > "$2" 2>&1
+          }
+          if [ "${PAR_CKV:-0}" = 1 ] && [ "$ENVNAME" != cube ]; then
+            for CKP in "${CKPS[@]}"; do CKV_WANDB_MODE=disabled ckv_eval "$CKP" "${CKVLOG%.log}_$(basename "${CKP%.pt}").log" & done
+            wait
+          else
+            for CKP in "${CKPS[@]}"; do cube_eval_lock; ckv_eval "$CKP" "${CKVLOG%.log}_$(basename "${CKP%.pt}").log"; cube_work_unlock; done
+          fi
+          for CKP in "${CKPS[@]}"; do
+            L="${CKVLOG%.log}_$(basename "${CKP%.pt}").log"; cat "$L" >> "$CKVLOG"; tail -3 "$L"
+            V=$(grep -oE '"mean_rh[0-9]+_all": [0-9.]+' "$L" | tail -1 | grep -oE '[0-9.]+$' || true)
+            V25=$(grep -oE '"mean_rh[0-9]+_h25": [0-9.]+' "$L" | tail -1 | grep -oE '[0-9.]+$' || true)
+            V100=$(grep -oE '"mean_rh[0-9]+_h100": [0-9.]+' "$L" | tail -1 | grep -oE '[0-9.]+$' || true)
+            echo "[ckpt-select] ${NM} s${SEED} $(basename "$CKP") val=${V:-none} h25=${V25:-na} h100=${V100:-na}" | tee -a "$DRV"
             if [ -n "$V" ] && python3 -c "import sys; sys.exit(0 if float('$V') > float('$BESTV') else 1)"; then
               BESTV=$V; BEST=$CKP
             fi
@@ -1494,9 +1611,29 @@ run: |
           else
             echo "[ckpt-select] ${NM} s${SEED} final wins (val $BESTV)" | tee -a "$DRV"
           fi
+          # the W&B summary keeps the LAST evaluated snapshot's score; record the DEPLOYED one so
+          # cross-row (teacher) selection can read it from W&B (eval/ckv5/best_all)
+          WANDB_RESUME=allow WANDB_RUN_ID="" python3 - "$BESTV" "$(basename "${BEST:-$OUT}")" <<'PYB' 2>/dev/null || true
+  import os, sys, wandb
+  api = wandb.Api(timeout=60)
+  name = os.environ["EXPERIMENT_TAG"] + "_g_" + os.environ["ENVNAME"] + "_" + os.environ["BASE"] + "_" + os.environ["NM"] + "_s" + os.environ["SEED"]
+  for r in api.runs(os.environ["WANDB_ENTITY"] + "/" + os.environ["WANDB_PROJECT"], filters={"display_name": name}):
+      pass
+  runs = list(api.runs(os.environ["WANDB_ENTITY"] + "/" + os.environ["WANDB_PROJECT"], filters={"display_name": name}))
+  if runs:
+      r = max(runs, key=lambda r: len(r.summary.keys()))   # the training run (selection evals may be W&B-disabled)
+      r.summary["eval/ckv5/best_all"] = float(sys.argv[1]); r.summary["eval/ckv5/best_ckpt"] = sys.argv[2]; r.summary.update()
+      print("[ckpt-select] recorded best_all", sys.argv[1], "->", name)
+  PYB
         fi
         # evaluate in the SAME slot: the actor lives on node-local disk and this
         # cluster is torn down at job end, so eval cannot be a later job.
+        # REPORT_EVAL=0 (shared fixed-stop protocol): skip the per-row test eval; the test draws are
+        # touched once per cell, after the (teacher, actor-step) pair is chosen on validation.
+        if [ "${REPORT_EVAL:-1}" = 0 ]; then
+          echo "GRID $ENVNAME $BASE $NM s$SEED: OK (no per-row report eval; REPORT_EVAL=0)" >> "$DRV"
+          rmdir "$SLOT/$S" 2>/dev/null; exit 0
+        fi
         AFVEVAL=""; [ "$AFV" = on ] && AFVEVAL="--align-from-value"
         WARMEVAL=""; [ "$WF" != "-" ] && WARMEVAL="--warm-start"
         # cube: banked eval protocol -- bf16 and the held-out episode range
@@ -1516,11 +1653,11 @@ run: |
           mkdir -p "$LIP_PROBE_DIR"
         fi
         cube_eval_lock
-        CUDA_VISIBLE_DEVICES=$S MUJOCO_EGL_DEVICE_ID=$S \
+        CUDA_VISIBLE_DEVICES=$GPU MUJOCO_EGL_DEVICE_ID=$GPU \
         python3 scripts/plan/eval_log.py --actor "$OUT" \
           --env-config "$ENVNAME" --h5 "$H5" --policy "$CK" \
           --rh ${RH} --seeds ${EVAL_SEEDS} --offsets ${EOFF} \
-          $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir "$RAWD" --tag rh${RH} \
+          $AFVEVAL $WARMEVAL $EXTRAEVAL $K2C --log-dir "$RAWD" --tag ${EVAL_TAG:-rh${RH}} \
           2>&1 | tee -a $PERSIST/logs/g_${NM}_s${SEED}_eval.log | tail -200
         cube_work_unlock
         # tail -200, not -25: a failed cell dumps its log tail + full hydra
@@ -1544,6 +1681,9 @@ run: |
       rmdir "$SLOT/$S" 2>/dev/null
     ) &
     echo "launched $NM seed $SEED (amax $AM, mean-w $MW, lr $LR, iters $K, align-w $AW, warm $WF, afv $AFV, offsets $EOFF) slot $S"
+    # 2026-09-23: simultaneous starts of 8-18 actors killed some of them silently right after W&B init (cube cluster
+    # jobs and the TwoRoom pod alike) -- stagger the launches
+    sleep ${LAUNCH_STAGGER:-20}
   done
   done
   # every slot free == every cell's subshell has finished; retire the watchdog

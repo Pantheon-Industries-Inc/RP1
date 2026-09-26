@@ -19,6 +19,7 @@ The planner terminal cost is ``d(z_pred, z_goal)`` (lower == closer).
 from __future__ import annotations
 
 import copy
+from typing import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -44,6 +45,7 @@ class TDConfig:
     weight_decay: float = 1e-4
     batch_size: int = 1024
     steps: int = 6000
+    save_every: int = 0  # >0: hand a CPU copy of the head to fit(save_fn=...) every N steps (teacher early-stopping grid)
     tau: float = 0.005
     expectile: float = 0.7  # >0.5 optimistic (shortest-path)
     p_cross: float = 0.3  # fraction of cross-episode (stitching) goals
@@ -102,6 +104,7 @@ def fit(
     cache: LatentCache,
     cfg: TDConfig,
     device: str = "cpu",
+    save_fn: "Callable[[torch.nn.Module, int], None] | None" = None,
 ) -> MetricHead:
     """Train and return a temporal-distance (quasi)metric head."""
     torch.manual_seed(cfg.seed)
@@ -202,6 +205,9 @@ def fit(
                 f"TD training step={step + 1}/{cfg.steps} loss={loss.item():.6f} "
                 f"prediction_mean={pred.mean().item():.6f}"
             )
+        if save_fn is not None and cfg.save_every > 0 and (step + 1) % cfg.save_every == 0 and (step + 1) < cfg.steps:
+            # intermediate teacher snapshot (the final head is returned below); a CPU copy in eval mode
+            save_fn(copy.deepcopy(value).cpu().eval(), step + 1)
     logger.success(f"TD trained (n={cfg.n_step} gamma={cfg.gamma} head={cfg.head}), final loss={loss.item():.4f}")
     value.eval()
     return value

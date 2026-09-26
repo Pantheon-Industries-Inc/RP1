@@ -56,6 +56,8 @@ p.add_argument("--near-max", type=int, default=3)
 p.add_argument("--head", choices=["quasimetric", "mlp"], default="quasimetric",
                help="quasimetric (MRN) | mlp: plain pairwise MLP V(z,g) (with --expectile 0.5 = plain TD)")
 p.add_argument("--device", default="cuda")
+p.add_argument("--save-every", type=int, default=0,
+               help="also save <out>_step<N>.pt every N steps (critic early stopping)")
 a = p.parse_args()
 
 c = LatentCache.load(a.cache)
@@ -85,7 +87,18 @@ cfg = TDConfig(head=a.head, hidden_dim=256, depth=a.depth, embed_dim=128,
                boundary=a.boundary,
                p_cross=a.p_cross, balanced=True, batch_size=1024, steps=a.steps, seed=a.seed,
                max_delta=a.max_delta, near_frac=a.near_frac, near_max=a.near_max)
-module = learners.td.fit(stacked, cfg, a.device)
+WIN_ARCH = {"head": a.head, "hidden_dim": 256, "depth": a.depth, "embed_dim": 128,
+            "softplus": True, "symmetric": False, "window_frames": F, "window_lag": a.lag}
+if a.save_every > 0:
+    import copy as _copy, re as _re
+
+    def _snap(mod, step):
+        path = _re.sub(r"\.pt$", "", a.out) + f"_step{step}.pt"
+        save_metric(mod, "td", F * D, dict(WIN_ARCH), path)
+        logging.success(f"saved window snapshot step {step} -> {path}")
+    module = learners.td.fit(stacked, cfg, a.device, save_every=a.save_every, save_fn=_snap)
+else:
+    module = learners.td.fit(stacked, cfg, a.device)
 
 # diagnostic: cost of the DEPLOY-style tiled goal vs the data-window goal. If
 # tiled queries are far more expensive at the same location, the deploy
@@ -106,8 +119,5 @@ logging.info(f"[tiled-goal diag] d(win,win)={d_self_win:.3f} d(tiled,tiled)={d_s
 if d_win_to_tiled > 0.25 * d_rand:
     logging.warning("tiled-goal queries are far from the data manifold -- deploy convention suspect")
 
-save_metric(module.cpu(), "td", F * D,
-            {"head": a.head, "hidden_dim": 256, "depth": a.depth, "embed_dim": 128,
-             "softplus": True, "symmetric": False,
-             "window_frames": F, "window_lag": a.lag}, a.out)
+save_metric(module.cpu(), "td", F * D, dict(WIN_ARCH), a.out)
 logging.success(f"saved -> {a.out} (declared latent_dim={F * D} => hook _m={F})")

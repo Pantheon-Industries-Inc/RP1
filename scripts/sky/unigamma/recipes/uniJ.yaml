@@ -1,0 +1,66 @@
+# =============================================================================
+# RP1 unified recipe "uniJ"  (2026-09-21)
+#
+# ONE configuration for every environment (TwoRoom, OGBench Cube, Reacher) and
+# both world-model bases (LeWM/LeJEPA, PLDM). This file is the single source of
+# truth: launch_uniB.sh flattens it (section.key -> UNI_<KEY>) and maps each
+# value onto the two task yamls (tworoom_g98_rescue.yaml for TwoRoom + Cube,
+# reacher_gamma.yaml for Reacher). Anything NOT listed here is a benchmark /
+# evaluation convention, not a recipe choice (success criteria, no-op
+# normalisation and bf16 eval on Cube, first-hit tolerances on Reacher).
+# Edit values here, never in the launcher or the task yamls.
+#
+# "provenance" says where a shared value comes from; "untested" marks a choice
+# never measured in that environment before this campaign.
+# =============================================================================
+
+search:                       # plan refiner
+  k: 8                        # refinement iterations per decision (no restarts, ever)
+  horizon: 5                  # plan length in chunks of 5 primitive actions (= 25 steps)
+  rh: 5                       # receding horizon: replan every 5 chunks (open loop)
+  amax: 2.5                   # clip range of the residual update  [provenance: unified-gamma campaign, Aug 30]
+  refiner_width: 512          # v4 refiner MLP width
+  refiner_layers: 2           # v4 refiner hidden layers
+
+actor:
+  mw: 0.3                     # mean-weight lambda_mean  [provenance: joint winner of the Aug-6 open-loop sweep, all 5 base x env]
+  lr: 3e-4                    # actor LR, cosine-annealed to 1/10  [same sweep]
+  batch: 256                  # actor batch  [untested on TwoRoom, was 128]
+  steps: 12000                # actor step CAP (user 2026-09-22: was 8000, which bound in 14/38 rows); snapshots every ckpt_every
+  ckpt_every: 2000            # actor snapshot cadence for early stopping  [user 2026-09-21: 2k everywhere]
+  md: 20                      # hindsight-goal cap in chunks (= 100 primitive steps, covers h100)
+  pc: 0.3                     # cross-episode goal probability (actor AND critics)
+  acr: 0.5                    # anti-constancy regulariser weight (TwoRoom hallucination-basin fix)
+  replay: 0                   # replay of refinement rollouts: off  [untested on Cube/Reacher, were 0.5]
+  expand: 0                   # value-expansion weight: off  [PushT: 0 > 1 in every pair; Reacher: catastrophic with thin windows]
+
+critic:                       # co-trained critic, initialised from the offline teacher
+  gamma_h25: 0.98             # discount (teacher AND co-critic) for the h25 critic/actor stack  [config B value]
+  gamma_h100: 0.99            # discount for the h100 stack  [user decision 2026-09-21: 1/(1-gamma) must cover the horizon]
+                              # => every TwoRoom/Cube cell is TWO stacks (one per horizon); Reacher is h25 only -> gamma_h25
+  nstep: 1                    # one-step TD targets
+  expectile: 0.1              # co-critic expectile, annealed ...
+  expectile_final: 0.03       # ... to this
+  critic_lr: 1e-3             # co-critic LR, annealed ...
+  critic_lr_final: 1e-4       # ... to this
+  freeze: 0.8                 # fraction of actor steps during which the critic keeps training; then frozen EMA teacher
+  ema_tau: 0.005              # EMA rate of the actor's teacher critic
+  td_batch: 1024              # co-critic TD batch
+  crit_depth: 2               # MRN quasimetric head depth (hidden 256, embed 128)
+
+teacher:                      # offline critic (critic initialisation)
+  td_steps: 18000             # teacher step CAP ...
+  td_snap: 3000               # ... with a snapshot every 3000 steps; EVERY snapshot is an actor row (joint early stopping)
+  td_expectile: 0.03          # teacher expectile  [untested on TwoRoom, was 0.1]
+  td_per_seed: 1              # one teacher per actor seed ("fresh actor and critic seeds")
+
+selection:
+  val_draws: "48 49 50 51"    # selection draws: every (teacher snapshot, actor snapshot) pair is scored here
+  report_draws: "42 43 44"    # report draws: never used for any choice
+  offsets: "25,100"           # goal horizons evaluated (TwoRoom, Cube); Reacher is h25 by construction
+  seeds: "0 1 2 3 4 5"        # actor/critic seeds; reported = median over seeds of the per-seed mean over report draws
+  heldout: "8000:10000"       # eval episodes; training uses 0-7999
+
+env_properties:               # NOT recipe knobs: properties of the observation
+  window_default: 1           # critic latent window in frames
+  window_reacher: 2           # Reacher: velocity is unobservable from one frame (lag 5, standardised latents)

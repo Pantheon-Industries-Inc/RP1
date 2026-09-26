@@ -73,6 +73,16 @@ def _run(cfg: DictConfig) -> None:
     cache_fs5 = str(cache_directory / f"{cfg.name}_fs{cfg.frameskip}{suffix}.pt")
     actions_h5 = str(cache_directory / f"{cfg.name}_actions.h5")
     value_checkpoint = str(Path(cfg.run.checkpoints) / "value_td")
+    teacher = cfg.get("teacher")
+    if teacher:
+        # joint teacher x actor early stopping: train the planner against a chosen teacher snapshot
+        # (a metric dir saved by an earlier value stage) instead of this run's value_td
+        value_checkpoint = str(Path(str(teacher)).expanduser())
+        if "value" not in skip:
+            raise ValueError("teacher=<dir> requires skip=[...,value]: the value stage would be trained and ignored")
+        if not Path(value_checkpoint).exists():
+            raise FileNotFoundError(f"teacher metric dir not found: {value_checkpoint}")
+        logger.info(f"Planner teacher override: {value_checkpoint}")
     stage_index = 0
 
     def run_stage(name: str, config_name: str, **values: object) -> object:

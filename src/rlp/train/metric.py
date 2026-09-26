@@ -92,8 +92,15 @@ def _run(cfg: DictConfig) -> None:
             rank_margin=args.rank_margin,
             near_frac=float(args.get("near_frac", 0.0) or 0.0),
             near_max=int(args.get("near_max", 3) or 3),
+            save_every=int(args.get("save_every", 0) or 0),
         )
-        module = learners.td.fit(cache, td_cfg, device)
+
+        def _save_snapshot(head: nn.Module, step: int) -> None:
+            # teacher early-stopping grid: <checkpoint>_step<N> next to the final <checkpoint>
+            path = save_metric(head, run_name=f"{args.output.checkpoint}_step{step}", cache_dir=args.run.directory)
+            logger.info(f"Saved TD teacher snapshot step={step} to {path}")
+
+        module = learners.td.fit(cache, td_cfg, device, save_fn=_save_snapshot if td_cfg.save_every > 0 else None)
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
             hidden_dim=args.hidden_dim,

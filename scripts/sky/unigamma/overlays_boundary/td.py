@@ -91,8 +91,13 @@ def _make_head(cfg, latent_dim):
     return PairwiseMetricHead(latent_dim, hidden_dim=cfg.hidden_dim, depth=cfg.depth, softplus=True, symmetric=cfg.symmetric)
 
 
-def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu"):
-    """Train and return a temporal-distance (quasi)metric head."""
+def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu", save_every: int = 0, save_fn=None):
+    """Train and return a temporal-distance (quasi)metric head.
+
+    ``save_every`` > 0 with ``save_fn(module_cpu, step)`` hands out a CPU copy of the
+    head every ``save_every`` steps (final step excluded; the caller saves that) --
+    teacher snapshots for critic early stopping. Training is unchanged.
+    """
     torch.manual_seed(cfg.seed)
     value = _make_head(cfg, cache.latent_dim).to(device)
     target = copy.deepcopy(value).to(device)
@@ -134,6 +139,10 @@ def fit(cache: LatentCache, cfg: TDConfig, device: str = "cpu"):
                 tp.mul_(1.0 - cfg.tau).add_(cfg.tau * sp)
         if step % 200 == 0:
             pbar.set_postfix(loss=loss.item(), pred=pred.mean().item())
+        done = step + 1
+        if save_every and save_fn is not None and done % save_every == 0 and done < cfg.steps:
+            save_fn(copy.deepcopy(value).cpu().eval(), done)
+            value.train()
     logging.success(f"TD trained (n={cfg.n_step} γ={cfg.gamma} head={cfg.head}), final loss={loss.item():.4f}")
     value.eval()
     return value

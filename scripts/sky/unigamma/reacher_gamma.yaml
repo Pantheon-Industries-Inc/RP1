@@ -97,6 +97,12 @@ envs:
   RS_LAYERS: "2"           # v4 refiner hidden layers
   ACR_LAM: "0"             # anti-constancy regularizer weight
   RS_TD_STEPS: "12000"     # window-teacher steps (unified critic: = STEPS)
+  RS_TD_SAVE_EVERY: "0"    # window-teacher snapshot interval; 0 = final only
+  UNI_EXPECTILE: "0.1"
+  UNI_EXPECTILE_FINAL: "0.03"
+  UNI_CRITIC_LR: "1e-3"
+  UNI_CRITIC_LR_FINAL: "1e-4"
+  RS_TD_SNAPS: ""          # GRID=cross: extra rows rs_x<..>_r<..>_t<N> trained on the teacher snapshot at step N
   RS_TD_HEAD: "quasimetric" # window-teacher head: quasimetric (MRN) | mlp (plain TD with VALUE_EXPECTILE=0.5)
   RS_TD_PC: "0.3"          # window-teacher cross-episode goal fraction
   RS_TD_NEAR_FRAC: "0"     # window-teacher near-goal oversampling (1..RS_TD_NEAR_MAX steps)
@@ -109,6 +115,7 @@ envs:
   CRIT_DEPTH: "2"          # MRN critic-head depth (window teacher + co-critic)
                            # -- W3 cache key must change with it (see below)
   MEASUREMENT_COSTS: "latent value" # latched measurements: same-window L2 vs learned value
+  PLANNERS_LATENT: "mppi"   # planners run with the LATENT cost (the others are value-only by decision 2026-09-24)
   INCLUDE_PAPER: "0"        # 1 = add the checkpoint-verified paper recipe cell
   REPORT_DRAWS: "42 43 44"  # paper reacher protocol reported 42-47
   VALUE_EXPECTILE: "0.03"   # paper init value artifact used 0.05 (window3_*_e005)
@@ -365,7 +372,7 @@ setup: |
       --cache "$C1" --lag 5 --frames ${VALUE_FRAMES:-1} --expectile ${VALUE_EXPECTILE:-0.03} --gamma ${RS_GAMMA:-0.98} --depth ${CRIT_DEPTH:-2} \
       --boundary ${RS_BOUNDARY:-legacy} --p-cross ${RS_TD_PC:-0.3} --head ${RS_TD_HEAD:-quasimetric} \
       --near-frac ${RS_TD_NEAR_FRAC:-0} --near-max ${RS_TD_NEAR_MAX:-3} \
-      --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed $TDS --out "$W3S" > /workspace/logs/w3_s${TDS}.log 2>&1 || true
+      --n-step ${RS_NSTEP:-50} --steps $WSTEPS --seed $TDS --out "$W3S" --save-every ${RS_TD_SAVE_EVERY:-0} > /workspace/logs/w3_s${TDS}.log 2>&1 || true
     [ -f "$W3S" ] || { echo "window value failed (seed $TDS)"; tail -20 /workspace/logs/w3_s${TDS}.log; exit 1; }
   done
   [ "${RS_TD_PER_SEED:-0}" = 1 ] && [ ! -e "$W3" ] && ln -s "${W3%.pt}_s0.pt" "$W3"
@@ -476,8 +483,13 @@ run: |
     for XW in ${CROSS_EXPANDS:-0 0.5 1.0 3.0}; do
       for RP in ${CROSS_REPLAYS:-0 0.25 0.5}; do
         CFG+=("rs_x${XW}_r${RP} $AF $CO_MW $CO_LR $XW $RP")
+        for TSN in ${RS_TD_SNAPS:-}; do
+          CFG+=("rs_x${XW}_r${RP}_t${TSN} $AF $CO_MW $CO_LR $XW $RP terminal $TSN")
+        done
       done
     done
+    # smoke with snapshot rows: keep only the LAST (a _t<N>) row so the snapshot path is exercised
+    [ "${SMOKE:-0}" = 1 ] && [ -n "${RS_TD_SNAPS:-}" ] && CFG=("${CFG[${#CFG[@]}-1]}")
   fi
   # Twelve targeted PLDM refinements, evaluated at all three training seeds:
   # amax {1.2,1.4,1.6} x mean-weight {0.2,0.5} x actor-lr {1e-4,6e-4}.
@@ -632,17 +644,31 @@ run: |
       done
     fi
     for COST in ${MEASUREMENT_COSTS:-latent value}; do
-      VCRIT="$W3"
+    # PLANNER_CRIT_SEEDS="0 1 .." (+ PLANNER_CRIT_STEP=<N>): one arm per TRAINING SEED's window teacher (snapshot
+    # _step<N> when given) = the "same critic as the locked RLP pair, different optimizer" control, reported n=6.
+    # The latent cost ignores the critic, so it keeps a single arm.
+    LATENT_ARM_DONE=0
+    for CSEED in ${PLANNER_CRIT_SEEDS:-__none__}; do
+      VCRIT="$W3"; CSTAG=""
+      if [ "$COST" != latent ] && [ "$CSEED" != __none__ ]; then
+        VCRIT="${W3%.pt}_s${CSEED}.pt"
+        [ -n "${PLANNER_CRIT_STEP:-}" ] && VCRIT="${VCRIT%.pt}_step${PLANNER_CRIT_STEP}.pt"
+        [ -f "$VCRIT" ] || { echo "[measurements] missing teacher $VCRIT" >&2; exit 2; }
+        CSTAG="_cs${CSEED}"
+      fi
       if [ "$COST" = latent ]; then
+        [ "$LATENT_ARM_DONE" = 1 ] && continue
+        LATENT_ARM_DONE=1; CSTAG=""
         VCRIT=/workspace/metrics/l2window${VALUE_FRAMES:-1}.pt
         [ -f "$VCRIT" ] || python3 /tmp/codex-overlays/make_l2window_n.py --frames ${VALUE_FRAMES:-1} 2>&1 | tail -2
         [ -f "$VCRIT" ] || { echo "l2window${VALUE_FRAMES:-1} build failed"; exit 1; }
       fi
       for TAU in ${SUCCESS_THRESHOLDS}; do
         TAUTAG=${TAU/./p}
-        for P in ${PLANNERS:-cem adam mppi}; do
+        PLIST=${PLANNERS:-cem adam mppi}; [ "$COST" = latent ] && PLIST=${PLANNERS_LATENT:-mppi}
+        for P in $PLIST; do
         for ES in $REP; do
-          NMP="${BASE}_${COST}_${P}_latched_tau${TAUTAG}_rh${PLANNER_RH}_h25_e${ES}"
+          NMP="${BASE}_${COST}${CSTAG}_${P}_latched_tau${TAUTAG}_rh${PLANNER_RH}_h25_e${ES}"
           grep -Eq "^${NMP},.*success=[0-9]" "$SUMP" 2>/dev/null && continue
           G=$(acquire)
           (
@@ -676,6 +702,7 @@ run: |
         done
         done
       done
+    done
     done
     wait
     export LATCHED_RESULTS_CSV="$SUMP"
@@ -941,7 +968,7 @@ run: |
 
   for SEED in ${TRAIN_SEEDS}; do
   for row in "${CFG[@]}"; do
-    set -- $row; NM=$1; AMAX=$2; MW=$3; LR=$4; XW=${5:-$EXPAND}; RP=${6:-$REPLAY}; TOBJ=${7:-terminal}
+    set -- $row; NM=$1; AMAX=$2; MW=$3; LR=$4; XW=${5:-$EXPAND}; RP=${6:-$REPLAY}; TOBJ=${7:-terminal}; TCS=${8:-}
     [ "${ACTOR_ONLY:-0}" = 1 ] && XW=0
     OUT=$ACTORS/${NM}_${BASE}_s${SEED}.pt
     S=$(acquire)
@@ -960,14 +987,16 @@ run: |
           fi
           DGFLAG=""; [ "${DROP_GRAD:-0}" = 1 ] && DGFLAG="--drop-grad"
           W3_SEED="$W3"; [ "${RS_TD_PER_SEED:-0}" = 1 ] && W3_SEED="${W3%.pt}_s${SEED}.pt"
+          [ -n "$TCS" ] && W3_SEED="${W3_SEED%.pt}_step${TCS}.pt"   # teacher snapshot row (critic early stopping)
+          [ -n "$TCS" ] && [ ! -f "$W3_SEED" ] && echo "[teacher-snap] missing $W3_SEED" >&2
           CUDA_VISIBLE_DEVICES=$S timeout ${TRAIN_TIMEOUT:-64800} python3 scripts/plan/train_lip_ac.py \
           --cache "$C5" --cache-td "$C1" --h5 "$SLIM" --wm "$WM" --pad-context ${DGFLAG} \
           --init-value "$W3_SEED" \
           --recipe-profile "$PROFILE" \
           --arch v4 --iters ${RS_K:-8} --horizon 5 --max-delta ${RS_MD:-12} --n-step ${RS_NSTEP:-50} \
           --v4-hidden ${RS_WIDTH:-512} --v4-layers ${RS_LAYERS:-2} --depth ${CRIT_DEPTH:-2} --ac-weight ${ACR_LAM:-0} \
-          --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile 0.1 --expectile-final 0.03 \
-          --critic-lr 1e-3 --critic-lr-final 1e-4 \
+          --gamma ${RS_GAMMA:-0.98} --vnorm ${RS_VNORM:-none} --boundary ${RS_BOUNDARY:-legacy} --squash ${RS_SQUASH:-hard} --ema-tau ${RS_EMA_TAU:-0.005} --expectile ${UNI_EXPECTILE:-0.1} --expectile-final ${UNI_EXPECTILE_FINAL:-0.03} \
+          --critic-lr ${UNI_CRITIC_LR:-1e-3} --critic-lr-final ${UNI_CRITIC_LR_FINAL:-1e-4} \
           --replay-prob $RP --expand-weight $XW --freeze-critic-frac ${RS_FREEZE:-0.5} ${RS_ACTOR_PC:+--p-cross $RS_ACTOR_PC} ${RS_ACTOR_BANDS:+--band-mix $RS_ACTOR_BANDS} ${FROZEN_ARGS} \
           --lambda-schedule uniform --mean-weight $MW --amax $AMAX \
           --temporal-objective "$TOBJ" \

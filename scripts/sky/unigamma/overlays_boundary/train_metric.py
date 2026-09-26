@@ -20,6 +20,7 @@ head trains on the compressed rows and is wrapped in ``CompressedMetric`` so the
 planner can keep handing it full flat tokens.
 """
 
+import re
 import argparse
 
 import torch
@@ -41,6 +42,7 @@ def pick_device(name: str = "auto") -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
 
 
 def main():
@@ -83,6 +85,8 @@ def main():
                    help="[legacy] equivalent to --compress mean with P patches")
     p.add_argument("--device", default="auto")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--save-every", type=int, default=0,
+                   help="td only: also save a snapshot <out>_step<N>.pt every N steps (critic early stopping)")
     args = p.parse_args()
 
     device = pick_device(args.device)
@@ -115,9 +119,16 @@ def main():
             symmetric=args.symmetric,
             near_frac=args.near_frac, near_max=args.near_max,
         )
-        module = learners.td.fit(cache, cfg, device)
         arch = {"head": args.head, "hidden_dim": args.hidden_dim, "depth": args.depth,
                 "embed_dim": args.embed_dim, "softplus": True, "symmetric": args.symmetric}
+        if args.save_every > 0:
+            def _snap(mod, step, _arch=dict(arch)):
+                path = re.sub(r"\.pt$", "", args.out) + f"_step{step}.pt"
+                save_metric(mod, "td", cache.latent_dim, _arch, path)
+                logging.success(f"saved td snapshot step {step} -> {path}")
+            module = learners.td.fit(cache, cfg, device, save_every=args.save_every, save_fn=_snap)
+        else:
+            module = learners.td.fit(cache, cfg, device)
     elif args.learner == "dwell":
         # discounted dwell: value = time SPENT on target, not time TO target
         cfg = DwellConfig(

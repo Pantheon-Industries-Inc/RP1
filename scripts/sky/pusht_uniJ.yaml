@@ -1,0 +1,303 @@
+# PushT under the fully unified uniJ recipe (recipes/uniJ.yaml) with JOINT teacher x actor early stopping,
+# on the model=rlp pixi stack (this repo). One base (lewm | pldm via WM_DIR), h25 stack (gamma 0.98).
+#
+#   per seed:  MODE=teacher  -> TD teacher 18k steps saving value_td_step{3k..15k} + the t18000 actor row
+#              MODE=row ROW=t<T> -> actor row trained against value_td_step<T> (waits for the teacher job)
+#              every row: 6 actor snapshots (2k..12k) scored on CKPT_VAL_SEEDS (48-51), printed as
+#                 [ckpt-select] unig_ctrl_a2.5_t<T> s<seed> g_pusht_<base>_unig_ctrl_a2.5_t<T>_s<seed>_step<N>.pt val=<m> h25=<m> h100=na
+#              (the tworoom/cube format, so scripts/collect_ckpt_select.sh + fixed_stop_select.py work unchanged)
+#              MODE=all     -> teacher + all rows sequentially (single-GPU cluster job)
+#              MODE=report FIXED_ROW=t<T> FIXED_STEP=<N> -> test draws 42-44 of that snapshot only ([cell] lines)
+#              MODE=baseline FIXED_ROW=t<T> -> planner baselines on the report draws: BASELINE_SOLVERS x BASELINE_COSTS,
+#                 latent = one arm (no critic), value = the cell's locked teacher snapshot value_td_step<T> of THIS seed
+#              MODE=prepare -> pixi env + dataset + WM + latent caches only (run ONCE per pod before fan-out)
+#   layout:  $OUT_ROOT/$PANTHEON_USER/$EXPERIMENT_TAG/{s<seed>/{train_checkpoints,rows/t<T>,runs},actors,logs,grid_driver.log}
+#   pods:    OUT_ROOT=CACHE_ROOT=/mnt/raid0/rlp-pusht, GPU=<index> per job, workdir shipped by run_yaml_on_pod.py --workdir .
+name: rlp-pt-uniJ
+
+envs:
+  ENVNAME: pusht
+  HZ: "25"                   # horizon stack: 25 (goal offset 25 / budget 50, gamma 0.98) | 100 (offset 100 / budget 200, gamma 0.99)
+  BASE: lewm                 # lewm (official quentinll/lewm-pusht) | pldm (needs WM_DIR)
+  WM_DIR: ""                 # pre-installed world model dir (weights.pt + config.json); required for BASE=pldm
+  MODE: all                  # prepare | teacher | row | all | all_par | report | baseline
+  ROW: ""                    # MODE=row: t3000 | t6000 | ... (teacher snapshot budget)
+  SEED: "0"
+  GPU: "0"                   # CUDA device index for this job (pods run several jobs per node)
+  EXPERIMENT_TAG: rlp-pt-uniJ-h25
+  CACHE_TAG: ""              # shared caches + converted WM (default: own tag)
+  OUT_ROOT: /newcheckpoints
+  CACHE_ROOT: /checkpoints
+  WAIT_TEACHER_MIN: "600"    # MODE=row: minutes to wait for the teacher snapshot
+  TRAIN_EPISODES: "16000"    # eval draws from 16000-18685 (paper split)
+  EVAL_N: "50"               # episodes per draw (banked PushT protocol)
+  CKPT_VAL_SEEDS: "48 49 50 51"
+  REPORT_DRAWS: "42 43 44"
+  EVAL_TAG: rh5fixed
+  FIXED_ROW: ""
+  FIXED_STEP: ""
+  BASELINE_SOLVERS: "cem"     # MODE=baseline: sampling/gradient planners to score (cem | mppi | adam ...)
+  BASELINE_COSTS: "latent value"  # latent = the published "latent + CEM" objective; value = this cell's locked teacher
+  EVAL_PAR: "4"              # concurrent snapshot evals per job (PushT eval is CPU-side env + light WM use)
+  SMOKE: "0"
+  # ---- unified recipe (filled by launch_uniB.sh from recipes/uniJ.yaml)
+  UNI_MW: "0.3"
+  UNI_LR: "3e-4"
+  UNI_BATCH: "256"
+  UNI_STEPS: "12000"
+  UNI_CKPT_EVERY: "2000"
+  UNI_MD: "20"
+  UNI_PC: "0.3"
+  UNI_ACR: "0.5"
+  UNI_REPLAY: "0"
+  UNI_EXPAND: "0"
+  UNI_K: "8"
+  UNI_AMAX: "2.5"
+  UNI_REFINER_WIDTH: "512"
+  UNI_REFINER_LAYERS: "2"
+  UNI_GAMMA: "0.98"
+  UNI_NSTEP: "1"
+  UNI_EXPECTILE: "0.1"
+  UNI_EXPECTILE_FINAL: "0.03"
+  UNI_CRITIC_LR: "1e-3"
+  UNI_CRITIC_LR_FINAL: "1e-4"
+  UNI_FREEZE: "0.8"
+  UNI_EMA_TAU: "0.005"
+  UNI_TD_BATCH: "1024"
+  UNI_CRIT_DEPTH: "2"
+  TD_STEPS: "18000"
+  TD_SAVE_EVERY: "3000"
+  UNI_TD_EXPECTILE: "0.03"
+  PANTHEON_USER: armin@pantheon.inc
+
+workdir: .
+
+resources:
+  accelerators: H200:1
+  cpus: 20
+  memory: 230
+  image_id: docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+  labels:
+    telemetry-contract: opt-out
+    telemetry-opt-out-reason: replication-validation
+
+volumes:
+  /checkpoints: checkpoints
+  /newcheckpoints: armin-rlp-checkpoints
+
+setup: |
+  set -euo pipefail
+  sudo apt-get update -qq >/dev/null 2>&1 || apt-get update -qq || true
+  (sudo apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null 2>&1 \
+    || apt-get install -yqq curl git libegl1 libgl1 libosmesa6 >/dev/null) || true
+  command -v $HOME/.pixi/bin/pixi >/dev/null 2>&1 || curl -fsSL https://pixi.sh/install.sh | bash
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  # several pod jobs share one workdir: serialize the (idempotent) env install
+  ( flock 9; pixi install -e default ) 9>~/sky_workdir/.pixi-install.lock
+
+run: |
+  set -uo pipefail
+  export PATH=$HOME/.pixi/bin:$PATH
+  cd ~/sky_workdir
+  export LD_LIBRARY_PATH=$PWD/.pixi/envs/default/lib:${LD_LIBRARY_PATH:-}
+  export MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=${GPU:-0} CUDA_VISIBLE_DEVICES=${GPU:-0}
+  export OMP_NUM_THREADS=${OMP_NUM_THREADS:-8} MKL_NUM_THREADS=${MKL_NUM_THREADS:-8} WANDB_MODE=disabled
+  export RLP_DATA_HOME=${RLP_DATA_HOME:-$CACHE_ROOT/$PANTHEON_USER/rlp-data}
+  mkdir -p "$RLP_DATA_HOME"
+  D=$OUT_ROOT/$PANTHEON_USER/$EXPERIMENT_TAG; mkdir -p "$D/actors" "$D/logs" "$D/report" && chmod 777 "$D" 2>/dev/null || true
+  SD=$D/s$SEED; mkdir -p "$SD/rows" "$SD/runs"
+  CT=${CACHE_TAG:-$EXPERIMENT_TAG}
+  CD=$CACHE_ROOT/$PANTHEON_USER/$CT/caches; mkdir -p "$CD"
+  DRV=$D/grid_driver.log
+  ROWBASE=unig_ctrl_a2.5
+  HZ=${HZ:-25}; BUDGET=$((HZ * 2)); EVH="evaluation.goal_offset_steps=$HZ evaluation.budget=$BUDGET"
+  echo "[node] $(hostname) gpu=${GPU:-0} mode=$MODE seed=$SEED row=${ROW:-} tag=$EXPERIMENT_TAG $(date -u +%FT%TZ)"
+
+  if [ "$SMOKE" = 1 ]; then
+    # 64 short episodes (~22 blocks at fs5) cannot host max_delta 20 (lip_ac needs episodes > max_delta+4 blocks); the
+    # full dataset can (config B ran PushT at 20), so the smoke lowers it
+    TD_STEPS=60; TD_SAVE_EVERY=30; UNI_STEPS=40; UNI_CKPT_EVERY=20; EVAL_N=2; CKPT_VAL_SEEDS="48"; REPORT_DRAWS="42"; TRAIN_EPISODES=64; UNI_MD=10
+  fi
+
+  # ---- dataset (public), serialized across concurrent jobs
+  ( flock 9; pixi run tool tool=fetch_dataset dataset=pusht ) 9>"$RLP_DATA_HOME/.fetch.lock"
+  H5=$RLP_DATA_HOME/datasets/pusht/pusht_expert_train.h5
+  [ -f "$H5" ] || { echo "dataset missing: $H5" >&2; exit 1; }
+
+  # ---- world model
+  if [ "$BASE" = pldm ] || [ -n "${WM_DIR:-}" ]; then
+    [ -n "${WM_DIR:-}" ] && [ -f "$WM_DIR/weights.pt" ] || { echo "BASE=$BASE needs WM_DIR with weights.pt (got '${WM_DIR:-}')" >&2; exit 1; }
+    WM="$WM_DIR"
+  else
+    WM=$CACHE_ROOT/$PANTHEON_USER/$CT/lewm_pusht_official
+    ( flock 9
+      if [ ! -f "$WM/weights.pt" ] || [ ! -f "$WM/config.json" ]; then
+        mkdir -p "$WM"; RAW=$RLP_DATA_HOME/wm_raw_lewm_pusht
+        pixi run hf download quentinll/lewm-pusht weights.pt config.json \
+          --revision 22b330c28c27ead4bfd1888615af1340e3fe9052 --local-dir "$RAW"
+        pixi run tool tool=convert_pldm src="$RAW/weights.pt" dst="$WM/weights.pt"
+        cp "$RAW/config.json" "$WM/config.json"
+      fi
+    ) 9>"$CD/.wm.lock"
+  fi
+  echo "[wm] $WM"
+
+  # ---- latent caches (WM-specific; ~2 h once per base), built by ONE job under a lock
+  ( flock 9
+    if [ ! -f "$CD/counterstrike_fs1.pt" ] || [ ! -f "$CD/counterstrike_fs5.pt" ] || [ ! -f "$CD/counterstrike_actions.h5" ]; then
+      echo "[cache] building latent caches in $CD"
+      RLP_RUN_ROOT=$D/runs_cache pixi run train model=rlp wm="$WM" dataset="$H5" name=counterstrike cache_directory="$CD" \
+        train_episodes=$TRAIN_EPISODES "skip=[value,planner]"
+    fi
+  ) 9>"$CD/.build.lock"
+  for f in counterstrike_fs1.pt counterstrike_fs5.pt counterstrike_actions.h5; do [ -f "$CD/$f" ] || { echo "cache missing: $CD/$f" >&2; exit 1; }; done
+  [ "$MODE" = prepare ] && { echo "[prepare] done"; exit 0; }
+
+  LRF=$(awk -v lr="$UNI_LR" 'BEGIN { printf "%.0e", lr / 10 }')
+  PL="planner.steps=$UNI_STEPS planner.batch=$UNI_BATCH planner.actor_lr=$UNI_LR planner.actor_lr_final=$LRF
+      planner.mean_weight=$UNI_MW planner.max_delta=$UNI_MD planner.p_cross=$UNI_PC planner.replay_prob=$UNI_REPLAY
+      planner.gamma=$UNI_GAMMA planner.n_step=$UNI_NSTEP planner.expectile=$UNI_EXPECTILE planner.expectile_final=$UNI_EXPECTILE_FINAL
+      planner.ac_weight=$UNI_ACR planner.layers=$UNI_REFINER_LAYERS planner.width=$UNI_REFINER_WIDTH
+      planner.critic_lr=$UNI_CRITIC_LR planner.critic_lr_final=$UNI_CRITIC_LR_FINAL planner.td_batch=$UNI_TD_BATCH
+      planner.freeze_critic_frac=$UNI_FREEZE planner.expand_weight=$UNI_EXPAND planner.amax=$UNI_AMAX
+      planner.iterations=$UNI_K planner.ckpt_every=$UNI_CKPT_EVERY +planner.ema_tau=$UNI_EMA_TAU"
+  VL="value.steps=$TD_STEPS value.batch_size=$UNI_TD_BATCH value.gamma=$UNI_GAMMA value.expectile=$UNI_TD_EXPECTILE
+      value.n_step=$UNI_NSTEP value.p_cross=$UNI_PC value.depth=$UNI_CRIT_DEPTH value.save_every=$TD_SAVE_EVERY"
+  COMMON="wm=$WM dataset=$H5 name=counterstrike cache_directory=$CD seed=$SEED train_episodes=$TRAIN_EPISODES"
+
+  latest_run() { ls -dt "$1"/*/* 2>/dev/null | head -1; }
+
+  # stage_row <T> <src checkpoints dir>: rows/t<T>/ + actors/g_pusht_<base>_<row>_s<seed>_step<N>.pt (final = step UNI_STEPS)
+  stage_row() {
+    local T=$1 SRC=$2 RD=$SD/rows/t$1; mkdir -p "$RD"
+    cp "$SRC"/planner_step*.pt "$RD"/ 2>/dev/null || true
+    cp "$SRC/planner.pt" "$RD/planner_step${UNI_STEPS}.pt"
+    for f in "$RD"/planner_step*.pt; do
+      local N; N=$(basename "$f" .pt); N=${N#planner_step}
+      cp -f "$f" "$D/actors/g_pusht_${BASE}_${ROWBASE}_t${T}_s${SEED}_step${N}.pt"
+    done
+    echo "[row] t$T staged: $(ls "$RD" | tr '\n' ' ')"
+  }
+
+  # score_row <T>: every snapshot of rows/t<T> on the validation draws, EVAL_PAR evals at a time
+  score_row() {
+    local T=$1 RD=$SD/rows/t$1 NM=${ROWBASE}_t$1 CKV=$D/logs/g_${ROWBASE}_t${1}_s${SEED}_ckptval.log
+    : > "$CKV"
+    local BEST="" BESTV="-1" jobs=0
+    for CK in "$RD"/planner_step*.pt; do
+      local N; N=$(basename "$CK" .pt); N=${N#planner_step}
+      for VS in $CKPT_VAL_SEEDS; do
+        ( RLP_RUN_ROOT=$SD/runs/eval_t$T pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+            runtime.seed=$VS evaluation.num_episodes=$EVAL_N evaluation.episode_range="16000:18685" $EVH \
+            core/solver=lip core.solver.actor_path="$CK" > "$D/logs/ckv_${NM}_s${SEED}_step${N}_e${VS}.log" 2>&1
+          V=$(grep -oE "'success_rate': [0-9.]+" "$D/logs/ckv_${NM}_s${SEED}_step${N}_e${VS}.log" | tail -1 | grep -oE "[0-9.]+")
+          echo "${N} ${VS} ${V:-FAIL}" >> "$CKV.parts" ) &
+        jobs=$((jobs+1)); [ "$jobs" -ge "$EVAL_PAR" ] && { wait -n 2>/dev/null || wait; jobs=$((jobs-1)); }
+      done
+    done
+    wait
+    for CK in "$RD"/planner_step*.pt; do
+      local N; N=$(basename "$CK" .pt); N=${N#planner_step}
+      local F=g_pusht_${BASE}_${NM}_s${SEED}_step${N}.pt
+      local M; M=$(awk -v n="$N" '$1==n && $3!="FAIL"{s+=$3; c++} END{if(c>0) printf "%.2f", s/c}' "$CKV.parts")   # success_rate is already in percent
+      local CELLS; CELLS=$(awk -v n="$N" -v hz="$HZ" '$1==n{printf "rh5_h%s_s%s=%s ", hz, $2, $3}' "$CKV.parts")
+      echo "[ckptval] $NM s$SEED $F $CELLS" | tee -a "$CKV" >> "$DRV"
+      if [ "$HZ" = 100 ]; then H25V=na; H100V=${M:-na}; else H25V=${M:-na}; H100V=na; fi
+      echo "[ckpt-select] $NM s$SEED $F val=${M:-none} h25=$H25V h100=$H100V" | tee -a "$CKV" | tee -a "$DRV"
+      if [ -n "$M" ] && awk -v m="$M" -v b="$BESTV" 'BEGIN{exit !(m>b)}'; then BESTV=$M; BEST=$F; fi
+    done
+    if [ -n "$BEST" ]; then
+      cp -f "$D/actors/$BEST" "$D/actors/g_pusht_${BASE}_${NM}_s${SEED}.pt"
+      echo "[ckpt-select] $NM s$SEED winner $BEST (val $BESTV) -> deployed" | tee -a "$DRV"
+    fi
+    touch "$RD/scored"
+  }
+
+  train_teacher_row() {   # teacher (with snapshots) + the t<TD_STEPS> actor row
+    if [ ! -f "$SD/train_checkpoints/value_td/config.json" ] && [ ! -d "$SD/train_checkpoints/value_td" ]; then
+      RLP_RUN_ROOT=$SD/runs/teacher pixi run train model=rlp $COMMON "skip=[cache,subsample,actions]" $VL $PL \
+        > "$D/logs/train_teacher_s${SEED}.log" 2>&1 || { echo "[train-fail] teacher s$SEED:"; tail -40 "$D/logs/train_teacher_s${SEED}.log"; return 1; }
+      RUN=$(latest_run "$SD/runs/teacher"); rm -rf "$SD/train_checkpoints"; cp -r "$RUN/checkpoints" "$SD/train_checkpoints"
+      echo "[teacher] s$SEED snapshots: $(ls -d "$SD"/train_checkpoints/value_td* | xargs -n1 basename | tr '\n' ' ')"
+    fi
+    stage_row "$TD_STEPS" "$SD/train_checkpoints"
+    touch "$SD/teacher.done"
+    [ -f "$SD/rows/t$TD_STEPS/scored" ] || score_row "$TD_STEPS"
+  }
+
+  train_row() {   # $1 = T (teacher snapshot budget)
+    local T=$1 TEACHER=$SD/train_checkpoints/value_td_step$1 WAITED=0
+    until [ -d "$TEACHER" ] && [ -f "$SD/teacher.done" ] || [ -f "$SD/train_checkpoints/value_td_step$1/config.json" ]; do
+      [ "$WAITED" -ge "$WAIT_TEACHER_MIN" ] && { echo "[row] t$T: teacher snapshot missing after ${WAITED}m: $TEACHER" >&2; return 1; }
+      echo "[row] t$T waiting for $TEACHER (${WAITED}m)"; sleep 300; WAITED=$((WAITED+5))
+    done
+    if [ ! -f "$SD/rows/t$T/planner_step${UNI_STEPS}.pt" ]; then
+      RLP_RUN_ROOT=$SD/runs/t$T pixi run train model=rlp $COMMON "skip=[cache,subsample,actions,value]" teacher="$TEACHER" $PL \
+        > "$D/logs/train_t${T}_s${SEED}.log" 2>&1 || { echo "[train-fail] t$T s$SEED:"; tail -40 "$D/logs/train_t${T}_s${SEED}.log"; return 1; }
+      RUN=$(latest_run "$SD/runs/t$T"); stage_row "$T" "$RUN/checkpoints"
+    fi
+    [ -f "$SD/rows/t$T/scored" ] || score_row "$T"
+  }
+
+  SNAPS=""; t=$TD_SAVE_EVERY; while [ "$t" -lt "$TD_STEPS" ]; do SNAPS="$SNAPS $t"; t=$((t+TD_SAVE_EVERY)); done
+  case "$MODE" in
+    teacher) train_teacher_row || exit 1 ;;
+    row)     [ -n "$ROW" ] || { echo "MODE=row needs ROW=t<T>" >&2; exit 2; }; train_row "${ROW#t}" || exit 1 ;;
+    all)     train_teacher_row || exit 1; for T in $SNAPS; do train_row "$T" || exit 1; done ;;
+    all_par) # cluster: one multi-GPU job per seed -- teacher (+ t<TD_STEPS> row) first, then the other rows in parallel,
+             # one per GPU slot (GPU = slot index), staggered starts
+      train_teacher_row || exit 1
+      NG=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' '); [ "${NG:-0}" -ge 1 ] || NG=1
+      i=0; PIDS=""; for T in $SNAPS; do
+        ( export CUDA_VISIBLE_DEVICES=$((i % NG)) MUJOCO_EGL_DEVICE_ID=$((i % NG)); train_row "$T" ) > "$D/logs/row_t${T}_s${SEED}.out" 2>&1 &
+        PIDS="$PIDS $!"; i=$((i+1)); sleep 20
+        # at most NG rows at a time
+        while [ "$(jobs -rp | wc -l)" -ge "$NG" ]; do sleep 30; done
+      done
+      RC=0; for pid in $PIDS; do wait $pid || RC=1; done
+      for T in $SNAPS; do tail -n 2 "$D/logs/row_t${T}_s${SEED}.out"; done
+      [ "$RC" = 0 ] || { echo "[all_par] a row failed" >&2; exit 1; } ;;
+    baseline)
+      # planner baselines with no actor: CEM (and friends) on the latent objective and on this cell's locked teacher
+      [ -n "$FIXED_ROW" ] || { echo "MODE=baseline needs FIXED_ROW=t<T> (the locked teacher budget)" >&2; exit 2; }
+      TB=${FIXED_ROW#t}
+      OUTC=$D/report/baseline_s${SEED}_${EVAL_TAG}.csv; : > "$OUTC"
+      for SOLV in $BASELINE_SOLVERS; do
+        for COST in $BASELINE_COSTS; do
+          VFLAG=""
+          if [ "$COST" = value ]; then
+            CRIT=$SD/train_checkpoints/value_td_step${TB}
+            [ "$TB" = "$TD_STEPS" ] && CRIT=$SD/train_checkpoints/value_td
+            [ -d "$CRIT" ] || { echo "[baseline] missing teacher $CRIT" >&2; exit 2; }
+            VFLAG="core/value=metric core.value.mode=replacement core.value.checkpoints=[$CRIT]"
+          fi
+          BS=10; [ "$SOLV" = adam ] && BS=1
+          for ES in $REPORT_DRAWS; do
+            LG=$D/logs/base_${SOLV}_${COST}_s${SEED}_e${ES}.log
+            RLP_RUN_ROOT=$SD/runs/baseline pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+              runtime.seed=$ES evaluation.num_episodes=$EVAL_N evaluation.episode_range="16000:18685" $EVH \
+              core/solver=$SOLV core.solver.batch_size=$BS $VFLAG > "$LG" 2>&1
+            V=$(grep -oE "'success_rate': [0-9.]+" "$LG" | tail -1 | grep -oE "[0-9.]+")
+            SR=$(awk -v v="${V:-}" 'BEGIN{if(v=="") print "FAIL"; else printf "%.1f", v}')
+            echo "${SOLV},${COST},s${SEED},e${ES},${SR}" >> "$OUTC"
+            echo "[cell] baseline_${SOLV}_${COST}_h${HZ}_s${ES} = ${SR}   (seed ${SEED}, teacher ${TB})" | tee -a "$DRV"
+          done
+        done
+      done ;;
+    report)
+      [ -n "$FIXED_ROW" ] && [ -n "$FIXED_STEP" ] || { echo "MODE=report needs FIXED_ROW=t<T> FIXED_STEP=<N>" >&2; exit 2; }
+      CK=$SD/rows/$FIXED_ROW/planner_step${FIXED_STEP}.pt; [ -f "$CK" ] || { echo "missing $CK" >&2; exit 1; }
+      OUTC=$D/report/${ROWBASE}_${FIXED_ROW}_s${SEED}_step${FIXED_STEP}_${EVAL_TAG}.csv; : > "$OUTC"
+      for ES in $REPORT_DRAWS; do
+        RLP_RUN_ROOT=$SD/runs/report pixi run eval model=pusht_lewm core.world_model.checkpoint="$WM" \
+          runtime.seed=$ES evaluation.num_episodes=$EVAL_N evaluation.episode_range="16000:18685" $EVH \
+          core/solver=lip core.solver.actor_path="$CK" > "$D/logs/report_${FIXED_ROW}_s${SEED}_step${FIXED_STEP}_e${ES}.log" 2>&1
+        V=$(grep -oE "'success_rate': [0-9.]+" "$D/logs/report_${FIXED_ROW}_s${SEED}_step${FIXED_STEP}_e${ES}.log" | tail -1 | grep -oE "[0-9.]+")
+        SR=$(awk -v v="${V:-}" 'BEGIN{if(v=="") print "FAIL"; else printf "%.1f", v}')   # already percent
+        echo "${ROWBASE}_${FIXED_ROW},s${SEED},step${FIXED_STEP},e${ES},${SR}" >> "$OUTC"
+        echo "[cell] ${EVAL_TAG}_h${HZ}_s${ES} = ${SR}   (${ROWBASE}_${FIXED_ROW} s${SEED} step${FIXED_STEP})" | tee -a "$DRV"
+      done ;;
+    *) echo "unknown MODE=$MODE" >&2; exit 2 ;;
+  esac
+  echo "[done] mode=$MODE seed=$SEED row=${ROW:-} $(date -u +%FT%TZ)"

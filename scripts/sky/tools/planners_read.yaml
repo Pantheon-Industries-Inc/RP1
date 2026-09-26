@@ -1,0 +1,17 @@
+# Read-only: dump the GRID=planners result CSVs (latent_planners.csv / value_planners.csv) of the given tags.
+name: planners-read
+envs:
+  TAGS: ""
+  PANTHEON_USER: armin@pantheon.inc
+resources: {cpus: 2, memory: 8, image_id: "docker:pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel"}
+volumes:
+  /checkpoints: armin-rlp-checkpoints
+run: |
+  set -u
+  for t in $TAGS; do
+    for f in /checkpoints/$PANTHEON_USER/$t/results/latent_planners.csv /checkpoints/$PANTHEON_USER/$t/results/value_planners.csv /checkpoints/$PANTHEON_USER/$t/results/latched_measurements.csv; do
+      [ -f "$f" ] || continue
+      echo "=== CSV $t $(basename $f)"; cat "$f"; echo "=== END CSV"
+    done
+  done
+  echo "[planners-read] done"

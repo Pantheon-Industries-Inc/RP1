@@ -18,6 +18,7 @@ envs:
   ITER: "1"
   ACTOR_TAG: rlp-cu-v2l05-20260902     # volume tag holding actors/ + values/ (3 finals)
   ACTOR_GLOB: "g_cube_lewm_unig_ctrl_a2.5_s*.pt"
+  NACTORS: "3"                # how many finals to collect with (uniJ shared-pair import: 6)
   WM_SRC: ""                  # "" = base WM from the LFS stage; else a volume dir with one .pt + config.json
   OUT_TAG: rlp-cu-dyna2-lewm-it1-20260903
   NCALL: "12"                 # collection calls per (actor, offset), 50 episodes each
@@ -160,14 +161,14 @@ setup: |
   df -h /mnt/raid0 | tail -1
   # ---- actors (+ tandem critics) from the volume; repath a final-won ck["value"]
   AR=/checkpoints/${PANTHEON_USER}/${ACTOR_TAG}
-  ls $AR/actors/$ACTOR_GLOB | grep -v _step | head -3 | while read f; do cp "$f" ~/ga/; done
+  ls $AR/actors/$ACTOR_GLOB | grep -v _step | head -${NACTORS:-3} | while read f; do cp "$f" ~/ga/; done
   cp $AR/values/*_value.pt ~/gm/ 2>/dev/null || true
   python3 - <<'PY'
   import glob, os, torch
   from stable_worldmodel.trm import load_metric
   n_fix = 0
   acts = sorted(glob.glob(os.path.expanduser('~/ga/*.pt')))
-  assert len(acts) == 3, acts
+  assert len(acts) >= 1, acts   # config B: 3 finals; uniJ: the six shared-pair actors (NACTORS=6)
   for f in acts:
       ck = torch.load(f, map_location='cpu', weights_only=False)
       v = ck.get('value'); ok = os.path.isfile(v) if isinstance(v, str) else False
@@ -180,7 +181,7 @@ setup: |
           ck['value'] = cand; torch.save(ck, f); n_fix += 1
       ta = ck.get('train_args', {})
       print(f"[actor] {os.path.basename(f)} amax={ta.get('amax')} md={ta.get('max_delta')} iters={ta.get('iters')} ac={ta.get('ac_weight')}", flush=True)
-  print(f'[value-fixup] repathed {n_fix}/3')
+  print(f'[value-fixup] repathed {n_fix}/{len(acts)}')
   PY
   echo "[setup] dyna2 ready"
 

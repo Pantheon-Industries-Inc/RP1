@@ -129,7 +129,7 @@ def run_hydra[ResultT](
             del overrides[index]
     with initialize_config_dir(config_dir=str(get_config_root()), version_base=None):
         cfg = compose(config_name=config_name, overrides=overrides)
-    paths = RunPaths.create()
+    paths = RunPaths.create(root=os.environ.get("RLP_RUN_ROOT", "logs"))
     paths.attach(cfg)
     level = str(cfg.logging.level)
     with configured_logging(paths.log, level):
