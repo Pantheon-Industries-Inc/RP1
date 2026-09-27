@@ -1,6 +1,6 @@
 # rp1
 
-rp1 is the reference implementation of RLP from *Reinforcement Learned Planning with Latent World Models*.
+rp1 is the reference implementation of RP1 from *Reinforcement Learned Planning with Latent World Models*.
 
 On top of a frozen, pretrained latent world model, rp1 trains two things: a goal-conditioned quasimetric
 value, and a planner network that refines an action plan by following that value's gradient through the
