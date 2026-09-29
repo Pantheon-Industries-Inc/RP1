@@ -1,58 +1,99 @@
 # Replicating the paper
 
-How the paper's method and tables map to this repository's commands. Setup is in the
+How the paper's method, configuration and protocol map to this repository's commands. Setup is in the
 [README](../../README.md); every command runs from the repository root.
 
 | Paper | Code |
 |---|---|
-| Plan refiner `F_theta` (Eq. 10–13) | `rp1.core.agent.planner.PlannerNet`, trained by `rp1.training.phases.agent.rp1_ac` |
-| Goal-conditioned quasimetric value `V` (Eq. 4, App. B.1) | `rp1.core.agent.value.QuasimetricHead`, trained offline by `rp1.training.phases.agent.metric` and co-trained in `rp1_ac` |
+| Plan refiner `F_theta` (Sec. 4, App. C.2) | `rp1.methods.rp1.net.PlannerNet`, trained by `rp1.methods.rp1.train` |
+| Goal-conditioned MRN critic `V_psi` (App. C.1) | `rp1.core.agent.value.QuasimetricHead`, trained offline by `rp1.training.phases.agent.metric` and co-trained in `rp1.methods.rp1.train` |
 | Frozen world-model rollout `H_phi` (Eq. 1) | `rp1.core.world_model.rollout` |
-| rp1 at plan time | `rp1.core.agent.solver.RP1Solver` (`core/agent/solver=rp1`) |
-| Baselines CEM / MPPI / Adam | `core/agent/solver=cem`, `mppi`, `adam` |
-| Latent vs. value objective (Sec. 6, App. C) | `core/agent/value=latent` vs. `core/agent/value=metric` |
-| No-move floor (Cube skill normalization) | `core/agent/policy=no_move` |
+| RP1 at plan time | `rp1.methods.rp1.solver.RP1Solver` (`core/agent/solver=rp1`) |
+| The RP1 configuration (Tab. 6) | the defaults of `configs/training/posttrain.yaml` and `configs/methods/rp1/` |
+| Checkpoint selection (App. D.1, Tab. 5) | `pixi run select` (`rp1.inference.selection`) |
+| Baselines CEM / MPPI / Adam (App. D.5) | `core/agent/solver=cem`, `mppi`, `adam` |
+| Latent vs. value objective | `core/agent/value=latent` vs. `core/agent/value=metric` |
+| No-op floor (Cube) | `core/agent/policy=no_move` |
 | DMPO and L2O-MPC baselines | [DMPO](../dmpo/README_dmpo.md), [L2O-MPC](../l2o/README_l2o.md) |
 
-## 1. Training the agent
+## 1. The configuration
 
-`posttrain` runs the full agent pipeline against a frozen world model: latent caches at one and at
-`frameskip` primitive steps per row, the action h5, the offline quasimetric value, and actor-critic
-training of the planner. Its defaults are the recipe shared by every environment.
+Every RP1 result uses one configuration across environments and world models (Tab. 6). It is the default
+of `posttrain`, so a cell needs no recipe overrides. Two settings follow from the task rather than the
+recipe:
+
+- **the discount** of the offline value and the co-trained critic is set by the evaluation horizon:
+  `training.gamma=0.98` (the default) for h25 and `training.gamma=0.99` for h100, so each TwoRoom and Cube
+  cell is two agents, one per horizon;
+- **Reacher's value reads two frames** (`training.value.window_frames=2 training.value.window_lag=5`),
+  since joint velocity is not observable from one. The paper also standardizes Reacher's latents; this
+  repository does not implement that step.
+
+## 2. Training one agent
+
+`posttrain` runs the agent pipeline against a frozen world model: latent caches at one and at `frameskip`
+primitive steps per row, the action h5, the offline value, and actor-critic training of the planner.
+Training uses episodes 0–7999 (`training.train_episodes=8000`).
 
 ```bash
 pixi run prepare job=fetch_dataset preparation.dataset=ogb_cube
 pixi run posttrain \
     training.wm=assets/core/world_model/cube_lewm \
     training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
-    training.name=cube_lewm training.planner.action_limit=1.6
+    training.name=cube_lewm runtime.seed=0
 ```
 
-The run's `checkpoints/` holds `value_td` (the offline value), `value_ac` (the co-trained teacher) and
-`planner.pt`, which refers to `value_ac`. Caches go to `$RP1_DATA_HOME/caches/`, so
-`training.stages=[value,planner]` iterates on the recipe without re-encoding.
+The run's `checkpoints/` holds the offline value `value_td` with a snapshot `value_td_step<N>` every
+3,000 steps, and the planner `planner.pt` with a snapshot `planner_step<N>.pt` every 2,000 steps, next to
+`value_ac`, the co-trained critic the planner deploys with. Caches go to `$RP1_DATA_HOME/caches/`, named
+after `training.name`; give each world model its own name. A planner checkpoint records its training seed,
+its step and the offline value it was trained against.
 
-What differs per environment:
+## 3. A reported cell: training grid and checkpoint selection
 
-| cell | overrides |
-|---|---|
-| Cube LeWM | `training.planner.action_limit=1.6` |
-| Cube PLDM | `training.planner.action_limit=4.5` |
-| TwoRoom | `training.planner.max_delta=12 training.planner.replay_prob=0 training.value.gamma=1.0 training.value.expectile=0.1 training.value.n_step=50 training.value.steps=6000`, with the action limit, mean weight and actor learning rate of each cell from App. C.1 |
-| Reacher | `training.planner.steps=1000 training.planner.batch=128 training.planner.max_delta=12 training.planner.expand_weight=0 training.planner.replay_prob=0.5`; LeWM `action_limit=2.2 mean_weight=0.3 actor_lr=1e-4 actor_lr_final=1e-5`, PLDM `action_limit=1.8 mean_weight=0.5 actor_lr=3e-4 actor_lr_final=3e-5` (all under `training.planner.`); a three-frame window value (`training.value.window_frames=3 training.value.window_lag=5 training.value.expectile=0.05 training.value.gamma=0.98`) |
+A reported number is not the last iterate of one run. The paper trains six seeds, each with one planner
+per teacher snapshot, and selects a single (teacher snapshot, planner step) pair per cell on the selection
+draws 48–51, scored as the mean over seeds and draws. Ties go to the smaller teacher budget, then the
+earlier planner step. The selected pair is then evaluated on the report draws 42–44, and the cell reports
+the median over the six seeds of each seed's mean. Selection draws are never used for reported numbers.
 
-The vendored agents in `assets/core/agent/` are the paper's: Cube per world model and seed, TwoRoom per
-world model, recipe variant (`a<action limit>_m<mean weight>_l<learning rate>`) and seed.
+For one seed:
 
-## 2. Evaluating a table cell
+```bash
+common="training.wm=assets/core/world_model/cube_lewm training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance training.name=cube_lewm runtime.seed=$SEED"
+# the caches and the offline value with its snapshots
+pixi run posttrain $common "training.stages=[cache,subsample,actions,value]" logging.run_root=grid/s$SEED/teacher
+# one planner per teacher snapshot
+for teacher in grid/s$SEED/teacher/*/*/checkpoints/value_td*; do
+    pixi run posttrain $common "training.stages=[planner]" training.teacher=$teacher \
+        logging.run_root=grid/s$SEED/planner_$(basename $teacher)
+done
+# every planner checkpoint on every selection and report draw
+for planner in grid/s$SEED/planner_*/*/*/checkpoints/planner*.pt; do
+    for draw in 48 49 50 51 42 43 44; do
+        pixi run evaluate benchmark=cube_lewm runtime.seed=$draw core/agent/solver=rp1 \
+            core.agent.solver.checkpoint.path=$planner logging.run_root=evaluations
+    done
+done
+```
 
-Each `evaluate` run is one environment × world model × planner × objective × horizon cell. The
-benchmark sets the environment and world model; `benchmark.goal_offset_steps=25 planning.budget=50`
-is h25 and `benchmark.goal_offset_steps=100 planning.budget=200` is h100. Report seeds are 42, 43 and
-44 (`runtime.seed`), 50 episodes each; seeds 50 and 51 were used for selection only.
+Once every seed is evaluated:
 
-Every environment, Reacher included, runs open loop: the whole plan executes before the next decision
-(`planning.receding_horizon=5`).
+```bash
+pixi run select "selection.runs=[evaluations]"
+```
+
+`select` prints each complete pair's selection score, marks the chosen one, and writes the chosen pair,
+the per-seed report means and their median to `metrics/selection.json`. A pair missing a seed or a draw
+is left out.
+
+## 4. Evaluating
+
+Each `evaluate` run is one environment × world model × planner × objective × horizon × draw. The benchmark
+sets the environment, the world model and the held-out episodes 8000–9999;
+`benchmark.goal_offset_steps=25 planning.budget=50` is h25 (the default) and
+`benchmark.goal_offset_steps=100 planning.budget=200` is h100. Every planner runs open loop, replanning
+every 5 chunks (`planning.receding_horizon=5`). Each run writes `metrics/metrics.json`.
 
 ```bash
 pixi run evaluate benchmark=cube_lewm core/agent/solver=rp1 core.agent.solver.checkpoint.path=<planner.pt>
@@ -64,11 +105,17 @@ pixi run evaluate benchmark=cube_lewm core/agent/solver=cem \
 pixi run evaluate benchmark=cube_lewm core/agent/policy=no_move
 ```
 
-The other benchmarks are `cube_pldm`, `tworoom_lewm`, `tworoom_pldm`, `reacher_lewm` and
-`reacher_pldm`. On Linux GPU nodes MuJoCo renders with `MUJOCO_GL=egl`; pin `MUJOCO_EGL_DEVICE_ID` and
-run one evaluation per GPU.
+The other benchmarks are `cube_pldm`, `tworoom_lewm`, `tworoom_pldm`, `reacher_lewm` and `reacher_pldm`.
+On Linux GPU nodes MuJoCo renders with `MUJOCO_GL=egl` and a pinned `MUJOCO_EGL_DEVICE_ID`. Check that
+the pinned device is the GPU: a node can also list a software renderer. Run one evaluation per GPU, and not
+beside a training process on the same GPU, where NVIDIA EGL can abort.
 
-## 3. World models
+The vendored agents in `assets/core/agent/` predate the configuration of Tab. 6: they are the final
+iterates of an earlier recipe, without checkpoint selection. On Cube they score 86.0, 86.7 and 88.0 (LeWM
+seeds 0–2) and 82.0 (PLDM seed 0) on the report draws, which makes them a check of the evaluation stack,
+not a replication of the paper's numbers.
+
+## 5. World models
 
 The LeWM Cube world model can be trained from scratch; [cube/REPLICATION_CUBE.md](cube/REPLICATION_CUBE.md)
 records the dataset fingerprint, the training command and the pitfalls. For TwoRoom and Reacher, train
@@ -92,28 +139,19 @@ pixi run prepare job=convert_pldm preparation.src=<pldm.pt> preparation.dst=<out
 The public Reacher h5 pads each episode's terminal step with NaN actions, so any normalization of its
 actions must ignore NaNs; the trainers here do.
 
-## 4. The Dyna round (Tab. 3, block d)
+## 6. Dyna (App. D.4)
 
-The Dyna-finetuned Cube world models are vendored, so `benchmark=cube_lewm_dyna` and
-`benchmark=cube_pldm_dyna` evaluate row (d) with any planner, and `posttrain` with
-`training.wm=assets/core/world_model/cube_lewm_dyna` retrains its agents. Regenerating the finetuned
-world models is a procedure:
+The Dyna-finetuned Cube world models are vendored: `benchmark=cube_lewm_dyna` and
+`benchmark=cube_pldm_dyna` evaluate them with any planner, and `posttrain` with
+`training.wm=assets/core/world_model/cube_lewm_dyna` retrains their agents. A Dyna round is a procedure:
 
-1. collect episodes with the trained planner on h25 tasks from the training split (episodes 0–7999),
-   without terminating at the goal, recording observations and actions;
+1. collect episodes with the previous round's planners (all six seeds) on training-split tasks, 1,800 at
+   h25 and 1,800 at h100;
 2. mix them 50:50 with the offline data;
-3. finetune the world model on the mixture for two epochs at learning rate 1e-5 and keep the first epoch
-   (`pixi run pretrain training.initial_weights=<base>` on the mixed dataset);
-4. retrain the value and planner on the finetuned world model with the unchanged recipe, from fresh
-   caches.
+3. finetune the world model for one epoch at learning rate 1e-5 from the previous round's model
+   (`pixi run pretrain training.initial_weights=<base>` on the mixture);
+4. retrain RP1 on the finetuned model at the cell's selected teacher budget and planner step.
 
-## 5. Data splits
-
-- **Cube and Reacher**: the agent trains on episodes 0–7999 (`training.train_episodes=8000`) and
-  evaluation draws tasks from episodes 8000–9999, as the benchmarks set.
-- **TwoRoom**: the LeWM/DINO-WM protocol, where training and evaluation share the full pool. Every
-  planner draws from the same pool, so comparisons within a table hold. For a held-out split, train with
-  `training.train_episodes=8000` and evaluate with `benchmark.episode_range="8000:10000"`.
-
-A reported rp1 cell averages three independently trained agents (`runtime.seed=0,1,2`; six for Reacher),
-each evaluated on the report seeds. A single agent seed is a smoke test, not a replication.
+The paper's finetuning also adds a latent anchor, `||enc_ft(x) - enc_prev(x)||^2` at weight 1.0 on every
+frame; `pretrain` does not implement it. The paper reports Dyna at h25, round 1 for LeWM and round 2 for
+PLDM.

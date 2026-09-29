@@ -114,6 +114,12 @@ class LatentCache:
         )
         logger.success(f"Saved latent cache ({len(self.z)} rows, dim={self.latent_dim}) to {path}")
 
+    @staticmethod
+    def read_meta(path: str | Path) -> dict[str, object]:
+        """The metadata of a saved cache, without reading its latents."""
+        meta = torch.load(path, map_location="cpu", weights_only=False, mmap=True).get("meta")
+        return dict(meta or {})
+
     @classmethod
     def load(cls, path: str | Path, *, mmap: bool) -> LatentCache:
         d = torch.load(path, map_location="cpu", weights_only=False, mmap=mmap)

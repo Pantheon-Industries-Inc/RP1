@@ -14,6 +14,7 @@ Example::
         training.learner=regression training.scale=100
 """
 
+import numpy as np
 from omegaconf import DictConfig
 from torch import nn
 
@@ -30,7 +31,8 @@ from rp1.utils.logging import logger
 
 
 def run(cfg: DictConfig) -> None:
-    args = phase_config(cfg, "training", cfg.core.agent.value)
+    args = phase_config(cfg, "training")
+    value = cfg.core.agent.value  # the architecture; ``args`` holds the training settings
 
     device = pick_device(args.device)
     base_cache = LatentCache.load(args.cache, mmap=bool(args.cache_mmap)).first_episodes(args.max_episodes)
@@ -43,16 +45,14 @@ def run(cfg: DictConfig) -> None:
     elif args.learner in ("regression", "shuffled"):
         scale = args.scale
         if scale is None:  # about the episode horizon, so the targets are not dwarfed
-            import numpy as np
-
-            lens = [len(r) for r in cache.episodes().values()]
-            scale = float(np.percentile(lens, 90))
+            lengths = [len(rows) for rows in cache.episodes().values()]
+            scale = float(np.percentile(lengths, 90))
         regression_cfg = RegressionConfig(
-            hidden_dim=args.hidden_dim,
-            depth=args.depth,
+            hidden_dim=value.hidden_dim,
+            depth=value.depth,
             scale=scale,
-            softplus=args.softplus,
-            symmetric=args.symmetric,
+            softplus=value.softplus,
+            symmetric=value.symmetric,
             lr=args.learning_rate,
             weight_decay=args.weight_decay,
             batch_size=args.batch_size,
@@ -66,10 +66,10 @@ def run(cfg: DictConfig) -> None:
         module = learners.regression.fit(cache, regression_cfg, device)
     elif args.learner == "td":
         td_cfg = TDConfig(
-            head=args.head,
-            hidden_dim=args.hidden_dim,
-            depth=args.depth,
-            embed_dim=args.embedding_dim,
+            head=value.head,
+            hidden_dim=value.hidden_dim,
+            depth=value.depth,
+            embed_dim=value.embedding_dim,
             n_step=args.n_step,
             gamma=args.gamma,
             expectile=args.expectile,
@@ -85,15 +85,11 @@ def run(cfg: DictConfig) -> None:
             weight_decay=args.weight_decay,
             tau=args.target_update_rate,
             huber_beta=args.huber_beta,
-            symmetric=args.symmetric,
-            eikonal_weight=args.eikonal_weight,
-            num_components=args.num_components,
-            rank_weight=args.rank_weight,
-            rank_margin=args.rank_margin,
-            rank_max_delta=args.rank_max_delta,
-            softplus=args.softplus,
-            sym_frac=args.sym_frac,
-            alpha_init=args.alpha_init,
+            symmetric=value.symmetric,
+            num_components=value.num_components,
+            softplus=value.softplus,
+            sym_frac=value.sym_frac,
+            alpha_init=value.alpha_init,
             near_frac=args.near_frac,
             near_max=args.near_max,
         )
@@ -105,9 +101,9 @@ def run(cfg: DictConfig) -> None:
         module = learners.td.fit(cache, td_cfg, device, snapshot)
     else:  # contrastive
         contrastive_cfg = ContrastiveConfig(
-            hidden_dim=args.hidden_dim,
-            rep_dim=args.representation_dim,
-            depth=args.depth,
+            hidden_dim=value.hidden_dim,
+            rep_dim=value.representation_dim,
+            depth=value.depth,
             gamma=args.contrastive_gamma,
             temperature=args.temperature,
             lr=args.learning_rate,

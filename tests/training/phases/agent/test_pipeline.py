@@ -103,23 +103,29 @@ def test_architecture_overrides_configure_the_value_and_planner_groups(
         monkeypatch,
         tmp_path,
         "training.stages=[value,planner]",
-        "training.value.eikonal_weight=0.5",
+        "training.value.head=iqe",
         "training.value.depth=1",
         "training.value.save_every=100",
         "training.planner.iterations=4",
     )
     value, planner = seen["value"], seen["planner"]
-    assert value["core.agent.value.eikonal_weight"] == 0.5
+    assert value["core.agent.value.head"] == "iqe"
     assert value["core.agent.value.depth"] == 1
     assert value["training.save_every"] == 100
-    assert "training.eikonal_weight" not in value
+    assert "training.head" not in value
     assert planner["core.agent.planner.iterations"] == 4
-    assert planner["core.agent.planner.action_limit"] == 2.5
+    assert "core.agent.planner.action_limit" not in planner  # the method's own setting stands
+
+
+def test_one_discount_sets_both_critics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen = _captured_stages(monkeypatch, tmp_path, "training.stages=[value,planner]", "training.gamma=0.99")
+    assert seen["value"]["training.gamma"] == 0.99
+    assert seen["planner"]["training.gamma"] == 0.99
 
 
 def test_unset_overrides_are_not_forwarded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     seen = _captured_stages(monkeypatch, tmp_path, "training.stages=[value]")
-    assert "core.agent.value.eikonal_weight" not in seen["value"]
+    assert "core.agent.value.head" not in seen["value"]
     assert seen["value"]["training.learner"] == "td"
 
 
@@ -133,3 +139,25 @@ def test_a_teacher_replaces_the_value_stage(monkeypatch: pytest.MonkeyPatch, tmp
     assert str(seen["planner"]["training.cache"]).endswith("rp1_fs5p5.pt")
     with pytest.raises(SystemExit):
         _captured_stages(monkeypatch, tmp_path, f"training.teacher={teacher}")
+
+
+def test_a_reused_cache_of_another_world_model_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    caches = tmp_path / "caches"
+    caches.mkdir()
+    step = torch.arange(20, dtype=torch.int64)
+    LatentCache(z=torch.randn(20, 4), episode_idx=step // 10, step_idx=step % 10, meta={"wm": "wm/lewm"}).save(
+        caches / "tworoom_fs1.pt"
+    )
+    monkeypatch.chdir(tmp_path)
+    arguments = [
+        "rp1",
+        "training.dataset=unused",
+        "training.name=tworoom",
+        f"training.cache_directory={caches}",
+        "training.stages=[]",
+    ]
+    monkeypatch.setattr(sys, "argv", [*arguments, "training.wm=wm/lewm"])
+    run_hydra(lambda cfg: pipeline.run(cfg), config_dir="training", config_name="posttrain")
+    monkeypatch.setattr(sys, "argv", [*arguments, "training.wm=wm/pldm"])
+    with pytest.raises(SystemExit):
+        run_hydra(lambda cfg: pipeline.run(cfg), config_dir="training", config_name="posttrain")

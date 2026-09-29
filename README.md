@@ -65,10 +65,20 @@ value with `core/agent/value=metric core.agent.value.checkpoints=[<value>]`, and
 `core/agent/policy=no_move`. [docs/replication/REPLICATION.md](docs/replication/REPLICATION.md) maps
 the paper's tables to these commands.
 
-## Cluster runs
+## Methods
 
-`configs/training/cluster/` holds SkyPilot specs, launched from the `cluster` environment; its README
-lists what to adapt to your infrastructure.
+A learned planning method is one package, `src/rp1/methods/<name>/` (`net.py`, `train.py`, `solver.py`),
+configured by one directory, `configs/methods/<name>/` (`net.yaml`, `train.yaml`, `solver.yaml`). The agent
+pipeline shares the cache and value stages across methods and hands the planner stage to the one selected:
+
+```bash
+pixi run posttrain training.method=rp1 training.wm=<world model> training.dataset=<dataset>
+pixi run posttrain --config-name /methods/rp1/train training.cache=<cache> ...   # the method's trainer alone
+pixi run evaluate benchmark=cube_lewm core/agent/solver=rp1 core.agent.solver.checkpoint.path=<planner.pt>
+```
+
+A new method starts as a copy of `methods/rp1` in both trees, plus a `configs/core/agent/solver/<name>.yaml`
+that includes its `solver.yaml`.
 
 ## Development
 

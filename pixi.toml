@@ -9,6 +9,7 @@ version = "0.1.0"
 pretrain = "python -m rp1.training.pretrain"
 posttrain = "python -m rp1.training.posttrain"
 evaluate = "python -m rp1.inference.evaluate"
+select = "python -m rp1.inference.selection"
 prepare = "python -m rp1.training.data.prepare"
 
 [dependencies]
@@ -88,16 +89,6 @@ test-slow = "pytest -m slow"
 check = { depends-on = ["format-check", "lint", "typecheck", "test"] }
 hooks = "prek install"
 
-# `no-default-feature` drops the workspace default whole, and that includes the interpreter.
-[feature.cluster.dependencies]
-python = "3.13.*"
-
-[feature.cluster.pypi-dependencies]
-skypilot = { version = ">=0.10", extras = ["kubernetes"] }
-
 [environments]
 default = { features = [], solve-group = "default" }
 dev = { features = ["dev"], solve-group = "default" }
-# Alone in its solve group: SkyPilot's closure pins versions (e.g. `click`) that would otherwise be
-# imposed on hydra and wandb in the training solve.
-cluster = { features = ["cluster"], no-default-feature = true }

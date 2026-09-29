@@ -1,7 +1,7 @@
 """Build the two Reacher h5 files from a Stable-WM dataset.
 
 1. ``train_out``: every episode's scalar columns (action, qpos, qvel, ...), no
-   pixels. ``rp1_ac`` indexes ``ep_offset`` by episode id (the latent cache's ids),
+   pixels. The rp1 trainer indexes ``ep_offset`` by episode id (the latent cache's ids),
    so ``ep_len`` and ``ep_offset`` are id-indexed.
 2. ``eval_out``: the first ``eval_episodes`` episodes in file order with every
    column, pixels decoded, for evaluation (task replay, goal images, action

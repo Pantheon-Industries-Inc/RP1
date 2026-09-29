@@ -3,4 +3,3 @@ horizon: 5
 iterations: 8
 action_limit: 2.5
 hidden_dim: 512
-head_scale: 1.0

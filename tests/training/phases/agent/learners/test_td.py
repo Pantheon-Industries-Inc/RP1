@@ -1,10 +1,4 @@
-"""Offline TD value learning.
-
-The eikonal penalty constrains the value's input-gradient magnitude: a temporal
-distance changes by one unit per step's worth of latent displacement, i.e.
-``||grad_z V|| == 1 / step_norm``, and the planner descends exactly this
-gradient through the frozen world model.
-"""
+"""Offline TD value learning."""
 
 from __future__ import annotations
 
@@ -23,7 +17,7 @@ def _cache() -> LatentCache:
     )
 
 
-def _config(weight: float, save_every: int = 0) -> TDConfig:
+def _config(save_every: int = 0) -> TDConfig:
     return TDConfig(
         head="quasimetric",
         symmetric=False,
@@ -38,7 +32,6 @@ def _config(weight: float, save_every: int = 0) -> TDConfig:
         steps=150,
         save_every=save_every,
         seed=0,
-        eikonal_weight=weight,
         max_delta=6,
         lr=1e-3,
         weight_decay=1e-4,
@@ -47,9 +40,6 @@ def _config(weight: float, save_every: int = 0) -> TDConfig:
         n_buckets=10,
         huber_beta=1.0,
         num_components=8,
-        rank_weight=0.0,
-        rank_margin=0.5,
-        rank_max_delta=200,
         softplus=True,
         sym_frac=0.5,
         alpha_init=0.75,
@@ -58,41 +48,15 @@ def _config(weight: float, save_every: int = 0) -> TDConfig:
     )
 
 
-def _mean_gradient_norm(module: torch.nn.Module, cache: LatentCache) -> float:
-    z = cache.z[:64].clone().requires_grad_(True)
-    goal = cache.z[64:128]
-    (gradient,) = torch.autograd.grad(module(z, goal).sum(), z)
-    return float(gradient.norm(dim=-1).mean())
-
-
-def _step_norm(cache: LatentCache) -> float:
-    total, count = 0.0, 0
-    for rows in cache.episodes().values():
-        episode = cache.z[torch.as_tensor(rows)].float()
-        total += float((episode[1:] - episode[:-1]).norm(dim=-1).sum())
-        count += len(rows) - 1
-    return total / count
-
-
-def test_penalty_pulls_gradient_norm_toward_the_temporal_distance_scale() -> None:
+def test_training_is_deterministic_at_a_fixed_seed() -> None:
     cache = _cache()
-    target = 1.0 / _step_norm(cache)
-    off = _mean_gradient_norm(fit(cache, _config(0.0), "cpu"), cache)
-    on = _mean_gradient_norm(fit(cache, _config(10.0), "cpu"), cache)
-    assert abs(on - target) < abs(off - target), (
-        f"eikonal penalty did not move the gradient norm toward {target:.4f}: off={off:.4f} on={on:.4f}"
-    )
-
-
-def test_zero_weight_leaves_training_untouched() -> None:
-    cache = _cache()
-    a = fit(cache, _config(0.0), "cpu")
-    b = fit(cache, _config(0.0), "cpu")
+    a = fit(cache, _config(), "cpu")
+    b = fit(cache, _config(), "cpu")
     for pa, pb in zip(a.parameters(), b.parameters(), strict=True):
         assert torch.equal(pa, pb), "TD fit is not deterministic at a fixed seed"
 
 
 def test_snapshots_arrive_every_save_every_steps_before_the_last() -> None:
     steps: list[int] = []
-    fit(_cache(), _config(0.0, save_every=50), "cpu", lambda head, step: steps.append(step))
+    fit(_cache(), _config(save_every=50), "cpu", lambda head, step: steps.append(step))
     assert steps == [50, 100]

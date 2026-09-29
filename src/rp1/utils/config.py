@@ -39,7 +39,7 @@ def validate_config(cfg: DictConfig) -> None:
         raise ValueError(f"Missing required configuration values: {', '.join(missing)}")
 
     runtime = cfg.get("runtime")
-    if runtime is not None and int(runtime.seed) < 0:
+    if runtime is not None and "seed" in runtime and int(runtime.seed) < 0:
         raise ValueError("runtime.seed must be non-negative")
 
     data = cfg.get("data")
@@ -150,6 +150,8 @@ def compose_config(config_dir: Path, config_name: str, overrides: list[str]) -> 
 def run_hydra[ResultT](task: Callable[[DictConfig], ResultT], *, config_dir: str, config_name: str) -> ResultT:
     """Compose the command-line config, then run ``task`` inside a fresh run directory."""
     config_name, overrides = _split_config_name(list(sys.argv[1:]), config_name)
+    if config_name.startswith("/"):  # a config outside config_dir, such as /methods/rp1/train
+        config_dir, config_name = str(Path(config_name).parent).lstrip("/"), Path(config_name).name
     cfg = compose_config(Path(config_dir), config_name, overrides)
     paths = RunPaths.create(cfg.logging.run_root)
     paths.attach(cfg)

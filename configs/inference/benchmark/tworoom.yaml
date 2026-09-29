@@ -8,10 +8,9 @@ defaults:
   - _self_
 benchmark:
   wall_center: 112.0
-  # The LeWM/DINO-WM protocol: training and evaluation share the full pool.
-  # For a held-out split, set episode_range="8000:10000" here and
-  # training.train_episodes=8000 when training.
-  episode_range: null
+  # held out: the agent trains on episodes 0-7999; episode_range=null is the LeWM/DINO-WM
+  # protocol, where training and evaluation share the full pool
+  episode_range: "8000:10000"
   callables:
     - method: _set_state
       args:
