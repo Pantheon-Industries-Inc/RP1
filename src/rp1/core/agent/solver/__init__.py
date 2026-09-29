@@ -4,7 +4,6 @@ from rp1.core.agent.solver.gradient import GradientSolver
 from rp1.core.agent.solver.hierarchical import HierarchicalCEMSolver
 from rp1.core.agent.solver.l2o import L2OSolver
 from rp1.core.agent.solver.mppi import MPPISolver
-from rp1.core.agent.solver.rp1 import RP1Solver
 
 __all__ = [
     "CEMSolver",
@@ -12,6 +11,5 @@ __all__ = [
     "GradientSolver",
     "HierarchicalCEMSolver",
     "L2OSolver",
-    "RP1Solver",
     "MPPISolver",
 ]

@@ -11,16 +11,16 @@ from omegaconf import OmegaConf, open_dict
 
 from rp1.core.agent.value import build_metric
 from rp1.data import LatentCache
+from rp1.methods.rp1.train import ActionBlocks, PlanningTasks
 from rp1.training.harness.checkpointing import load_planner, save_metric
-from rp1.training.phases.agent.rp1_ac import ActionBlocks, PlanningTasks
 from rp1.utils.config import compose_config, dispatch
 
 
 def test_training_writes_a_deployable_planner(agent_data: Any, cube_world_model: Path, tmp_path: Path) -> None:
     data = agent_data
     cfg = compose_config(
-        Path("training"),
-        "phases/agent/rp1_ac",
+        Path("methods/rp1"),
+        "train",
         [
             f"training.cache={data.blocks}",
             f"training.cache_td={data.dense}",
@@ -51,7 +51,6 @@ def test_action_blocks_of_a_phase_multiplexed_cache_start_at_their_phase(agent_d
     blocks = ActionBlocks(str(agent_data.actions), 5, None, phases=5)
     # phase 3 of source episode 1 (episode 1 * 5 + 3), block 2: step 3 + 5 * 2 of that episode
     assert blocks.row(8, 2) == 60 + 13
-    assert blocks.first_row(8) == 60
     assert np.array_equal(blocks(8, 2), blocks.normalized[73:78].reshape(-1))
 
 
@@ -81,13 +80,13 @@ def test_a_parameter_free_value_trains_the_planner_frozen(
         "training.max_delta=3",
         "runtime.device=cpu",
     ]
-    cfg = compose_config(Path("training"), "phases/agent/rp1_ac", [*overrides, "training.freeze_critic_frac=0"])
+    cfg = compose_config(Path("methods/rp1"), "train", [*overrides, "training.freeze_critic_frac=0"])
     with open_dict(cfg):
         cfg.run = OmegaConf.create({"directory": str(tmp_path), "checkpoints": str(tmp_path / "checkpoints")})
     dispatch(cfg)
     assert (tmp_path / "checkpoints" / "planner.pt").is_file()
 
-    cfg = compose_config(Path("training"), "phases/agent/rp1_ac", overrides)
+    cfg = compose_config(Path("methods/rp1"), "train", overrides)
     with open_dict(cfg):
         cfg.run = OmegaConf.create({"directory": str(tmp_path), "checkpoints": str(tmp_path / "checkpoints")})
     with pytest.raises(InstantiationException, match="freeze_critic_frac=0"):

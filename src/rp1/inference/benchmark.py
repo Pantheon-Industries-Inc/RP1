@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -157,7 +158,9 @@ def build_policy(cfg: DictConfig, device: str, process: dict[str, Any], transfor
         return swm.policy.RandomPolicy()
     cost = planning_cost(cfg, load_world_model(cfg, device), device)
     solver = hydra.utils.instantiate(cfg.core.agent.solver, model=cost, device=device, seed=cfg.runtime.seed)
-    planning = PlanConfig(**cast(dict[str, Any], OmegaConf.to_container(cfg.planning, resolve=True)))
+    # planning.budget bounds the episode, which the benchmark runs; the policy needs the rest
+    fields = cast(dict[str, Any], OmegaConf.to_container(cfg.planning, resolve=True))
+    planning = PlanConfig(**{name: value for name, value in fields.items() if name != "budget"})
     return WorldModelPolicy(solver=solver, config=planning, process=process, transform=transform)
 
 
@@ -210,6 +213,12 @@ def run(cfg: DictConfig) -> None:
 
     results_path = Path(cfg.run.metrics) / cfg.output.filename
     results_path.write_text(f"metrics: {metrics}\nevaluation_time_seconds: {elapsed}\n")
+    summary = {
+        "success_rate": float(metrics["success_rate"]),
+        "episode_successes": np.asarray(metrics["episode_successes"]).astype(bool).tolist(),
+        "evaluation_time_seconds": elapsed,
+    }
+    (Path(cfg.run.metrics) / "metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
     logger.info(f"Evaluation results saved to {results_path}")
 
 

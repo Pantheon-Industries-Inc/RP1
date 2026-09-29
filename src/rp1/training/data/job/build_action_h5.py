@@ -1,6 +1,6 @@
 """Extract a dataset's actions into an h5 of ``action``, ``ep_offset`` and ``ep_len``.
 
-``rp1_ac`` and the baseline trainers read only these; episodes keep the dataset's
+The rp1 and baseline trainers read only these; episodes keep the dataset's
 order, which is the latent cache's.
 """
 

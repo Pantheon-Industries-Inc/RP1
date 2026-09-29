@@ -18,7 +18,8 @@ ALLOWED = {
     "core.world_model": {"utils", "data"},
     "core.agent": {"utils", "data", "core.world_model"},
     "training": {"utils", "data", "environment", "core"},
-    "inference": {"utils", "data", "environment", "core", "training"},
+    "methods": {"utils", "data", "environment", "core", "training"},
+    "inference": {"utils", "data", "environment", "core", "training", "methods"},
 }
 
 
@@ -34,8 +35,6 @@ def _directories(root: Path) -> list[Path]:
 
 @pytest.mark.parametrize("relative", _directories(ROOT / "configs"), ids=str)
 def test_config_directories_mirror_the_package(relative: Path) -> None:
-    if relative.parts[:2] == ("training", "cluster"):
-        return
     assert _mirrors(relative), f"configs/{relative} has no counterpart in src/rp1"
 
 

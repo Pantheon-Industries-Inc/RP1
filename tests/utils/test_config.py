@@ -118,3 +118,7 @@ def test_hydra_configs_compose() -> None:
 
     cfg = compose_config(Path("training"), "pretrain", ["data=tworoom_lewm"])
     assert cfg.core.world_model.architecture._target_ == "stable_worldmodel.wm.lewm.LeWM"
+
+
+def test_a_job_without_a_seed_validates() -> None:
+    validate_config(OmegaConf.create({"runtime": {"device": "cpu"}}))

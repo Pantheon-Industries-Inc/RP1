@@ -21,8 +21,8 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
-import numpy as np
 import torch
 
 from rp1.core.agent.value.head import IQEHead, PairwiseMetricHead, QuasimetricHead
@@ -53,11 +53,7 @@ class TDConfig:
     n_buckets: int
     seed: int
     huber_beta: float
-    eikonal_weight: float
     num_components: int
-    rank_weight: float
-    rank_margin: float
-    rank_max_delta: int
     softplus: bool
     sym_frac: float
     alpha_init: float
@@ -67,12 +63,30 @@ class TDConfig:
 
 MetricHead = IQEHead | PairwiseMetricHead | QuasimetricHead
 
+# the sampler outputs a TD step reads
+TD_KEYS = ("z_t", "z_tn", "z_g", "n_eff", "reached", "dist")
+
 
 def expectile_loss(diff: torch.Tensor, expectile: float, beta: float) -> torch.Tensor:
     """Expectile-weighted Huber loss."""
     huber = torch.nn.functional.smooth_l1_loss(diff, torch.zeros_like(diff), beta=beta, reduction="none")
     weight = torch.where(diff > 0, 1.0 - expectile, expectile)  # diff=pred-target
     return (weight * huber).mean()
+
+
+def n_step_target(sample: dict[str, torch.Tensor], bootstrap: torch.Tensor, gamma: float) -> torch.Tensor:
+    """The n-step TD target of a sampled batch (the module docstring's formula).
+
+    ``sample`` holds the sampler's ``n_eff``, ``reached`` and ``dist``; ``bootstrap``
+    is the target network's ``d(z_{t+n}, z_g)``.
+    """
+    steps, reached, distance = sample["n_eff"], sample["reached"], sample["dist"]
+    if gamma >= 1.0:
+        cost, discount = steps, torch.ones_like(steps)
+    else:
+        discount = gamma**steps
+        cost = (1.0 - discount) / (1.0 - gamma)
+    return reached * distance + (1.0 - reached) * (cost + discount * bootstrap)
 
 
 def _make_head(cfg: TDConfig, latent_dim: int) -> MetricHead:
@@ -130,73 +144,15 @@ def fit(
     )
     if cfg.near_frac > 0:
         logger.info(f"TD near-goal oversampling: frac={cfg.near_frac} max={cfg.near_max} steps")
-    g = cfg.gamma
-    step_norm = 1.0
-    episodes = cache.episodes()
-    if cfg.eikonal_weight > 0:
-        displacement, count = 0.0, 0
-        for rows in list(episodes.values())[:200]:
-            episode_z = cache.z[torch.as_tensor(rows)].float()
-            displacement += (episode_z[1:] - episode_z[:-1]).norm(dim=-1).sum().item()
-            count += len(rows) - 1
-        step_norm = max(displacement / max(count, 1), 1e-6)
-        logger.info(f"Eikonal mean per-step latent displacement={step_norm:.4f}")
-
-    rank_rng = np.random.default_rng(cfg.seed + 1)
-    rank_episodes = [rows for rows in episodes.values() if len(rows) > 3]
-
-    def rank_batch(batch_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        near = np.empty(batch_size, dtype=np.int64)
-        far = np.empty(batch_size, dtype=np.int64)
-        goal = np.empty(batch_size, dtype=np.int64)
-        gaps = np.empty(batch_size, dtype=np.float32)
-        for index in range(batch_size):
-            rows = rank_episodes[rank_rng.integers(len(rank_episodes))]
-            max_distance = min(cfg.rank_max_delta, len(rows) - 1)
-            far_distance = int(rank_rng.integers(2, max_distance + 1))
-            near_distance = int(rank_rng.integers(1, far_distance))
-            goal_index = int(rank_rng.integers(far_distance, len(rows)))
-            near[index] = rows[goal_index - near_distance]
-            far[index] = rows[goal_index - far_distance]
-            goal[index] = rows[goal_index]
-            gaps[index] = far_distance - near_distance
-        return cache.z[near], cache.z[far], cache.z[goal], torch.from_numpy(gaps)
-
     value.train()
     log_interval = max(1, cfg.steps // 20)
     for step in range(cfg.steps):
-        b = sampler.sample(cfg.batch_size)
-        z_t, z_tn, z_g = (
-            b["z_t"].to(device),
-            b["z_tn"].to(device),
-            b["z_g"].to(device),
-        )
-        ne, reached, dist = (
-            b["n_eff"].to(device),
-            b["reached"].to(device),
-            b["dist"].to(device),
-        )
+        batch = cast(dict[str, torch.Tensor], sampler.sample(cfg.batch_size))
+        sample = {key: batch[key].to(device) for key in TD_KEYS}
         with torch.no_grad():
-            d_next = target(z_tn, z_g)
-            if g >= 1.0:
-                c, disc = ne, torch.ones_like(ne)
-            else:
-                disc = g**ne
-                c = (1.0 - disc) / (1.0 - g)
-            tgt = reached * dist + (1.0 - reached) * (c + disc * d_next)
-        pred = value(z_t, z_g)
-        loss = expectile_loss(pred - tgt, cfg.expectile, cfg.huber_beta)
-        if cfg.rank_weight > 0:
-            z_near, z_far, z_rank_goal, gap = (item.to(device) for item in rank_batch(cfg.batch_size))
-            rank_loss = torch.relu(
-                cfg.rank_margin * gap + value(z_near, z_rank_goal) - value(z_far, z_rank_goal)
-            ).mean()
-            loss = loss + cfg.rank_weight * rank_loss
-        if cfg.eikonal_weight > 0:
-            z_input = z_t.detach().requires_grad_(True)
-            (gradient,) = torch.autograd.grad(value(z_input, z_g).sum(), z_input, create_graph=True)
-            eikonal_loss = ((gradient.norm(dim=-1) * step_norm - 1.0) ** 2).mean()
-            loss = loss + cfg.eikonal_weight * eikonal_loss
+            target_value = n_step_target(sample, target(sample["z_tn"], sample["z_g"]), cfg.gamma)
+        pred = value(sample["z_t"], sample["z_g"])
+        loss = expectile_loss(pred - target_value, cfg.expectile, cfg.huber_beta)
         opt.zero_grad(set_to_none=True)
         loss.backward()  # type: ignore[no-untyped-call]  # PyTorch 2.7 Tensor.backward lacks a typed signature.
         opt.step()
@@ -215,4 +171,4 @@ def fit(
     return value
 
 
-__all__ = ["TDConfig", "expectile_loss", "fit"]
+__all__ = ["TDConfig", "expectile_loss", "fit", "n_step_target"]

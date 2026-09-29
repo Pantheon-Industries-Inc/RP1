@@ -1,14 +1,15 @@
-"""The agent pipeline: every stage of training rp1 on a frozen world model, in one run.
+"""The agent pipeline: every stage of training a planning method on a frozen world model, in one run.
 
 1. ``cache``     -- encode the dataset into a latent cache, one row per primitive step
 2. ``subsample`` -- keep one row per action block of ``frameskip`` steps
 3. ``actions``   -- extract the action h5 the planner trainer indexes
 4. ``value``     -- the offline goal-conditioned quasimetric value (``metric`` phase)
-5. ``planner``   -- the planner, trained actor-critic through the frozen world model (``rp1_ac`` phase)
+5. ``planner``   -- the planner, trained by the method's ``configs/methods/<method>/train`` phase
 
 Caches and the action h5 go to ``cache_directory`` and are reused across runs, so
 ``training.stages=[value,planner]`` iterates on the recipe without re-encoding.
-``training.value.*`` and ``training.planner.*`` override the two phase configs.
+``training.method`` selects the method (:mod:`rp1.methods`); ``training.value.*``
+and ``training.planner.*`` override the value and planner phase configs.
 ``training.teacher=<value>`` trains the planner against an existing value, such
 as a snapshot the value stage saved with ``save_every``, instead of this run's.
 
@@ -16,7 +17,7 @@ Example::
 
     pixi run posttrain training.wm=assets/core/world_model/cube_lewm \
         training.dataset=$RP1_DATA_HOME/datasets/ogb_cube_single.lance \
-        training.name=cube_lewm training.planner.action_limit=1.6
+        training.name=cube_lewm
 """
 
 from pathlib import Path
@@ -24,13 +25,14 @@ from pathlib import Path
 from hydra import compose, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from rp1.data import LatentCache
 from rp1.utils.config import dispatch, get_config_root, phase_config
 from rp1.utils.logging import logger
 from rp1.utils.run import save_stage_config
 
 STAGES = ("cache", "subsample", "actions", "value", "planner")
 # stage overrides that configure the value and planner architectures rather than their trainers
-VALUE_ARCHITECTURE = ("depth", "head", "symmetric", "eikonal_weight")
+VALUE_ARCHITECTURE = ("depth", "head", "symmetric")
 PLANNER_ARCHITECTURE = ("action_limit", "iterations")
 
 
@@ -62,6 +64,19 @@ def _route(overrides: dict[str, object], architecture: tuple[str, ...], group: s
     return {(f"{group}.{key}" if key in architecture else f"training.{key}"): value for key, value in overrides.items()}
 
 
+def _check_encoder(cache: str, wm: str) -> None:
+    """A cache reused from an earlier run must hold latents of this run's world model."""
+    recorded = LatentCache.read_meta(cache).get("wm")
+    if recorded is None:
+        logger.warning(f"{cache} does not record the world model that encoded it")
+        return
+    if Path(str(recorded)).expanduser().resolve() != Path(wm).expanduser().resolve():
+        raise ValueError(
+            f"{cache} holds latents of {recorded}, not of training.wm={wm}; "
+            "give each world model its own training.name, or rerun the cache stages"
+        )
+
+
 def run(cfg: DictConfig) -> None:
     args = phase_config(cfg, "training")
     stages = set(args.stages)
@@ -83,6 +98,9 @@ def run(cfg: DictConfig) -> None:
         if not Path(value_checkpoint).exists():
             raise FileNotFoundError(f"teacher value not found: {value_checkpoint}")
         logger.info(f"Planner teacher: {value_checkpoint}")
+    for stage, cache in (("cache", cache_fs1), ("subsample", cache_fs5)):
+        if stage not in stages and Path(cache).exists():
+            _check_encoder(cache, str(args.wm))
     stage_index = 0
 
     def run_stage(name: str, config_name: str, **values: object) -> object:
@@ -145,19 +163,16 @@ def run(cfg: DictConfig) -> None:
         )
     if "planner" in stages:
         planner_overrides = _overrides(args.planner)
-        if planner_overrides.get("grounding") is not None:
-            # the grounding probe is fitted on the dataset's state column
-            planner_overrides["state_h5"] = str(args.dataset)
         run_stage(
             "planner",
-            "training/phases/agent/rp1_ac",
+            f"methods/{args.method}/train",
             **{
                 "training.cache": cache_fs5,
                 "training.cache_td": cache_fs1,
                 "training.h5": actions_h5,
                 "training.wm": str(args.wm),
                 "training.init_value": value_checkpoint,
-                # rp1_ac checks a window value's lag against the action block
+                # the planner trainer checks a window value's lag against the action block
                 "training.window_lag": window_lag,
                 "runtime.seed": args.seed,
             },
@@ -166,6 +181,6 @@ def run(cfg: DictConfig) -> None:
         )
     planner = Path(cfg.run.checkpoints) / "planner.pt"
     logger.success(
-        f"rp1 pipeline finished. Evaluate with: pixi run evaluate core/agent/solver=rp1 "
+        f"{args.method} pipeline finished. Evaluate with: pixi run evaluate core/agent/solver={args.method} "
         f"core.agent.solver.checkpoint.path={planner}"
     )

@@ -32,7 +32,6 @@ training:
   save_every: 0          # td: also save <checkpoint>_step<N> every N steps
   p_cross: 0.3
   no_balanced: false
-  rank_max_delta: 200
   temperature: 1.0
 output:
   checkpoint: value

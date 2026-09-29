@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from omegaconf import DictConfig, OmegaConf
 
+from rp1.core.agent.policy import WorldModelPolicy
 from rp1.data.base import Array, RowBatch
-from rp1.inference.benchmark import sample_tasks
+from rp1.inference.benchmark import build_policy, sample_tasks
+from rp1.utils.config import compose_config
 
 
 class _Dataset:
@@ -60,3 +64,19 @@ def test_cross_wall_keeps_goals_across_the_wall() -> None:
 def test_too_few_starts_is_an_error() -> None:
     with pytest.raises(ValueError, match="valid evaluation starts"):
         sample_tasks(_config(num_episodes=10), _Dataset([4]))
+
+
+def test_a_planning_policy_builds_from_the_evaluate_config(cube_world_model: Path, cube_planner: Path) -> None:
+    cfg = compose_config(
+        Path("inference"),
+        "evaluate",
+        [
+            "benchmark=cube_lewm",
+            "core/agent/solver=rp1",
+            f"core.world_model.checkpoint={cube_world_model}",
+            f"core.agent.solver.checkpoint.path={cube_planner}",
+        ],
+    )
+    policy = build_policy(cfg, "cpu", process={}, transform={})
+    assert isinstance(policy, WorldModelPolicy)
+    assert policy.cfg.plan_len == cfg.planning.horizon * cfg.planning.action_block

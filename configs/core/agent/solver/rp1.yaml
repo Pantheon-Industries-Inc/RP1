@@ -1,28 +1,3 @@
 # @package core.agent.solver
-_target_: rp1.core.agent.solver.RP1Solver
-batch_size: 1
-num_samples: 300
-var_scale: 1.0
-n_steps: 0
-topk: 30
-lam: 1.0
-checkpoint:
-  _target_: rp1.training.harness.checkpointing.load_planner
-  path: ???
-  value_path: null  # override the value recorded in the checkpoint
-rp1_select: last  # last | buffer: the lowest-value plan over all iterations
-graphed: false  # CUDA-graphed refinement; needs a static batch
-graph_warmup_iters: 5
-# Refinement starts from the zero plan, or from the lowest-value plan among
-# zero, iid-Gaussian and time-tiled Gaussian candidates ("value"), or from the
-# mean of a CEM run on the planning cost ("cem").
-init_mode: zero
-init_samples: 64
-init_scale: 1.5
-cem_init_steps: 30
-iters_override: null  # refinement iterations at deployment; null = the trained count
-update_rule: learned  # learned | gradient: a plain gradient step of size gd_lr on the same energy
-gd_lr: 0.03
-band_limit: null  # keep each update to its first N temporal DCT modes; N = horizon is a no-op
-use_action_history: false  # needs planning.history_len > 1, which publishes the executed actions
-ground_weight: null  # grounding-term weight; null = the checkpoint's, 0 = deploy without it
+defaults:
+  - /methods/rp1/solver@_here_

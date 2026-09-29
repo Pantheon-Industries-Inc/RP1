@@ -3,7 +3,7 @@
 A problem is a three-frame latent history from a cache at one row per action
 block, the two preceding real action blocks, and a goal from the same episode
 within ``max_delta`` blocks or, with probability ``p_cross``, from another
-episode. This is the sampling of :mod:`rp1.training.phases.agent.rp1_ac`, which
+episode. This is the sampling of :mod:`rp1.methods.rp1.train`, which
 keeps its own copy so that its random stream is unaffected by this module.
 
 Action statistics ignore NaNs: several public datasets pad every episode's

@@ -20,6 +20,5 @@
   than add a flag to work around the existing design.
 - **`configs/` and `tests/` mirror `src/rp1/`.** Both are subsets - not every package is
   configurable or needs its own test file - but nothing sits at a path that does not correspond.
-  The one exception is `configs/training/cluster/`, which holds SkyPilot specs rather than Hydra configs.
 - **A default lives in one place.** If a yaml sets a value, the Python signature does not default
   it too. The two drift silently, and the yaml is what actually runs.
